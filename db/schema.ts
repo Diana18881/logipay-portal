@@ -5,7 +5,18 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   fullName: text("full_name").notNull(),
   role: text("role", { enum: ["management", "accountant", "dispatcher", "driver"] }).notNull(),
+  passwordHash: text("password_hash").notNull(),
+  mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(true),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
+});
+
+export const sessions = sqliteTable("sessions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at").notNull(),
+  lastSeenAt: text("last_seen_at").notNull(),
 });
 
 export const employees = sqliteTable("employees", {

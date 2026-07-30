@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { PortalUser } from "../lib/auth";
 
 type Role = "management" | "accountant" | "dispatcher" | "driver";
 type Section = "overview" | "payroll" | "team" | "trips" | "reports";
@@ -35,31 +36,25 @@ const trips = [
   { route: "Дрезден → Мюнхен", id: "R-2850", driver: "Сергей Белов", date: "31 июл", amount: "9 800 ₽", status: "Назначен" },
 ];
 
-function formatRubles(value: number) {
-  return `${new Intl.NumberFormat("ru-RU").format(value)} ₽`;
-}
-
-export function Portal() {
-  const [role, setRole] = useState<Role>("management");
+export function Portal({ currentUser }: { currentUser: PortalUser }) {
+  const role = currentUser.role;
   const [section, setSection] = useState<Section>("overview");
   const [period, setPeriod] = useState("Июль 2026");
   const [search, setSearch] = useState("");
   const [notice, setNotice] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
 
-  const person = roles[role];
+  const roleProfile = roles[role];
+  const person = { ...roleProfile, name: currentUser.fullName, initials: currentUser.fullName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() };
   const allowedNavigation = navigation.filter((item) => item.roles.includes(role));
   const filteredEmployees = useMemo(
     () => employees.filter((employee) => `${employee.name} ${employee.role} ${employee.unit}`.toLowerCase().includes(search.toLowerCase())),
     [search],
   );
 
-  function changeRole(nextRole: Role) {
-    setRole(nextRole);
-    const firstAllowed = navigation.find((item) => item.id === section)?.roles.includes(nextRole);
-    if (!firstAllowed) setSection("overview");
-    setNotice(`Демо-доступ: ${roles[nextRole].label}`);
-    window.setTimeout(() => setNotice(""), 2400);
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
   }
 
   return (
@@ -70,13 +65,7 @@ export function Portal() {
           <div><strong>LOGIPAY</strong><small>logistics salary hub</small></div>
         </div>
 
-        <div className="demo-label">ДЕМО-ДОСТУП</div>
-        <label className="role-picker">
-          <span className="sr-only">Выберите роль</span>
-          <select value={role} onChange={(event) => changeRole(event.target.value as Role)}>
-            {Object.entries(roles).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}
-          </select>
-        </label>
+        <div className="access-card"><span className="access-dot" /><div><small>ВЫ ВОШЛИ КАК</small><strong>{roleProfile.label}</strong></div></div>
 
         <nav aria-label="Основная навигация">
           <p>РАБОЧЕЕ ПРОСТРАНСТВО</p>
@@ -100,6 +89,7 @@ export function Portal() {
             <div><strong>{person.name}</strong><small>{person.title}</small></div>
             <span>•••</span>
           </div>
+          <button className="logout-button" onClick={logout}><span className="nav-icon">↪</span>Выйти из системы</button>
         </div>
       </aside>
 

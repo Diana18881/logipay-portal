@@ -1,10 +1,10 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { employees, payrollRecords, users } from "../../../db/schema";
-import { gethostingUser } from "../../hosting-auth";
+import { requirePortalUser } from "../../../lib/auth";
 
 export async function GET(request: Request) {
-  const user = await gethostingUser();
+  const user = await requirePortalUser(["management", "accountant", "driver"]);
   const url = new URL(request.url);
   const period = url.searchParams.get("period") ?? "2026-07";
   const db = getDb();
@@ -25,5 +25,8 @@ export async function GET(request: Request) {
     .where(eq(payrollRecords.period, period))
     .orderBy(desc(payrollRecords.updatedAt));
 
-  return Response.json({ viewer: user?.email ?? null, period, payroll: rows });
+  const payroll = user.role === "driver"
+    ? rows.filter((row) => row.employee === user.fullName)
+    : rows;
+  return Response.json({ viewer: user.email, period, payroll });
 }
