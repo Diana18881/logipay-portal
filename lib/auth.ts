@@ -74,12 +74,54 @@ export async function createSession(userId: number) {
   return { token, expiresAt };
 }
 
-export function sessionCookie(token: string, expiresAt: Date) {
-  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${expiresAt.toUTCString()}`;
+export function sessionCookie(token: string, expiresAt: Date, secure = true) {
+  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; ${secure ? "Secure; " : ""}SameSite=Strict; Expires=${expiresAt.toUTCString()}`;
 }
 
 export function clearSessionCookie() {
   return `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+}
+
+export async function ensureAuthDatabase() {
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        full_name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        must_change_password INTEGER DEFAULT 1 NOT NULL,
+        active INTEGER DEFAULT 1 NOT NULL
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )`,
+    ),
+  ]);
+
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO users (email, full_name, role, password_hash, must_change_password, active) VALUES (?, ?, ?, ?, 1, 1)",
+    ).bind("director@logipay.demo", "Алексей Орлов", "management", "pbkdf2_sha256$210000$DWGodkYNPzMpQKdqkvsM8w==$40SLjYyIO9PnETVOu8TfPtK60JlhDUOidG/xqqHJzjs="),
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO users (email, full_name, role, password_hash, must_change_password, active) VALUES (?, ?, ?, ?, 1, 1)",
+    ).bind("accounting@logipay.demo", "Елена Волкова", "accountant", "pbkdf2_sha256$210000$H0SJBqBEUEQ+dayMOW5YqA==$oP2MVO5ym0TIV4kveKq5jdoRgp9iYzAibCQPzWyYck0="),
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO users (email, full_name, role, password_hash, must_change_password, active) VALUES (?, ?, ?, ?, 1, 1)",
+    ).bind("dispatcher@logipay.demo", "Ирина Соколова", "dispatcher", "pbkdf2_sha256$210000$80XB8VADHtpNRi9e/95H8w==$15+DDBe39mSXGTlie1/yOO0fR0s5TkpZ8dfm+yxCLrE="),
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO users (email, full_name, role, password_hash, must_change_password, active) VALUES (?, ?, ?, ?, 1, 1)",
+    ).bind("driver@logipay.demo", "Михаил Козлов", "driver", "pbkdf2_sha256$210000$D+OAHkFUpdqX4iCAtILvvQ==$aev3aSc/SShRVrdjU0NUAeib2zhI0S6pwW060QpDFg0="),
+  ]);
 }
 
 export async function getPortalUser(): Promise<PortalUser | null> {

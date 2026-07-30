@@ -18,7 +18,10 @@ export function LoginForm() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
-    const result = await response.json() as { error?: string };
+    const contentType = response.headers.get("content-type") ?? "";
+    const result = contentType.includes("application/json")
+      ? await response.json() as { error?: string }
+      : { error: "Сервер входа временно недоступен. Попробуйте ещё раз." };
     if (!response.ok) {
       setError(result.error ?? "Не удалось войти");
       setLoading(false);
