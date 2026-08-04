@@ -109,3 +109,17 @@ export const salaryDocuments = sqliteTable("salary_documents", {
   uploadedBy: integer("uploaded_by").notNull().references(() => users.id),
   createdAt: text("created_at").notNull(),
 });
+
+export const driverConcerns = sqliteTable("driver_concerns", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  period: text("period").notNull(),
+  company: text("company").notNull(),
+  base: text("base"),
+  truckNumber: text("truck_number"),
+  itemName: text("item_name").notNull(),
+  purchaseStatus: text("purchase_status"),
+  completionStatus: text("completion_status").notNull().default("Not delivered"),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
