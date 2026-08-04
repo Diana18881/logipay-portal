@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { ensureDomainDatabase } from "../../../lib/domain";
-import { requirePortalUser } from "../../../lib/auth";
+import { hashPassword, requirePortalUser } from "../../../lib/auth";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 
@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   await ensureDomainDatabase();
   const kw = Number(new URL(request.url).searchParams.get("kw") || 32);
   const staffWhere = user.role === "driver" ? "WHERE s.user_id = ? OR s.full_name = ?" : "";
-  const staffStmt = env.DB.prepare(`SELECT s.* FROM staff s ${staffWhere} ORDER BY s.status, s.full_name`);
+  const staffStmt = env.DB.prepare(`SELECT s.*, u.email AS login_email FROM staff s LEFT JOIN users u ON u.id=s.user_id ${staffWhere} ORDER BY s.status, s.full_name`);
   const staffResult = user.role === "driver" ? await staffStmt.bind(user.id, user.fullName).all() : await staffStmt.all();
   const vehicles = user.role === "driver" ? { results: [] } : await env.DB.prepare("SELECT * FROM vehicles ORDER BY status, license_plate").all();
   const planning = user.role === "driver"
@@ -34,13 +34,27 @@ export async function POST(request: Request) {
   const action = String(body.action || "");
   const now = new Date().toISOString();
   if (action === "addStaff" && user.role === "management") {
-    await env.DB.prepare("INSERT INTO staff (full_name, system_type, compensation, location, company, vacation, status, hired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)").bind(body.fullName, body.systemType || "2/1", body.compensation || "", body.location || "", body.company || "", body.vacation || "", String(body.hiredAt || now.slice(0,10)), now, now).run();
+    let userId: number | null = null;
+    if (body.loginEmail && body.loginPassword) {
+      const created = await env.DB.prepare("INSERT INTO users (email, full_name, role, password_hash, must_change_password, active) VALUES (?, ?, 'driver', ?, 1, 1)").bind(String(body.loginEmail).toLowerCase(), body.fullName, await hashPassword(String(body.loginPassword))).run();
+      userId = Number(created.meta.last_row_id);
+    }
+    await env.DB.prepare("INSERT INTO staff (user_id, full_name, system_type, compensation, location, company, vacation, status, hired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)").bind(userId, body.fullName, body.systemType || "2/1", body.compensation || "", body.location || "", body.company || "", body.vacation || "", String(body.hiredAt || now.slice(0,10)), now, now).run();
   } else if (action === "archiveStaff" && user.role === "management") {
     await env.DB.prepare("UPDATE staff SET status='archived', terminated_at=?, updated_at=? WHERE id=?").bind(String(body.terminatedAt || now.slice(0,10)), now, body.id).run();
   } else if (action === "restoreStaff" && user.role === "management") {
     await env.DB.prepare("UPDATE staff SET status='active', terminated_at=NULL, updated_at=? WHERE id=?").bind(now, body.id).run();
   } else if (action === "updateStaff" && user.role === "management") {
     await env.DB.prepare("UPDATE staff SET full_name=?, system_type=?, compensation=?, location=?, company=?, vacation=?, updated_at=? WHERE id=?").bind(body.fullName, body.systemType || "", body.compensation || "", body.location || "", body.company || "", body.vacation || "", now, body.id).run();
+    if (body.loginEmail && body.loginPassword) {
+      const current = await env.DB.prepare("SELECT user_id FROM staff WHERE id=?").bind(body.id).first<{user_id:number|null}>();
+      const passwordHash = await hashPassword(String(body.loginPassword));
+      if (current?.user_id) await env.DB.prepare("UPDATE users SET email=?, full_name=?, password_hash=?, active=1, must_change_password=1 WHERE id=?").bind(String(body.loginEmail).toLowerCase(), body.fullName, passwordHash, current.user_id).run();
+      else {
+        const created = await env.DB.prepare("INSERT INTO users (email, full_name, role, password_hash, must_change_password, active) VALUES (?, ?, 'driver', ?, 1, 1)").bind(String(body.loginEmail).toLowerCase(), body.fullName, passwordHash).run();
+        await env.DB.prepare("UPDATE staff SET user_id=? WHERE id=?").bind(Number(created.meta.last_row_id), body.id).run();
+      }
+    }
   } else if (action === "deleteStaff" && user.role === "management") {
     const linked = await env.DB.prepare("SELECT (SELECT COUNT(*) FROM salary_documents WHERE staff_id=?) + (SELECT COUNT(*) FROM weekly_planning WHERE staff_id=?) AS count").bind(body.id, body.id).first<{count:number}>();
     if (linked?.count) return json({ error: "Mitarbeiter hat Historie und kann nur archiviert werden" }, 409);

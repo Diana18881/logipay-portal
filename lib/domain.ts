@@ -38,6 +38,7 @@ export async function ensureDomainDatabase() {
     const plans = [[32,"EuRide","Krzysztof Andrzej Ostap","BER8","B-CY 3603","planned",""],[32,"EVEREST","Osych Robert","BER8","KR-QG 237","planned",""],[32,"ALMAZ","Lukasz Swiatlowski","HAJ1","B-YL 7868","attention","Werkstatttermin / TÜV"],[32,"NAL LOGISTIK","Marcin Krawczyk","HAJ1","B-ML 4182","vacation","Urlaub 20.07–31.07"]];
     await env.DB.batch(plans.map((p) => env.DB.prepare("INSERT INTO weekly_planning (calendar_week, company, driver_name, location, license_plate, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(...p, now, now)));
   }
+  await env.DB.prepare("UPDATE staff SET user_id=(SELECT id FROM users WHERE email='driver@logipay.demo') WHERE full_name='Marcin Krawczyk' AND user_id IS NULL").run();
   const concerns = await env.DB.prepare("SELECT COUNT(*) AS count FROM driver_concerns").first<{ count: number }>();
   if (!concerns?.count) {
     const now = new Date().toISOString();
