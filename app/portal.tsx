@@ -1,246 +1,54 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { PortalUser } from "../lib/auth";
 
-type Role = "management" | "accountant" | "dispatcher" | "driver";
-type Section = "overview" | "payroll" | "team" | "trips" | "reports";
+type Section = "overview" | "staff" | "vehicles" | "planning" | "documents" | "reports";
+type Row = Record<string, string | number | null>;
+type Data = { staff: Row[]; vehicles: Row[]; planning: Row[]; documents: Row[]; kw: number };
 
-const roles: Record<Role, { label: string; name: string; title: string; initials: string }> = {
-  management: { label: "Менеджмент", name: "Алексей Орлов", title: "Операционный директор", initials: "АО" },
-  accountant: { label: "Бухгалтер", name: "Елена Волкова", title: "Главный бухгалтер", initials: "ЕВ" },
-  dispatcher: { label: "Диспетчер", name: "Ирина Соколова", title: "Старший диспетчер", initials: "ИС" },
-  driver: { label: "Водитель", name: "Михаил Козлов", title: "Водитель · TRK-184", initials: "МК" },
-};
-
-const navigation: { id: Section; label: string; icon: string; roles: Role[] }[] = [
-  { id: "overview", label: "Обзор", icon: "⌂", roles: ["management", "accountant", "dispatcher", "driver"] },
-  { id: "payroll", label: "Зарплаты", icon: "₽", roles: ["management", "accountant", "driver"] },
-  { id: "team", label: "Сотрудники", icon: "◉", roles: ["management", "accountant", "dispatcher"] },
-  { id: "trips", label: "Рейсы и смены", icon: "↗", roles: ["management", "dispatcher", "driver"] },
-  { id: "reports", label: "Отчёты", icon: "▥", roles: ["management", "accountant"] },
+const nav: { id: Section; label: string; roles: string[] }[] = [
+  { id: "overview", label: "Übersicht", roles: ["management","accountant","dispatcher","driver"] },
+  { id: "staff", label: "Mitarbeiter", roles: ["management","accountant","dispatcher"] },
+  { id: "vehicles", label: "Fahrzeuge", roles: ["management","dispatcher"] },
+  { id: "planning", label: "KW-Planung", roles: ["management","dispatcher","driver"] },
+  { id: "documents", label: "Lohnabrechnungen", roles: ["management","accountant","driver"] },
+  { id: "reports", label: "Berichte", roles: ["management","accountant"] },
 ];
 
-const employees = [
-  { initials: "МК", name: "Михаил Козлов", role: "Водитель", unit: "TRK-184", hours: "176 ч", amount: "148 400 ₽", status: "К выплате", tone: "mint" },
-  { initials: "АС", name: "Андрей Смирнов", role: "Водитель", unit: "TRK-221", hours: "168 ч", amount: "136 800 ₽", status: "К выплате", tone: "blue" },
-  { initials: "ИС", name: "Ирина Соколова", role: "Диспетчер", unit: "Смена А", hours: "160 ч", amount: "112 500 ₽", status: "Проверено", tone: "violet" },
-  { initials: "ДП", name: "Денис Петров", role: "Водитель", unit: "TRK-097", hours: "152 ч", amount: "121 900 ₽", status: "На проверке", tone: "amber" },
-  { initials: "НК", name: "Наталья Ким", role: "Логист", unit: "Офис", hours: "160 ч", amount: "104 000 ₽", status: "Проверено", tone: "rose" },
-];
-
-const trips = [
-  { route: "Берлин → Варшава", id: "R-2841", driver: "Михаил Козлов", date: "28–30 июля", amount: "18 400 ₽", status: "Завершён" },
-  { route: "Гамбург → Прага", id: "R-2838", driver: "Андрей Смирнов", date: "27–29 июля", amount: "16 900 ₽", status: "Завершён" },
-  { route: "Лейпциг → Вена", id: "R-2847", driver: "Денис Петров", date: "30 июл–1 авг", amount: "14 600 ₽", status: "В пути" },
-  { route: "Дрезден → Мюнхен", id: "R-2850", driver: "Сергей Белов", date: "31 июл", amount: "9 800 ₽", status: "Назначен" },
-];
+const labels: Record<string,string> = { management:"Management", accountant:"Buchhaltung", dispatcher:"Disposition", driver:"Fahrer" };
 
 export function Portal({ currentUser }: { currentUser: PortalUser }) {
-  const role = currentUser.role;
   const [section, setSection] = useState<Section>("overview");
-  const [period, setPeriod] = useState("Июль 2026");
-  const [search, setSearch] = useState("");
-  const [notice, setNotice] = useState("");
-  const [mobileMenu, setMobileMenu] = useState(false);
-
-  const roleProfile = roles[role];
-  const person = { ...roleProfile, name: currentUser.fullName, initials: currentUser.fullName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() };
-  const allowedNavigation = navigation.filter((item) => item.roles.includes(role));
-  const filteredEmployees = useMemo(
-    () => employees.filter((employee) => `${employee.name} ${employee.role} ${employee.unit}`.toLowerCase().includes(search.toLowerCase())),
-    [search],
-  );
-
-  async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.href = "/login";
-  }
-
-  return (
-    <main className="app-shell">
-      <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
-        <div className="brand">
-          <div className="brand-mark"><span /><span /><span /></div>
-          <div><strong>LOGIPAY</strong><small>logistics salary hub</small></div>
-        </div>
-
-        <div className="access-card"><span className="access-dot" /><div><small>ВЫ ВОШЛИ КАК</small><strong>{roleProfile.label}</strong></div></div>
-
-        <nav aria-label="Основная навигация">
-          <p>РАБОЧЕЕ ПРОСТРАНСТВО</p>
-          {allowedNavigation.map((item) => (
-            <button
-              key={item.id}
-              className={section === item.id ? "nav-active" : ""}
-              onClick={() => { setSection(item.id); setMobileMenu(false); }}
-            >
-              <span className="nav-icon">{item.icon}</span>{item.label}
-              {item.id === "payroll" && role === "accountant" ? <em>3</em> : null}
-            </button>
-          ))}
-        </nav>
-
-        <div className="sidebar-bottom">
-          <button><span className="nav-icon">?</span>Поддержка</button>
-          <button><span className="nav-icon">⚙</span>Настройки</button>
-          <div className="profile">
-            <div className="avatar">{person.initials}</div>
-            <div><strong>{person.name}</strong><small>{person.title}</small></div>
-            <span>•••</span>
-          </div>
-          <button className="logout-button" onClick={logout}><span className="nav-icon">↪</span>Выйти из системы</button>
-        </div>
-      </aside>
-
-      {mobileMenu ? <button className="backdrop" aria-label="Закрыть меню" onClick={() => setMobileMenu(false)} /> : null}
-
-      <section className="workspace">
-        <header className="topbar">
-          <button className="menu-toggle" aria-label="Открыть меню" onClick={() => setMobileMenu(true)}>☰</button>
-          <div className="period-control">
-            <span>Расчётный период</span>
-            <select value={period} onChange={(event) => setPeriod(event.target.value)}>
-              <option>Июль 2026</option>
-              <option>Июнь 2026</option>
-              <option>Май 2026</option>
-            </select>
-          </div>
-          <div className="top-actions">
-            <label className="search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Поиск сотрудника…" /></label>
-            <button className="icon-button" aria-label="Уведомления">♢<i /></button>
-            <div className="status-chip"><span /> Данные синхронизированы</div>
-          </div>
-        </header>
-
-        <div className="content">
-          <div className="page-heading">
-            <div>
-              <p>{role === "driver" ? "Личный кабинет" : "Финансы и операционная деятельность"}</p>
-              <h1>{section === "overview" ? `Добрый день, ${person.name.split(" ")[0]}` : navigation.find((item) => item.id === section)?.label}</h1>
-              <span>{role === "driver" ? "Ваши рейсы, начисления и документы" : `Сводка за ${period.toLowerCase()} · обновлено сегодня, 09:42`}</span>
-            </div>
-            {role !== "driver" && (section === "overview" || section === "payroll") ? (
-              <button className="primary-button" onClick={() => setNotice("Расчёт зарплаты подготовлен")}>＋ Рассчитать зарплату</button>
-            ) : (
-              <button className="primary-button" onClick={() => setNotice("Отчёт готов к выгрузке")}>↓ Скачать отчёт</button>
-            )}
-          </div>
-
-          {section === "overview" && <Overview role={role} />}
-          {section === "payroll" && <Payroll role={role} employees={filteredEmployees} />}
-          {section === "team" && <Team employees={filteredEmployees} search={search} setSearch={setSearch} />}
-          {section === "trips" && <Trips role={role} />}
-          {section === "reports" && <Reports />}
-        </div>
-      </section>
-      {notice ? <div className="toast"><span>✓</span>{notice}</div> : null}
-    </main>
-  );
+  const [data, setData] = useState<Data>({ staff:[], vehicles:[], planning:[], documents:[], kw:32 });
+  const [kw, setKw] = useState(32); const [loading, setLoading] = useState(true); const [modal, setModal] = useState<"staff"|"vehicle"|"planning"|null>(null); const [notice,setNotice]=useState("");
+  const load = useCallback(async () => { setLoading(true); const r=await fetch(`/api/portal?kw=${kw}`); if(r.status===401){location.href="/login";return;} setData(await r.json()); setLoading(false); },[kw]);
+  useEffect(()=>{ load(); },[load]);
+  async function action(payload: Record<string,unknown>) { const r=await fetch("/api/portal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}); if(!r.ok){setNotice("Aktion nicht erlaubt");return;} setModal(null); setNotice("Änderung gespeichert"); await load(); }
+  async function logout(){await fetch("/api/auth/logout",{method:"POST"});location.href="/login";}
+  const active=data.staff.filter(x=>x.status==="active"); const workshop=data.vehicles.filter(x=>x.status==="workshop");
+  const title=nav.find(n=>n.id===section)?.label;
+  return <main className="app-shell">
+    <aside className="sidebar"><div className="brand"><div className="brand-mark"><span/><span/><span/></div><div><strong>LOGIPAY</strong><small>Personal & Disposition</small></div></div><div className="access-card"><span className="access-dot"/><div><small>ANGEMELDET ALS</small><strong>{labels[currentUser.role]}</strong></div></div><nav><p>ARBEITSBEREICH</p>{nav.filter(n=>n.roles.includes(currentUser.role)).map(n=><button key={n.id} className={section===n.id?"nav-active":""} onClick={()=>setSection(n.id)}><span className="nav-icon">{({overview:"⌂",staff:"◉",vehicles:"▣",planning:"▦",documents:"€",reports:"▥"} as Record<string,string>)[n.id]}</span>{n.label}</button>)}</nav><div className="sidebar-bottom"><div className="profile"><div className="avatar">{currentUser.fullName.split(" ").map(x=>x[0]).join("").slice(0,2)}</div><div><strong>{currentUser.fullName}</strong><small>{labels[currentUser.role]}</small></div></div><button className="logout-button" onClick={logout}>↪ Abmelden</button></div></aside>
+    <section className="workspace"><header className="topbar"><div className="period-control"><span>Planungswoche</span><select value={kw} onChange={e=>setKw(+e.target.value)}>{Array.from({length:29},(_,i)=>i+5).map(k=><option key={k} value={k}>KW {k}</option>)}</select></div><div className="status-chip"><span/> Datenbank verbunden</div></header><div className="content"><div className="page-heading"><div><p>LOGISTIKVERWALTUNG</p><h1>{title}</h1><span>Zentrale Daten statt einzelner Excel-Tabellen</span></div>{section==="staff"&&currentUser.role==="management"?<button className="primary-button" onClick={()=>setModal("staff")}>＋ Mitarbeiter einstellen</button>:section==="vehicles"?<button className="primary-button" onClick={()=>setModal("vehicle")}>＋ Fahrzeug anlegen</button>:section==="planning"&&currentUser.role!=="driver"?<button className="primary-button" onClick={()=>setModal("planning")}>＋ Planung hinzufügen</button>:null}</div>
+    {loading?<div className="empty-state">Daten werden geladen…</div>:<>
+      {section==="overview"&&<><div className="metric-grid"><Metric label="Aktive Mitarbeiter" value={String(active.length)} note={`${data.staff.length-active.length} ausgeschieden`}/><Metric label="Fahrzeuge" value={String(data.vehicles.length)} note={`${workshop.length} in Werkstatt`}/><Metric label={`Planung KW ${kw}`} value={String(data.planning.length)} note="Zuordnungen"/><Metric label="Abrechnungen" value={String(data.documents.length)} note="sicher gespeichert"/></div><div className="dashboard-grid"><Card title="Aktuelle Planung"><Planning rows={data.planning.slice(0,6)}/></Card><Card title="Hinweise"><div className="attention-list"><p><b>{workshop.length}</b><span>Fahrzeuge in der Werkstatt</span></p><p><b>{active.filter(x=>x.vacation).length}</b><span>Urlaubseinträge</span></p><p><b>{data.planning.filter(x=>x.status==="attention").length}</b><span>Planungen mit Hinweis</span></p></div></Card></div></>}
+      {section==="staff"&&<Card title="Mitarbeiterstamm"><div className="table-wrap"><table><thead><tr><th>Name</th><th>Systemart</th><th>Vergütung</th><th>Standort</th><th>Firma</th><th>Urlaub</th><th>Status</th><th/></tr></thead><tbody>{data.staff.map(s=><tr key={s.id}><td><strong>{s.full_name}</strong></td><td>{s.system_type||"—"}</td><td>{s.compensation||"—"}</td><td>{s.location||"—"}</td><td>{s.company||"—"}</td><td>{s.vacation||"—"}</td><td><Badge value={String(s.status)}/></td><td>{currentUser.role==="management"?<button className="row-action" onClick={()=>action({action:s.status==="active"?"archiveStaff":"restoreStaff",id:s.id})}>{s.status==="active"?"Ausscheiden":"Reaktivieren"}</button>:null}</td></tr>)}</tbody></table></div></Card>}
+      {section==="vehicles"&&<Card title="Fahrzeug- und Kennzeichentabelle"><div className="table-wrap"><table><thead><tr><th>Kennzeichen</th><th>Firma</th><th>Standort</th><th>Status</th><th>Prüfung</th><th>Notiz</th></tr></thead><tbody>{data.vehicles.map(v=><tr key={v.id}><td><strong>{v.license_plate}</strong></td><td>{v.company||"—"}</td><td>{v.location||"—"}</td><td><Badge value={String(v.status)}/></td><td>{v.inspection_due||"—"}</td><td>{v.notes||"—"}</td></tr>)}</tbody></table></div></Card>}
+      {section==="planning"&&<Card title={`Fahrerplanung KW ${kw}`}><Planning rows={data.planning}/></Card>}
+      {section==="documents"&&<Documents rows={data.documents} staff={active} driver={currentUser.role==="driver"} canUpload={["management","accountant"].includes(currentUser.role)} reload={load}/>} 
+      {section==="reports"&&<div className="report-grid"><Report title={`Planning Report KW ${kw}`} text="Block-Rejections, offene Fälle und Hinweise aus der Wochenplanung."/><Report title="Mitarbeiterliste" text="Aktive und ausgeschiedene Mitarbeiter mit Firma, Standort und Systemart."/><Report title="Kennzeichenliste" text="Fahrzeuge, Werkstattstatus, TÜV/SP und Zuordnung."/><Report title="Lohnabrechnungsübersicht" text="Dokumentenstatus je Mitarbeiter und Abrechnungsmonat."/></div>}
+    </>}</div></section>
+    {modal&&<Modal title={modal==="staff"?"Mitarbeiter einstellen":modal==="vehicle"?"Fahrzeug anlegen":"Planung hinzufügen"} close={()=>setModal(null)}><EntryForm kind={modal} kw={kw} staff={active} submit={action}/></Modal>}
+    {notice&&<div className="toast" onClick={()=>setNotice("")}><span>✓</span>{notice}</div>}
+  </main>;
 }
 
-function Overview({ role }: { role: Role }) {
-  if (role === "driver") {
-    return (
-      <>
-        <div className="driver-hero">
-          <div><small>К ВЫПЛАТЕ ЗА ИЮЛЬ</small><strong>148 400 ₽</strong><span>Выплата запланирована на 5 августа</span></div>
-          <div className="pay-breakdown"><p><span>Оклад</span><b>78 000 ₽</b></p><p><span>Рейсы и километраж</span><b>64 200 ₽</b></p><p><span>Суточные</span><b>9 600 ₽</b></p><p><span>Удержания</span><b>−3 400 ₽</b></p></div>
-        </div>
-        <div className="metric-grid driver-metrics">
-          <Metric icon="↗" label="Рейсов завершено" value="12" delta="+2 к июню" tone="cyan" />
-          <Metric icon="◎" label="Километров" value="8 742" delta="97% по GPS" tone="violet" />
-          <Metric icon="◷" label="Часов в сменах" value="176" delta="Норма: 168 ч" tone="amber" />
-          <Metric icon="☆" label="Рейтинг" value="4,9" delta="Отличный результат" tone="mint" />
-        </div>
-        <Trips role="driver" compact />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <div className="metric-grid">
-        <Metric icon="₽" label="Фонд зарплаты" value="4 826 400 ₽" delta="+6,4% к июню" tone="cyan" />
-        <Metric icon="◉" label="Сотрудников" value="42" delta="39 активных" tone="violet" />
-        <Metric icon="◷" label="Часов отработано" value="6 784" delta="+248 часов" tone="amber" />
-        <Metric icon="✓" label="Готовность расчёта" value="92%" delta="38 из 42 готово" tone="mint" progress={92} />
-      </div>
-
-      <div className="dashboard-grid">
-        <article className="panel chart-panel">
-          <PanelTitle title="Динамика фонда зарплаты" subtitle="За последние 6 месяцев" action="Все подразделения⌄" />
-          <div className="chart">
-            <div className="y-labels"><span>5 млн</span><span>4 млн</span><span>3 млн</span><span>2 млн</span><span>1 млн</span><span>0</span></div>
-            <div className="chart-area">
-              <div className="grid-lines"><i /><i /><i /><i /><i /></div>
-              <svg viewBox="0 0 620 220" preserveAspectRatio="none" aria-label="График роста фонда зарплаты">
-                <defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#35c9ba" stopOpacity=".3" /><stop offset="100%" stopColor="#35c9ba" stopOpacity="0" /></linearGradient></defs>
-                <path className="area-path" d="M10 158 C62 153,76 130,124 137 S196 123,232 111 S297 119,335 94 S403 83,448 67 S522 62,610 28 L610 220 L10 220 Z" />
-                <path className="line-path" d="M10 158 C62 153,76 130,124 137 S196 123,232 111 S297 119,335 94 S403 83,448 67 S522 62,610 28" />
-                {[["10","158"],["124","137"],["232","111"],["335","94"],["448","67"],["610","28"]].map(([cx,cy]) => <circle key={cx} cx={cx} cy={cy} r="5" />)}
-              </svg>
-              <div className="x-labels"><span>Фев</span><span>Мар</span><span>Апр</span><span>Май</span><span>Июн</span><span className="current">Июл</span></div>
-            </div>
-          </div>
-        </article>
-
-        <article className="panel status-panel">
-          <PanelTitle title="Статус расчёта" subtitle="Июль 2026" action="Подробнее →" />
-          <div className="donut-wrap">
-            <div className="donut"><div><strong>92%</strong><span>готово</span></div></div>
-            <div className="legend">
-              <p><i className="mint-dot" /><span>Рассчитано</span><strong>38</strong></p>
-              <p><i className="amber-dot" /><span>На проверке</span><strong>3</strong></p>
-              <p><i className="grey-dot" /><span>Не начато</span><strong>1</strong></p>
-            </div>
-          </div>
-          <div className="deadline"><span>◷</span><div><b>До закрытия периода</b><small>Осталось 2 дня</small></div><strong>01 авг</strong></div>
-        </article>
-      </div>
-
-      <article className="panel employee-panel">
-        <PanelTitle title="Последние расчёты" subtitle="Сотрудники с недавними изменениями" action="Показать всех →" />
-        <EmployeeTable employees={employees.slice(0, 4)} />
-      </article>
-    </>
-  );
-}
-
-function Metric({ icon, label, value, delta, tone, progress }: { icon: string; label: string; value: string; delta: string; tone: string; progress?: number }) {
-  return <article className="metric-card"><div className={`metric-icon ${tone}`}>{icon}</div><div className="metric-copy"><span>{label}</span><strong>{value}</strong><small className={tone === "amber" ? "neutral" : ""}>{delta}</small>{progress ? <div className="progress"><i style={{ width: `${progress}%` }} /></div> : null}</div></article>;
-}
-
-function PanelTitle({ title, subtitle, action }: { title: string; subtitle: string; action: string }) {
-  return <div className="panel-title"><div><h2>{title}</h2><p>{subtitle}</p></div><button>{action}</button></div>;
-}
-
-function EmployeeTable({ employees: rows }: { employees: typeof employees }) {
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead><tr><th>Сотрудник</th><th>Должность / транспорт</th><th>Время</th><th>Начислено</th><th>Статус</th><th /></tr></thead>
-        <tbody>{rows.map((employee) => <tr key={employee.name}><td><div className={`employee-avatar ${employee.tone}`}>{employee.initials}</div><strong>{employee.name}</strong></td><td><span>{employee.role}</span><small>{employee.unit}</small></td><td>{employee.hours}</td><td><b>{employee.amount}</b></td><td><span className={`badge ${employee.status === "На проверке" ? "badge-amber" : "badge-mint"}`}>{employee.status}</span></td><td><button aria-label={`Открыть ${employee.name}`}>›</button></td></tr>)}</tbody>
-      </table>
-    </div>
-  );
-}
-
-function Payroll({ role, employees: rows }: { role: Role; employees: typeof employees }) {
-  if (role === "driver") return <Overview role="driver" />;
-  return <><div className="summary-strip"><div><span>Начислено</span><strong>5 284 200 ₽</strong></div><div><span>Удержания</span><strong>457 800 ₽</strong></div><div><span>К выплате</span><strong>4 826 400 ₽</strong></div><div><span>Дата выплаты</span><strong>05 августа</strong></div></div><article className="panel employee-panel"><PanelTitle title="Расчётная ведомость" subtitle={`${rows.length} сотрудников найдено`} action="↓ Экспорт XLSX" /><EmployeeTable employees={rows} /></article></>;
-}
-
-function Team({ employees: rows, search, setSearch }: { employees: typeof employees; search: string; setSearch: (value: string) => void }) {
-  return <article className="panel employee-panel"><div className="table-toolbar"><div><h2>Команда</h2><p>Сотрудники, роли и назначенный транспорт</p></div><label className="search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Имя, роль, транспорт…" /></label></div><EmployeeTable employees={rows} /></article>;
-}
-
-function Trips({ role, compact = false }: { role: Role; compact?: boolean }) {
-  const visible = role === "driver" ? trips.filter((trip) => trip.driver === "Михаил Козлов") : trips;
-  return <article className={`panel trip-panel ${compact ? "compact-panel" : ""}`}><PanelTitle title={role === "driver" ? "Мои последние рейсы" : "Рейсы и смены"} subtitle={role === "driver" ? "Начисления включены в зарплату" : "Оперативный статус транспорта"} action="Календарь →" /><div className="trip-grid">{visible.map((trip) => <div className="trip-card" key={trip.id}><div className="route-icon">↗</div><div className="trip-main"><small>{trip.id}</small><strong>{trip.route}</strong><span>{trip.driver} · {trip.date}</span></div><div className="trip-end"><strong>{trip.amount}</strong><span className={`badge ${trip.status === "В пути" ? "badge-blue" : "badge-mint"}`}>{trip.status}</span></div></div>)}</div></article>;
-}
-
-function Reports() {
-  const reports = [["Ведомость по зарплате", "XLSX · Июль 2026", "₽"], ["Реестр выплат", "CSV · 42 сотрудника", "▤"], ["Рейсы и километраж", "PDF · Июль 2026", "↗"], ["Налоги и удержания", "XLSX · Июль 2026", "%"]];
-  return <div className="report-grid">{reports.map(([name, meta, icon]) => <article className="report-card" key={name}><div>{icon}</div><h2>{name}</h2><p>{meta}</p><button>Сформировать отчёт <span>→</span></button></article>)}</div>;
-}
+function Metric({label,value,note}:{label:string,value:string,note:string}){return <article className="metric-card"><div className="metric-icon mint">✓</div><div className="metric-copy"><span>{label}</span><strong>{value}</strong><small>{note}</small></div></article>}
+function Card({title,children}:{title:string,children:React.ReactNode}){return <article className="panel employee-panel"><div className="panel-title"><div><h2>{title}</h2><p>Stand: heute</p></div></div>{children}</article>}
+function Badge({value}:{value:string}){const map:Record<string,string>={active:"Aktiv",archived:"Ausgeschieden",workshop:"Werkstatt",reserve:"Reserve",planned:"Geplant",attention:"Prüfen",vacation:"Urlaub"};return <span className={`badge ${["archived","attention","workshop"].includes(value)?"badge-amber":"badge-mint"}`}>{map[value]||value}</span>}
+function Planning({rows}:{rows:Row[]}){return <div className="table-wrap"><table><thead><tr><th>Firma</th><th>Fahrer</th><th>Standort</th><th>Kennzeichen</th><th>Block ID</th><th>Status</th><th>Kommentar</th></tr></thead><tbody>{rows.length?rows.map(r=><tr key={r.id}><td><strong>{r.company}</strong></td><td>{r.driver_name||"NO DRIVER"}</td><td>{r.location||"—"}</td><td>{r.license_plate||"—"}</td><td>{r.block_id||"—"}</td><td><Badge value={String(r.status)}/></td><td>{r.comments||"—"}</td></tr>):<tr><td colSpan={7}>Keine Einträge für diese Woche.</td></tr>}</tbody></table></div>}
+function Documents({rows,staff,driver,canUpload,reload}:{rows:Row[],staff:Row[],driver:boolean,canUpload:boolean,reload:()=>Promise<void>}){async function upload(e:FormEvent<HTMLFormElement>){e.preventDefault();const r=await fetch("/api/documents",{method:"POST",body:new FormData(e.currentTarget)});if(r.ok){e.currentTarget.reset();await reload();}else alert((await r.json()).error);}return <Card title={driver?"Meine Lohnabrechnungen":"Lohnabrechnungen"}><div className="document-note"><b>Sicherer Dokumentenbereich</b><span>PDF-Lohnabrechnungen werden personenbezogen gespeichert. Fahrer sehen ausschließlich ihre eigenen Dokumente.</span></div>{canUpload?<form className="upload-form" onSubmit={upload}><select name="staffId" required><option value="">Mitarbeiter wählen</option>{staff.map(s=><option key={s.id} value={String(s.id)}>{s.full_name}</option>)}</select><input name="period" type="month" required/><input name="file" type="file" accept="application/pdf" required/><button className="primary-button">PDF hochladen</button></form>:null}<div className="table-wrap"><table><thead><tr><th>Mitarbeiter</th><th>Zeitraum</th><th>Datei</th><th>Größe</th><th>Datum</th></tr></thead><tbody>{rows.length?rows.map(r=><tr key={r.id}><td>{r.full_name}</td><td>{r.period}</td><td><a href={`/api/documents/${r.id}`}><strong>{r.file_name}</strong></a></td><td>{Math.round(Number(r.size_bytes)/1024)} KB</td><td>{String(r.created_at).slice(0,10)}</td></tr>):<tr><td colSpan={5}>Noch keine Dokumente hochgeladen.</td></tr>}</tbody></table></div></Card>}
+function Report({title,text}:{title:string,text:string}){return <article className="report-card"><div>▥</div><h2>{title}</h2><p>{text}</p><button onClick={()=>alert("Bericht wird aus den aktuellen Daten erzeugt.")}>Bericht vorbereiten →</button></article>}
+function Modal({title,close,children}:{title:string,close:()=>void,children:React.ReactNode}){return <div className="modal-backdrop"><div className="modal"><div className="modal-head"><h2>{title}</h2><button onClick={close}>×</button></div>{children}</div></div>}
+function EntryForm({kind,kw,staff,submit}:{kind:"staff"|"vehicle"|"planning",kw:number,staff:Row[],submit:(x:Record<string,unknown>)=>void}){function go(e:FormEvent<HTMLFormElement>){e.preventDefault();const d=Object.fromEntries(new FormData(e.currentTarget));submit({action:kind==="staff"?"addStaff":kind==="vehicle"?"addVehicle":"addPlanning",calendarWeek:kw,...d});} return <form className="entry-form" onSubmit={go}>{kind==="staff"?<><label>Name*<input name="fullName" required/></label><label>Systemart<select name="systemType"><option>2/1</option><option>2/2</option><option>SPRINGER</option></select></label><label>Vergütung<input name="compensation" placeholder="2300–2400 € Netto"/></label><label>Standort<input name="location" placeholder="BER8 / HAJ1"/></label><label>Firma<input name="company" required/></label><label>Eintrittsdatum<input type="date" name="hiredAt"/></label></>:kind==="vehicle"?<><label>Kennzeichen*<input name="licensePlate" required placeholder="B-AB 1234"/></label><label>Firma<input name="company"/></label><label>Standort<input name="location"/></label><label>Status<select name="status"><option value="active">Aktiv</option><option value="workshop">Werkstatt</option><option value="reserve">Reserve</option></select></label><label className="wide">Notiz<input name="notes"/></label></>:<><label>Firma*<input name="company" required/></label><label>Fahrer<select name="driverName"><option value="">NO DRIVER</option>{staff.map(s=><option key={s.id}>{s.full_name}</option>)}</select></label><label>Standort<input name="location"/></label><label>Kennzeichen<input name="licensePlate"/></label><label>Status<select name="status"><option value="planned">Geplant</option><option value="attention">Prüfen</option><option value="vacation">Urlaub</option></select></label><label>Block ID<input name="blockId"/></label><label className="wide">Kommentar<input name="comments"/></label></>}<button className="primary-button wide" type="submit">Speichern</button></form>}

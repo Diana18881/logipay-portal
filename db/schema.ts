@@ -53,3 +53,59 @@ export const trips = sqliteTable("trips", {
   status: text("status", { enum: ["assigned", "in_transit", "completed"] }).notNull(),
   bonusAmount: integer("bonus_amount").notNull().default(0),
 });
+
+export const staff = sqliteTable("staff", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").references(() => users.id),
+  fullName: text("full_name").notNull(),
+  systemType: text("system_type"),
+  compensation: text("compensation"),
+  location: text("location"),
+  company: text("company"),
+  vacation: text("vacation"),
+  status: text("status", { enum: ["active", "archived"] }).notNull().default("active"),
+  hiredAt: text("hired_at"),
+  terminatedAt: text("terminated_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const vehicles = sqliteTable("vehicles", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  licensePlate: text("license_plate").notNull().unique(),
+  company: text("company"),
+  location: text("location"),
+  status: text("status", { enum: ["active", "workshop", "reserve"] }).notNull().default("active"),
+  assignedStaffId: integer("assigned_staff_id").references(() => staff.id),
+  inspectionDue: text("inspection_due"),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const weeklyPlanning = sqliteTable("weekly_planning", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  calendarWeek: integer("calendar_week").notNull(),
+  company: text("company").notNull(),
+  staffId: integer("staff_id").references(() => staff.id),
+  driverName: text("driver_name"),
+  location: text("location"),
+  licensePlate: text("license_plate"),
+  blockId: text("block_id"),
+  status: text("status").notNull().default("planned"),
+  comments: text("comments"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const salaryDocuments = sqliteTable("salary_documents", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").notNull().references(() => staff.id),
+  period: text("period").notNull(),
+  fileName: text("file_name").notNull(),
+  objectKey: text("object_key").notNull().unique(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  uploadedBy: integer("uploaded_by").notNull().references(() => users.id),
+  createdAt: text("created_at").notNull(),
+});
