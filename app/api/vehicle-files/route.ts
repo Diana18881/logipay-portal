@@ -1,4 +1,57 @@
 import { env } from "cloudflare:workers";
 import { requirePortalUser } from "../../../lib/auth";
 import { ensureDomainDatabase } from "../../../lib/domain";
-export async function POST(request:Request){const user=await requirePortalUser(["management","dispatcher","driver"]);await ensureDomainDatabase();const f=await request.formData();const file=f.get("file");const plate=String(f.get("licensePlate")||"").trim();const category=String(f.get("category")||"");if(!(file instanceof File)||!plate||!category)return Response.json({error:"Pflichtfelder fehlen"},{status:400});if(!file.type.startsWith("image/")&&file.type!=="application/pdf")return Response.json({error:"Nur Foto oder PDF"},{status:400});if(file.size>15*1024*1024)return Response.json({error:"Maximal 15 MB"},{status:400});let staffId:null|number=null;if(user.role==="driver"){const s=await env.DB.prepare("SELECT id FROM staff WHERE user_id=?").bind(user.id).first<{id:number}>();staffId=s?.id||null;const allowed=await env.DB.prepare("SELECT 1 FROM weekly_planning WHERE staff_id=? AND license_plate=? LIMIT 1").bind(staffId,plate).first();if(!allowed)return Response.json({error:"Fahrzeug ist Ihnen nicht zugeteilt"},{status:403});}const key=`fahrzeuge/${plate}/${category}/${crypto.randomUUID()}`;await env.DOCUMENTS.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:file.type}});await env.DB.prepare("INSERT INTO vehicle_files (staff_id,license_plate,category,file_name,object_key,content_type,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(staffId,plate,category,file.name,key,file.type,String(f.get("notes")||""),new Date().toISOString()).run();return Response.json({ok:true})}
+export async function POST(request: Request) {
+  const user = await requirePortalUser(["driver"]);
+  await ensureDomainDatabase();
+  const f = await request.formData();
+  const file = f.get("file");
+  const plate = String(f.get("licensePlate") || "").trim();
+  const category = String(f.get("category") || "");
+  if (!(file instanceof File) || !plate || !category)
+    return Response.json({ error: "Pflichtfelder fehlen" }, { status: 400 });
+  if (!file.type.startsWith("image/") && file.type !== "application/pdf")
+    return Response.json({ error: "Nur Foto oder PDF" }, { status: 400 });
+  if (file.size > 15 * 1024 * 1024)
+    return Response.json({ error: "Maximal 15 MB" }, { status: 400 });
+  const s = await env.DB.prepare(
+    "SELECT id FROM staff WHERE user_id=? AND status='active'",
+  )
+    .bind(user.id)
+    .first<{ id: number }>();
+  const staffId = s?.id || null;
+  if (!staffId)
+    return Response.json(
+      { error: "Fahrerprofil ist nicht verknüpft" },
+      { status: 409 },
+    );
+  const allowed = await env.DB.prepare(
+    "SELECT 1 FROM weekly_planning WHERE staff_id=? AND license_plate=? LIMIT 1",
+  )
+    .bind(staffId, plate)
+    .first();
+  if (!allowed)
+    return Response.json(
+      { error: "Fahrzeug ist Ihnen nicht zugeteilt" },
+      { status: 403 },
+    );
+  const key = `fahrzeuge/${plate}/${category}/${crypto.randomUUID()}`;
+  await env.DOCUMENTS.put(key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type },
+  });
+  await env.DB.prepare(
+    "INSERT INTO vehicle_files (staff_id,license_plate,category,file_name,object_key,content_type,notes,created_at) VALUES (?,?,?,?,?,?,?,?)",
+  )
+    .bind(
+      staffId,
+      plate,
+      category,
+      file.name,
+      key,
+      file.type,
+      String(f.get("notes") || ""),
+      new Date().toISOString(),
+    )
+    .run();
+  return Response.json({ ok: true });
+}

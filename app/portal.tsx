@@ -266,7 +266,8 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
               >
                 ＋ Mitarbeiter einstellen
               </button>
-            ) : section === "vehicles" ? (
+            ) : section === "vehicles" &&
+              ["management", "dispatcher"].includes(currentUser.role) ? (
               <button
                 className="primary-button"
                 onClick={() => openModal("vehicle")}
@@ -374,8 +375,12 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                         {data.staff.map((s) => (
                           <tr key={s.id}>
                             <td>
-                              <button className="staff-link" onClick={() => setSelectedStaff(s)}>
-                                <strong>{s.full_name}</strong><small>Dossier öffnen</small>
+                              <button
+                                className="staff-link"
+                                onClick={() => setSelectedStaff(s)}
+                              >
+                                <strong>{s.full_name}</strong>
+                                <small>Dossier öffnen</small>
                               </button>
                             </td>
                             <td>{s.system_type || "—"}</td>
@@ -552,7 +557,15 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           />
         </Modal>
       )}
-      {selectedStaff && <DriverDossier staff={selectedStaff} planning={data.planning} vehicles={data.vehicles} files={data.files} close={() => setSelectedStaff(null)} />}
+      {selectedStaff && (
+        <DriverDossier
+          staff={selectedStaff}
+          planning={data.planning}
+          vehicles={data.vehicles}
+          files={data.files}
+          close={() => setSelectedStaff(null)}
+        />
+      )}
       {notice && (
         <div className="toast" onClick={() => setNotice("")}>
           <span>✓</span>
@@ -602,30 +615,37 @@ function VehicleFiles({
             : "Digitale Fahrzeugakte"
         }
       >
-        <form className="upload-form" onSubmit={upload}>
-          <select name="licensePlate" required>
-            <option value="">Kennzeichen wählen</option>
-            {plates.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
-          </select>
-          <select name="category" required>
-            <option value="before">Vor Fahrt</option>
-            <option value="after">Nach Fahrt</option>
-            <option value="damage">Schaden</option>
-            <option value="tuev">TÜV / HU / SP</option>
-            <option value="document">Fahrzeugdokument</option>
-          </select>
-          <input name="notes" placeholder="Notiz" />
-          <input
-            name="file"
-            type="file"
-            accept="image/*,application/pdf"
-            capture="environment"
-            required
-          />
-          <button className="primary-button">Hochladen</button>
-        </form>
+        {driver ? (
+          <form className="upload-form" onSubmit={upload}>
+            <select name="licensePlate" required>
+              <option value="">Kennzeichen wählen</option>
+              {plates.map((p) => (
+                <option key={p}>{p}</option>
+              ))}
+            </select>
+            <select name="category" required>
+              <option value="before">Vor Fahrt</option>
+              <option value="after">Nach Fahrt</option>
+              <option value="damage">Schaden</option>
+              <option value="tuev">TÜV / HU / SP</option>
+              <option value="document">Fahrzeugdokument</option>
+            </select>
+            <input name="notes" placeholder="Notiz" />
+            <input
+              name="file"
+              type="file"
+              accept="image/*,application/pdf"
+              capture="environment"
+              required
+            />
+            <button className="primary-button">Hochladen</button>
+          </form>
+        ) : (
+          <div className="viewer-note">
+            Die Fahrzeugfotos werden von den Fahrern hochgeladen. Management und
+            Disposition haben hier Lesezugriff.
+          </div>
+        )}
         <div className="table-wrap">
           <table>
             <thead>
@@ -633,6 +653,7 @@ function VehicleFiles({
                 <th>Datum</th>
                 <th>Kennzeichen</th>
                 <th>Kategorie</th>
+                {!driver ? <th>Fahrer</th> : null}
                 <th>Datei</th>
                 <th>Notiz</th>
               </tr>
@@ -650,6 +671,7 @@ function VehicleFiles({
                     <td>
                       <Badge value={String(f.category)} />
                     </td>
+                    {!driver ? <td>{f.driver_name || "—"}</td> : null}
                     <td>
                       <a href={`/api/vehicle-files/${f.id}`} target="_blank">
                         {f.file_name}
@@ -660,7 +682,9 @@ function VehicleFiles({
                 ))
               ) : (
                 <tr>
-                  <td colSpan={5}>Noch keine Fotos oder Dokumente.</td>
+                  <td colSpan={driver ? 5 : 6}>
+                    Noch keine Fotos oder Dokumente.
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -670,7 +694,109 @@ function VehicleFiles({
     </>
   );
 }
-function DriverDossier({staff,planning,vehicles,files,close}:{staff:Row;planning:Row[];vehicles:Row[];files:Row[];close:()=>void}){const trips=planning.filter(p=>p.staff_id===staff.id||p.driver_name===staff.full_name);const plates=Array.from(new Set(trips.map(t=>String(t.license_plate||"")).filter(Boolean)));const trucks=vehicles.filter(v=>plates.includes(String(v.license_plate)));const docs=files.filter(f=>plates.includes(String(f.license_plate)));return <div className="modal-backdrop"><div className="dossier"><div className="modal-head"><div><h2>{staff.full_name}</h2><small>Fahrer- und Fahrzeugdossier</small></div><button onClick={close}>×</button></div><div className="dossier-grid"><section><h3>Fahrerdaten</h3><p><span>Status</span><Badge value={String(staff.status)}/></p><p><span>Firma</span><b>{staff.company||"—"}</b></p><p><span>Standort</span><b>{staff.location||"—"}</b></p><p><span>Systemart</span><b>{staff.system_type||"—"}</b></p><p><span>Vergütung</span><b>{staff.compensation||"—"}</b></p><p><span>Login</span><b>{staff.login_email||"Kein Zugang"}</b></p></section><section><h3>Zugeordnete Fahrzeuge</h3>{trucks.length?trucks.map(v=><p key={v.id}><span>{v.license_plate}</span><b>{v.status} · {v.location}</b></p>):<p>Kein Fahrzeug in dieser KW.</p>}</section></div><h3 className="dossier-title">Planung und Touren</h3><Planning rows={trips}/><h3 className="dossier-title">Fotos, TÜV / HU / SP und Dokumente</h3><div className="file-grid">{docs.length?docs.map(f=><a key={f.id} href={`/api/vehicle-files/${f.id}`} target="_blank"><b>{f.category}</b><span>{f.license_plate} · {String(f.created_at).slice(0,10)}</span><small>{f.file_name}</small></a>):<div className="empty-state">Noch keine Fahrzeugdateien.</div>}</div></div></div>}
+function DriverDossier({
+  staff,
+  planning,
+  vehicles,
+  files,
+  close,
+}: {
+  staff: Row;
+  planning: Row[];
+  vehicles: Row[];
+  files: Row[];
+  close: () => void;
+}) {
+  const trips = planning.filter(
+    (p) => p.staff_id === staff.id || p.driver_name === staff.full_name,
+  );
+  const plates = Array.from(
+    new Set(trips.map((t) => String(t.license_plate || "")).filter(Boolean)),
+  );
+  const trucks = vehicles.filter((v) =>
+    plates.includes(String(v.license_plate)),
+  );
+  const docs = files.filter((f) => f.staff_id === staff.id);
+  return (
+    <div className="modal-backdrop">
+      <div className="dossier">
+        <div className="modal-head">
+          <div>
+            <h2>{staff.full_name}</h2>
+            <small>Fahrer- und Fahrzeugdossier</small>
+          </div>
+          <button onClick={close}>×</button>
+        </div>
+        <div className="dossier-grid">
+          <section>
+            <h3>Fahrerdaten</h3>
+            <p>
+              <span>Status</span>
+              <Badge value={String(staff.status)} />
+            </p>
+            <p>
+              <span>Firma</span>
+              <b>{staff.company || "—"}</b>
+            </p>
+            <p>
+              <span>Standort</span>
+              <b>{staff.location || "—"}</b>
+            </p>
+            <p>
+              <span>Systemart</span>
+              <b>{staff.system_type || "—"}</b>
+            </p>
+            <p>
+              <span>Vergütung</span>
+              <b>{staff.compensation || "—"}</b>
+            </p>
+            <p>
+              <span>Login</span>
+              <b>{staff.login_email || "Kein Zugang"}</b>
+            </p>
+          </section>
+          <section>
+            <h3>Zugeordnete Fahrzeuge</h3>
+            {trucks.length ? (
+              trucks.map((v) => (
+                <p key={v.id}>
+                  <span>{v.license_plate}</span>
+                  <b>
+                    {v.status} · {v.location}
+                  </b>
+                </p>
+              ))
+            ) : (
+              <p>Kein Fahrzeug in dieser KW.</p>
+            )}
+          </section>
+        </div>
+        <h3 className="dossier-title">Planung und Touren</h3>
+        <Planning rows={trips} />
+        <h3 className="dossier-title">
+          Vom Fahrer hochgeladene Fotos und Dokumente
+        </h3>
+        <div className="file-grid">
+          {docs.length ? (
+            docs.map((f) => (
+              <a key={f.id} href={`/api/vehicle-files/${f.id}`} target="_blank">
+                <b>{f.category}</b>
+                <span>
+                  {f.license_plate} · {String(f.created_at).slice(0, 10)}
+                </span>
+                <small>{f.file_name}</small>
+              </a>
+            ))
+          ) : (
+            <div className="empty-state">
+              Dieser Fahrer hat noch keine Fahrzeugfotos hochgeladen.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 function Metric({
   label,
   value,
