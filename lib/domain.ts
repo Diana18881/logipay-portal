@@ -26,12 +26,16 @@ export async function ensureDomainDatabase() {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS vehicles (id INTEGER PRIMARY KEY AUTOINCREMENT, license_plate TEXT NOT NULL UNIQUE, company TEXT, location TEXT, status TEXT NOT NULL DEFAULT 'active', assigned_staff_id INTEGER, inspection_due TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS weekly_planning (id INTEGER PRIMARY KEY AUTOINCREMENT, planning_year INTEGER NOT NULL DEFAULT 2026, calendar_week INTEGER NOT NULL, company TEXT NOT NULL, staff_id INTEGER, driver_name TEXT, location TEXT, license_plate TEXT, block_id TEXT, status TEXT NOT NULL DEFAULT 'planned', comments TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS salary_documents (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, period TEXT NOT NULL, file_name TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, uploaded_by INTEGER NOT NULL, created_at TEXT NOT NULL)`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS driver_concerns (id INTEGER PRIMARY KEY AUTOINCREMENT, period TEXT NOT NULL, company TEXT NOT NULL, base TEXT, truck_number TEXT, item_name TEXT NOT NULL, purchase_status TEXT, completion_status TEXT NOT NULL DEFAULT 'Not delivered', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS driver_concerns (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER, period TEXT NOT NULL, company TEXT NOT NULL, base TEXT, truck_number TEXT, item_name TEXT NOT NULL, purchase_status TEXT, completion_status TEXT NOT NULL DEFAULT 'Not delivered', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_concerns_period_status ON driver_concerns(period, completion_status)`),
   ]);
   const planningColumns = await env.DB.prepare("PRAGMA table_info(weekly_planning)").all<{ name: string }>();
   if (!planningColumns.results.some((column) => column.name === "planning_year")) {
     await env.DB.prepare("ALTER TABLE weekly_planning ADD COLUMN planning_year INTEGER NOT NULL DEFAULT 2026").run();
+  }
+  const concernColumns = await env.DB.prepare("PRAGMA table_info(driver_concerns)").all<{ name: string }>();
+  if (!concernColumns.results.some((column) => column.name === "staff_id")) {
+    await env.DB.prepare("ALTER TABLE driver_concerns ADD COLUMN staff_id INTEGER").run();
   }
   const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM staff").first<{ count: number }>();
   if (!count?.count) {

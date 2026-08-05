@@ -25,12 +25,14 @@ export async function GET(request: Request) {
       : env.DB.prepare("SELECT d.*, s.full_name FROM salary_documents d JOIN staff s ON s.id=d.staff_id ORDER BY d.period DESC");
     documents = (user.role === "driver" ? await stmt.bind(staffIds[0]).all() : await stmt.all()).results;
   }
-  const concerns = user.role === "driver" ? { results: [] } : await env.DB.prepare("SELECT * FROM driver_concerns ORDER BY period DESC, completion_status, company").all();
+  const concerns = user.role === "driver"
+    ? await env.DB.prepare("SELECT * FROM driver_concerns WHERE staff_id=? OR notes=? ORDER BY created_at DESC").bind(driverStaffId || -1, user.fullName).all()
+    : await env.DB.prepare("SELECT * FROM driver_concerns ORDER BY period DESC, completion_status, company").all();
   return json({ user, year, kw, staff: staffResult.results, vehicles: vehicles.results, planning: planning.results, documents, concerns: concerns.results });
 }
 
 export async function POST(request: Request) {
-  const user = await requirePortalUser(["management", "accountant", "dispatcher"]);
+  const user = await requirePortalUser();
   await ensureDomainDatabase();
   const body = await request.json() as Record<string, string | number | null>;
   const action = String(body.action || "");
@@ -68,6 +70,18 @@ export async function POST(request: Request) {
     await env.DB.prepare("INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, block_id, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(body.planningYear, body.calendarWeek, body.company, assigned?.id || null, body.driverName || "", body.location || "", body.licensePlate || "", body.blockId || "", body.status || "planned", body.comments || "", now, now).run();
   } else if (action === "deletePlanning" && ["management","dispatcher"].includes(user.role)) {
     await env.DB.prepare("DELETE FROM weekly_planning WHERE id=?").bind(body.id).run();
+  } else if (action === "copyPreviousWeek" && ["management","dispatcher"].includes(user.role)) {
+    const targetYear = Number(body.planningYear); const targetWeek = Number(body.calendarWeek);
+    const sourceYear = targetWeek === 1 ? targetYear - 1 : targetYear; const sourceWeek = targetWeek === 1 ? 53 : targetWeek - 1;
+    const existing = await env.DB.prepare("SELECT COUNT(*) AS count FROM weekly_planning WHERE planning_year=? AND calendar_week=?").bind(targetYear,targetWeek).first<{count:number}>();
+    if (existing?.count) return json({ error: "Für diese Woche existiert bereits ein Plan" }, 409);
+    await env.DB.prepare(`INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, block_id, status, comments, created_at, updated_at)
+      SELECT ?, ?, company, staff_id, driver_name, location, license_plate, block_id, 'planned', comments, ?, ? FROM weekly_planning WHERE planning_year=? AND calendar_week=?`).bind(targetYear,targetWeek,now,now,sourceYear,sourceWeek).run();
+  } else if (action === "driverConcern" && user.role === "driver") {
+    const person = await env.DB.prepare("SELECT id, full_name, company, location FROM staff WHERE user_id=? AND status='active'").bind(user.id).first<{id:number;full_name:string;company:string;location:string}>();
+    if (!person) return json({ error: "Fahrerprofil nicht verknüpft" }, 409);
+    const assignment = await env.DB.prepare("SELECT license_plate FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND (staff_id=? OR driver_name=?) ORDER BY id DESC LIMIT 1").bind(body.planningYear,body.calendarWeek,person.id,person.full_name).first<{license_plate:string}>();
+    await env.DB.prepare("INSERT INTO driver_concerns (staff_id, period, company, base, truck_number, item_name, purchase_status, completion_status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'Requested', 'New', ?, ?, ?)").bind(person.id, now.slice(0,7), person.company || "", person.location || "", assignment?.license_plate || String(body.truckNumber || ""), body.itemName, person.full_name, now, now).run();
   } else if (action === "addConcern" && ["management","dispatcher"].includes(user.role)) {
     await env.DB.prepare("INSERT INTO driver_concerns (period, company, base, truck_number, item_name, purchase_status, completion_status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(body.period, body.company, body.base || "", body.truckNumber || "", body.itemName, body.purchaseStatus || "", body.completionStatus || "Not delivered", body.notes || "", now, now).run();
   } else if (action === "updateConcern" && ["management","dispatcher"].includes(user.role)) {

@@ -1,0 +1,1 @@
+ALTER TABLE `driver_concerns` ADD `staff_id` integer REFERENCES staff(id);

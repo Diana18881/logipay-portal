@@ -113,6 +113,7 @@ export const salaryDocuments = sqliteTable("salary_documents", {
 
 export const driverConcerns = sqliteTable("driver_concerns", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").references(() => staff.id),
   period: text("period").notNull(),
   company: text("company").notNull(),
   base: text("base"),
