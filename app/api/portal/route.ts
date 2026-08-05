@@ -8,13 +8,15 @@ export async function GET(request: Request) {
   const user = await requirePortalUser();
   await ensureDomainDatabase();
   const kw = Number(new URL(request.url).searchParams.get("kw") || 32);
+  const year = Number(new URL(request.url).searchParams.get("year") || new Date().getFullYear());
   const staffWhere = user.role === "driver" ? "WHERE s.user_id = ? OR s.full_name = ?" : "";
   const staffStmt = env.DB.prepare(`SELECT s.*, u.email AS login_email FROM staff s LEFT JOIN users u ON u.id=s.user_id ${staffWhere} ORDER BY s.status, s.full_name`);
   const staffResult = user.role === "driver" ? await staffStmt.bind(user.id, user.fullName).all() : await staffStmt.all();
   const vehicles = user.role === "driver" ? { results: [] } : await env.DB.prepare("SELECT * FROM vehicles ORDER BY status, license_plate").all();
+  const driverStaffId = (staffResult.results as {id:number}[])[0]?.id;
   const planning = user.role === "driver"
-    ? await env.DB.prepare("SELECT * FROM weekly_planning WHERE calendar_week = ? AND driver_name = ? ORDER BY company").bind(kw, user.fullName).all()
-    : await env.DB.prepare("SELECT * FROM weekly_planning WHERE calendar_week = ? ORDER BY company, driver_name").bind(kw).all();
+    ? await env.DB.prepare("SELECT * FROM weekly_planning WHERE planning_year = ? AND calendar_week = ? AND (staff_id = ? OR driver_name = ?) ORDER BY company").bind(year, kw, driverStaffId || -1, user.fullName).all()
+    : await env.DB.prepare("SELECT * FROM weekly_planning WHERE planning_year = ? AND calendar_week = ? ORDER BY company, driver_name").bind(year, kw).all();
   const staffIds = (staffResult.results as {id:number}[]).map((s) => s.id);
   let documents: unknown[] = [];
   if (user.role !== "dispatcher" && (user.role !== "driver" || staffIds.length)) {
@@ -24,7 +26,7 @@ export async function GET(request: Request) {
     documents = (user.role === "driver" ? await stmt.bind(staffIds[0]).all() : await stmt.all()).results;
   }
   const concerns = user.role === "driver" ? { results: [] } : await env.DB.prepare("SELECT * FROM driver_concerns ORDER BY period DESC, completion_status, company").all();
-  return json({ user, kw, staff: staffResult.results, vehicles: vehicles.results, planning: planning.results, documents, concerns: concerns.results });
+  return json({ user, year, kw, staff: staffResult.results, vehicles: vehicles.results, planning: planning.results, documents, concerns: concerns.results });
 }
 
 export async function POST(request: Request) {
@@ -62,7 +64,8 @@ export async function POST(request: Request) {
   } else if (action === "addVehicle" && ["management","dispatcher"].includes(user.role)) {
     await env.DB.prepare("INSERT INTO vehicles (license_plate, company, location, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(body.licensePlate, body.company || "", body.location || "", body.status || "active", body.notes || "", now, now).run();
   } else if (action === "addPlanning" && ["management","dispatcher"].includes(user.role)) {
-    await env.DB.prepare("INSERT INTO weekly_planning (calendar_week, company, driver_name, location, license_plate, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(body.calendarWeek, body.company, body.driverName || "", body.location || "", body.licensePlate || "", body.status || "planned", body.comments || "", now, now).run();
+    const assigned = body.driverName ? await env.DB.prepare("SELECT id FROM staff WHERE full_name=? AND status='active'").bind(body.driverName).first<{id:number}>() : null;
+    await env.DB.prepare("INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, block_id, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(body.planningYear, body.calendarWeek, body.company, assigned?.id || null, body.driverName || "", body.location || "", body.licensePlate || "", body.blockId || "", body.status || "planned", body.comments || "", now, now).run();
   } else if (action === "deletePlanning" && ["management","dispatcher"].includes(user.role)) {
     await env.DB.prepare("DELETE FROM weekly_planning WHERE id=?").bind(body.id).run();
   } else if (action === "addConcern" && ["management","dispatcher"].includes(user.role)) {

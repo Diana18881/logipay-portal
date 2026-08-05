@@ -85,6 +85,7 @@ export const vehicles = sqliteTable("vehicles", {
 
 export const weeklyPlanning = sqliteTable("weekly_planning", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  planningYear: integer("planning_year").notNull().default(2026),
   calendarWeek: integer("calendar_week").notNull(),
   company: text("company").notNull(),
   staffId: integer("staff_id").references(() => staff.id),

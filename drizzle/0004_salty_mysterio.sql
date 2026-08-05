@@ -1,0 +1,1 @@
+ALTER TABLE `weekly_planning` ADD `planning_year` integer DEFAULT 2026 NOT NULL;
