@@ -134,3 +134,4 @@ export const auditLog = sqliteTable("audit_log", {
   details: text("details"),
   createdAt: text("created_at").notNull(),
 });
+export const vehicleFiles = sqliteTable("vehicle_files", { id: integer("id").primaryKey({autoIncrement:true}), staffId: integer("staff_id").references(()=>staff.id), licensePlate:text("license_plate").notNull(), category:text("category").notNull(), fileName:text("file_name").notNull(), objectKey:text("object_key").notNull().unique(), contentType:text("content_type").notNull(), notes:text("notes"), createdAt:text("created_at").notNull() });

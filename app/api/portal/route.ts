@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   const staffWhere = user.role === "driver" ? "WHERE s.user_id = ? OR s.full_name = ?" : "";
   const staffStmt = env.DB.prepare(`SELECT s.*, u.email AS login_email FROM staff s LEFT JOIN users u ON u.id=s.user_id ${staffWhere} ORDER BY s.status, s.full_name`);
   const staffResult = user.role === "driver" ? await staffStmt.bind(user.id, user.fullName).all() : await staffStmt.all();
-  const vehicles = user.role === "driver" ? { results: [] } : await env.DB.prepare("SELECT * FROM vehicles ORDER BY status, license_plate").all();
+  const vehicles = user.role === "driver" ? await env.DB.prepare("SELECT DISTINCT v.* FROM vehicles v JOIN weekly_planning p ON p.license_plate=v.license_plate JOIN staff s ON s.id=p.staff_id WHERE s.user_id=? ORDER BY v.license_plate").bind(user.id).all() : await env.DB.prepare("SELECT * FROM vehicles ORDER BY status, license_plate").all();
   const driverStaffId = (staffResult.results as {id:number}[])[0]?.id;
   const planning = user.role === "driver"
     ? await env.DB.prepare("SELECT * FROM weekly_planning WHERE planning_year = ? AND calendar_week = ? AND (staff_id = ? OR driver_name = ?) ORDER BY company").bind(year, kw, driverStaffId || -1, user.fullName).all()
@@ -28,7 +28,8 @@ export async function GET(request: Request) {
   const concerns = user.role === "driver"
     ? await env.DB.prepare("SELECT * FROM driver_concerns WHERE staff_id=? OR notes=? ORDER BY created_at DESC").bind(driverStaffId || -1, user.fullName).all()
     : await env.DB.prepare("SELECT * FROM driver_concerns ORDER BY period DESC, completion_status, company").all();
-  return json({ user, year, kw, staff: staffResult.results, vehicles: vehicles.results, planning: planning.results, documents, concerns: concerns.results });
+  const files = user.role === "driver" ? await env.DB.prepare("SELECT vf.* FROM vehicle_files vf JOIN staff s ON s.id=vf.staff_id WHERE s.user_id=? ORDER BY vf.created_at DESC").bind(user.id).all() : await env.DB.prepare("SELECT * FROM vehicle_files ORDER BY created_at DESC").all();
+  return json({ user, year, kw, staff: staffResult.results, vehicles: vehicles.results, planning: planning.results, documents, concerns: concerns.results, files:files.results });
 }
 
 export async function POST(request: Request) {
