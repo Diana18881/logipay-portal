@@ -114,6 +114,21 @@ export async function GET(request: Request) {
       : user.role === "driver"
         ? await env.DB.prepare("SELECT m.* FROM vehicle_maintenance m WHERE m.license_plate IN (SELECT license_plate FROM weekly_planning WHERE staff_id=?) ORDER BY m.created_at DESC").bind(driverStaffId || -1).all()
         : await env.DB.prepare("SELECT * FROM vehicle_maintenance ORDER BY created_at DESC").all();
+  const latestTrackingSql = `SELECT t.id, t.license_plate, t.device_id, t.provider, t.enabled, t.last_connected_at,
+      p.latitude, p.longitude, p.speed_kph, p.heading, p.ignition, p.odometer_km, p.address, p.source, p.recorded_at, p.received_at
+    FROM truck_trackers t
+    LEFT JOIN truck_positions p ON p.id=(SELECT tp.id FROM truck_positions tp WHERE tp.tracker_id=t.id ORDER BY tp.recorded_at DESC, tp.id DESC LIMIT 1)`;
+  const tracking = user.role === "accountant"
+    ? { results: [] }
+    : user.role === "driver"
+      ? await env.DB.prepare(`${latestTrackingSql}
+          WHERE t.enabled=1 AND t.license_plate IN (
+            SELECT DISTINCT license_plate FROM weekly_planning
+            WHERE license_plate IS NOT NULL AND license_plate!='' AND (staff_id=? OR driver_name=?))
+          ORDER BY t.license_plate`)
+        .bind(driverStaffId || -1, user.fullName)
+        .all()
+      : await env.DB.prepare(`${latestTrackingSql} ORDER BY t.license_plate`).all();
   const loginAudit = user.role === "management"
     ? await env.DB.prepare("SELECT * FROM login_audit ORDER BY created_at DESC LIMIT 100").all()
     : { results: [] };
@@ -136,6 +151,7 @@ export async function GET(request: Request) {
     employeeDocuments: employeeDocuments.results,
     payroll: payroll.results,
     maintenance: maintenance.results,
+    tracking: tracking.results,
     loginAudit: loginAudit.results,
     resetRequests: resetRequests.results,
     audit: audit.results,
@@ -635,6 +651,56 @@ export async function POST(request: Request) {
     if (body.status === "Werkstatt") await env.DB.prepare("UPDATE vehicles SET status='workshop', updated_at=? WHERE license_plate=(SELECT license_plate FROM vehicle_maintenance WHERE id=?)").bind(now, body.id).run();
     if (body.status === "Freigegeben") await env.DB.prepare("UPDATE vehicles SET status='active', updated_at=? WHERE license_plate=(SELECT license_plate FROM vehicle_maintenance WHERE id=?)").bind(now, body.id).run();
     auditDetails = { oldValue, newValue: { category: body.category, description: body.description, cost: body.cost, status: body.status, responsible: body.responsible, dueDate: body.dueDate } };
+  } else if (
+    action === "saveTracker" &&
+    ["management", "dispatcher"].includes(user.role)
+  ) {
+    const licensePlate = String(body.licensePlate || "").trim();
+    const deviceId = String(body.deviceId || "").trim();
+    const provider = String(body.provider || "Andere").trim();
+    if (!licensePlate || !deviceId)
+      return json({ error: "Kennzeichen und Geräte-ID sind erforderlich" }, 400);
+    const vehicle = await env.DB.prepare("SELECT id FROM vehicles WHERE license_plate=?")
+      .bind(licensePlate)
+      .first();
+    if (!vehicle) return json({ error: "Fahrzeug ist nicht im Fahrzeugstamm" }, 404);
+    const duplicate = await env.DB.prepare("SELECT license_plate FROM truck_trackers WHERE device_id=? AND license_plate!=?")
+      .bind(deviceId, licensePlate)
+      .first<{ license_plate: string }>();
+    if (duplicate)
+      return json({ error: `Geräte-ID ist bereits ${duplicate.license_plate} zugeordnet` }, 409);
+    const oldValue = await env.DB.prepare("SELECT * FROM truck_trackers WHERE license_plate=?")
+      .bind(licensePlate)
+      .first();
+    await env.DB.prepare(`INSERT INTO truck_trackers (license_plate, device_id, provider, enabled, created_at, updated_at)
+      VALUES (?, ?, ?, 1, ?, ?)
+      ON CONFLICT(license_plate) DO UPDATE SET device_id=excluded.device_id, provider=excluded.provider, enabled=1, updated_at=excluded.updated_at`)
+      .bind(licensePlate, deviceId, provider, now, now)
+      .run();
+    auditDetails = { oldValue, newValue: { licensePlate, deviceId, provider, enabled: true } };
+  } else if (
+    action === "addManualPosition" &&
+    ["management", "dispatcher"].includes(user.role)
+  ) {
+    const licensePlate = String(body.licensePlate || "").trim();
+    const latitude = Number(body.latitude);
+    const longitude = Number(body.longitude);
+    const speedKph = Number(body.speedKph || 0);
+    if (!licensePlate || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180)
+      return json({ error: "Gültiges Kennzeichen sowie GPS-Breite und GPS-Länge eingeben" }, 400);
+    if (!Number.isFinite(speedKph) || speedKph < 0 || speedKph > 250)
+      return json({ error: "Geschwindigkeit muss zwischen 0 und 250 km/h liegen" }, 400);
+    const tracker = await env.DB.prepare("SELECT id FROM truck_trackers WHERE license_plate=? AND enabled=1")
+      .bind(licensePlate)
+      .first<{ id: number }>();
+    if (!tracker) return json({ error: "Zuerst einen Tracker mit dem Fahrzeug verbinden" }, 409);
+    await env.DB.prepare("INSERT INTO truck_positions (tracker_id, license_plate, latitude, longitude, speed_kph, heading, ignition, odometer_km, address, source, recorded_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)")
+      .bind(tracker.id, licensePlate, latitude, longitude, speedKph, body.heading == null ? null : Number(body.heading), String(body.ignition || "") === "true" || String(body.ignition || "") === "on" ? 1 : 0, body.odometerKm == null || body.odometerKm === "" ? null : Number(body.odometerKm), body.address || "", now, now)
+      .run();
+    await env.DB.prepare("UPDATE truck_trackers SET last_connected_at=?, updated_at=? WHERE id=?")
+      .bind(now, now, tracker.id)
+      .run();
+    auditDetails = { oldValue: null, newValue: { licensePlate, latitude, longitude, speedKph, source: "manual" } };
   } else if (action === "resolveResetRequest" && user.role === "management") {
     await env.DB.prepare("UPDATE password_reset_requests SET status='resolved', resolved_at=? WHERE id=?").bind(now, body.id).run();
   } else

@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -226,6 +226,39 @@ export const vehicleMaintenance = sqliteTable("vehicle_maintenance", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+export const truckTrackers = sqliteTable("truck_trackers", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  licensePlate: text("license_plate").notNull(),
+  deviceId: text("device_id").notNull(),
+  provider: text("provider").notNull().default("other"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  lastConnectedAt: text("last_connected_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("tracker_license_plate_unique").on(table.licensePlate),
+  uniqueIndex("tracker_device_id_unique").on(table.deviceId),
+]);
+
+export const truckPositions = sqliteTable("truck_positions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  trackerId: integer("tracker_id").notNull().references(() => truckTrackers.id),
+  licensePlate: text("license_plate").notNull(),
+  latitude: real("latitude").notNull(),
+  longitude: real("longitude").notNull(),
+  speedKph: real("speed_kph").notNull().default(0),
+  heading: real("heading"),
+  ignition: integer("ignition", { mode: "boolean" }).notNull().default(false),
+  odometerKm: real("odometer_km"),
+  address: text("address"),
+  source: text("source").notNull().default("tracker"),
+  recordedAt: text("recorded_at").notNull(),
+  receivedAt: text("received_at").notNull(),
+}, (table) => [
+  index("idx_truck_positions_plate_recorded").on(table.licensePlate, table.recordedAt),
+  index("idx_truck_positions_tracker_recorded").on(table.trackerId, table.recordedAt),
+]);
 export const vehicleFiles = sqliteTable("vehicle_files", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   staffId: integer("staff_id").references(() => staff.id),

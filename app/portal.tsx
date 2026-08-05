@@ -2,12 +2,13 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { PortalUser } from "../lib/auth";
-import { EmployeeDocuments, ExcelImporter, MaintenanceCenter, PasswordChange, PayrollCenter, SecurityCenter } from "./advanced-panels";
+import { EmployeeDocuments, ExcelImporter, MaintenanceCenter, PasswordChange, PayrollCenter, SecurityCenter, TruckTracking } from "./advanced-panels";
 
 type Section =
   | "overview"
   | "staff"
   | "vehicles"
+  | "tracking"
   | "planning"
   | "concerns"
   | "documents"
@@ -26,6 +27,7 @@ type Data = {
   employeeDocuments: Row[];
   payroll: Row[];
   maintenance: Row[];
+  tracking: Row[];
   loginAudit: Row[];
   resetRequests: Row[];
   audit: Row[];
@@ -47,6 +49,11 @@ const nav: { id: Section; label: string; roles: string[] }[] = [
   {
     id: "vehicles",
     label: "Fahrzeugakte",
+    roles: ["management", "dispatcher", "driver"],
+  },
+  {
+    id: "tracking",
+    label: "Live-Tracking",
     roles: ["management", "dispatcher", "driver"],
   },
   {
@@ -93,6 +100,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     employeeDocuments: [],
     payroll: [],
     maintenance: [],
+    tracking: [],
     loginAudit: [],
     resetRequests: [],
     audit: [],
@@ -176,6 +184,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     (item) =>
       !["Erledigt", "Delivered"].includes(String(item.completion_status)),
   ).length;
+  const trackingAlertCount = data.tracking.filter((item) => {
+    if (!item.recorded_at) return true;
+    const age = renderedAt - new Date(String(item.recorded_at)).getTime();
+    return age > 30 * 60_000 || Number(item.speed_kph || 0) > 90;
+  }).length;
   const title = nav.find((n) => n.id === section)?.label;
   return (
     <main className={`app-shell role-${currentUser.role}`}>
@@ -216,6 +229,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                         overview: "⌂",
                         staff: "◉",
                         vehicles: "▣",
+                        tracking: "⌖",
                         planning: "▦",
                         concerns: "!",
                         documents: "€",
@@ -232,6 +246,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 ["management", "dispatcher"].includes(currentUser.role) &&
                 openConcernCount ? (
                   <span className="nav-counter">{openConcernCount}</span>
+                ) : null}
+                {n.id === "tracking" && trackingAlertCount ? (
+                  <span className="nav-counter">{trackingAlertCount}</span>
                 ) : null}
               </button>
             ))}
@@ -491,6 +508,14 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   <VehicleFiles vehicles={data.vehicles} files={data.files} planning={data.planning} driver={currentUser.role === "driver"} reload={load} />
                   <MaintenanceCenter rows={data.maintenance} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} action={action} />
                 </div>
+              )}
+              {section === "tracking" && (
+                <TruckTracking
+                  rows={data.tracking}
+                  vehicles={data.vehicles}
+                  canManage={["management", "dispatcher"].includes(currentUser.role)}
+                  action={action}
+                />
               )}
               {section === "planning" && (
                 <Card title={`Fahrerplanung ${year} · KW ${kw}`}>

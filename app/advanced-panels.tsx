@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type Row = Record<string, string | number | null>;
 type Action = (payload: Record<string, string | number | null>) => Promise<void>;
@@ -121,6 +121,156 @@ export function SecurityCenter({ loginAudit, resetRequests, audit, action }: { l
     {resetRequests.length ? <div className="panel"><div className="panel-title"><div><h2>Offene Passwortanfragen</h2><p>Neuen Startcode im Mitarbeiterprofil vergeben und Anfrage schließen</p></div></div><div className="table-wrap"><table><thead><tr><th>Email</th><th>Anfrage</th><th /></tr></thead><tbody>{resetRequests.map((row) => <tr key={row.id}><td>{row.email}</td><td>{dateText(row.created_at)}</td><td><button className="edit-action" onClick={() => action({ action: "resolveResetRequest", id: row.id })}>Als erledigt markieren</button></td></tr>)}</tbody></table></div></div> : null}
     <div className="panel"><div className="panel-title"><div><h2>Login-Journal</h2><p>Erfolgreiche und fehlgeschlagene Anmeldeversuche</p></div></div><div className="table-wrap"><table><thead><tr><th>Zeit</th><th>Email</th><th>Ergebnis</th><th>IP</th></tr></thead><tbody>{loginAudit.map((row) => <tr key={row.id}><td>{String(row.created_at).slice(0, 16).replace("T", " ")}</td><td>{row.email}</td><td>{Number(row.success) ? <span className="ok-chip">Erfolgreich</span> : <span className="danger-chip">Fehlgeschlagen</span>}</td><td>{row.ip_address || "—"}</td></tr>)}</tbody></table></div></div>
     <div className="panel"><div className="panel-title"><div><h2>Änderungshistorie</h2><p>Wer, wann und welche Daten geändert hat</p></div></div><div className="table-wrap"><table><thead><tr><th>Zeit</th><th>Benutzer</th><th>Aktion</th><th>Objekt</th><th>Details</th></tr></thead><tbody>{audit.map((row) => <tr key={row.id}><td>{String(row.created_at).slice(0, 16).replace("T", " ")}</td><td>{row.user_name || row.user_id}</td><td>{row.action}</td><td>{row.entity_id || "—"}</td><td><details><summary>Anzeigen</summary><pre>{String(row.details || "{}").slice(0, 1200)}</pre></details></td></tr>)}</tbody></table></div></div></div>;
+}
+
+function trackerStatus(row: Row, clock: number) {
+  if (!row.recorded_at) return { label: "Kein Signal", tone: "offline" };
+  const ageMinutes = (clock - new Date(String(row.recorded_at)).getTime()) / 60_000;
+  if (ageMinutes > 30) return { label: "Offline", tone: "offline" };
+  if (Number(row.speed_kph || 0) > 90) return { label: "Tempoalarm", tone: "alert" };
+  if (Number(row.speed_kph || 0) > 3) return { label: "In Fahrt", tone: "moving" };
+  return { label: "Steht", tone: "online" };
+}
+
+export function TruckTracking({ rows, vehicles, canManage, action }: { rows: Row[]; vehicles: Row[]; canManage: boolean; action: Action }) {
+  const [selectedPlate, setSelectedPlate] = useState("");
+  const [history, setHistory] = useState<Row[]>([]);
+  const [clock, setClock] = useState(() => new Date().getTime());
+  const activePlate = selectedPlate || String(rows[0]?.license_plate || "");
+  const selected = rows.find((row) => String(row.license_plate) === activePlate) || rows[0];
+  const selectedRecordedAt = selected?.recorded_at;
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setClock(new Date().getTime()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    if (!activePlate) return;
+    fetch(`/api/tracking/history?plate=${encodeURIComponent(activePlate)}&limit=100`)
+      .then((response) => response.json() as Promise<{ rows?: Row[] }>)
+      .then((result) => { if (!cancelled) setHistory(result.rows || []); })
+      .catch(() => { if (!cancelled) setHistory([]); });
+    return () => { cancelled = true; };
+  }, [activePlate, selectedRecordedAt]);
+
+  const summary = useMemo(() => rows.reduce((result, row) => {
+    const status = trackerStatus(row, clock);
+    result.total += 1;
+    if (status.tone === "offline") result.offline += 1;
+    else result.online += 1;
+    if (status.tone === "moving" || status.tone === "alert") result.moving += 1;
+    if (status.tone === "alert") result.alerts += 1;
+    return result;
+  }, { total: 0, online: 0, moving: 0, offline: 0, alerts: 0 }), [rows, clock]);
+
+  async function saveTracker(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    await action({ action: "saveTracker", licensePlate: String(values.licensePlate || ""), provider: String(values.provider || ""), deviceId: String(values.deviceId || "") });
+    form.reset();
+  }
+  async function addManualPosition(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const values = Object.fromEntries(formData.entries());
+    await action({
+      action: "addManualPosition",
+      licensePlate: String(values.licensePlate || ""),
+      latitude: String(values.latitude || ""),
+      longitude: String(values.longitude || ""),
+      speedKph: String(values.speedKph || "0"),
+      heading: String(values.heading || ""),
+      odometerKm: String(values.odometerKm || ""),
+      ignition: formData.has("ignition") ? "true" : "false",
+      address: String(values.address || ""),
+    });
+    form.reset();
+  }
+
+  const latitude = selected?.latitude == null ? null : Number(selected.latitude);
+  const longitude = selected?.longitude == null ? null : Number(selected.longitude);
+  const hasPosition = latitude !== null && longitude !== null && Number.isFinite(latitude) && Number.isFinite(longitude);
+  const status = selected ? trackerStatus(selected, clock) : { label: "Kein Signal", tone: "offline" };
+  const signalAge = selected?.recorded_at ? Math.max(0, Math.floor((clock - new Date(String(selected.recorded_at)).getTime()) / 60_000)) : null;
+
+  return <div className="advanced-stack tracking-page">
+    <div className="tracking-summary">
+      <div><span>Tracker</span><strong>{summary.total}</strong></div>
+      <div><span>Online</span><strong>{summary.online}</strong></div>
+      <div><span>In Fahrt</span><strong>{summary.moving}</strong></div>
+      <div className={summary.offline ? "tracking-warning" : ""}><span>Offline</span><strong>{summary.offline}</strong></div>
+      <div className={summary.alerts ? "tracking-danger" : ""}><span>Alarme</span><strong>{summary.alerts}</strong></div>
+    </div>
+
+    <div className="tracking-layout">
+      <aside className="tracker-list" aria-label="Fahrzeuge mit Tracker">
+        <div className="tracker-list-title"><strong>Fahrzeugflotte</strong><small>Aktualisierung alle 15 Sek.</small></div>
+        {rows.length ? rows.map((row) => {
+          const itemStatus = trackerStatus(row, clock);
+          return <button key={row.id} className={`tracker-card ${String(row.license_plate) === activePlate ? "tracker-card-active" : ""}`} onClick={() => setSelectedPlate(String(row.license_plate))}>
+            <span className={`tracker-dot tracker-${itemStatus.tone}`} />
+            <span><strong>{row.license_plate}</strong><small>{row.address || row.provider || "Position unbekannt"}</small></span>
+            <span className="tracker-card-state"><b>{Math.round(Number(row.speed_kph || 0))} km/h</b><small>{itemStatus.label}</small></span>
+          </button>;
+        }) : <div className="empty-state">Noch kein Fahrzeug-Tracker verbunden.</div>}
+      </aside>
+
+      <section className="tracker-map-panel">
+        <div className="tracker-map-heading">
+          <div><span className={`tracker-dot tracker-${status.tone}`} /><div><h2>{selected?.license_plate || "Live-Tracking"}</h2><p>{status.label} · {signalAge == null ? "kein Signal" : `letztes Signal vor ${signalAge} Min.`}</p></div></div>
+        </div>
+        <div className="tracker-private-map">
+          <div className="tracker-grid-lines" />
+          {hasPosition ? <div className={`truck-marker tracker-${status.tone}`}><span>▰</span><strong>{selected?.license_plate}</strong></div> : <div className="empty-state">Noch keine GPS-Position vorhanden.</div>}
+          <div className="tracker-location-label"><strong>{selected?.address || "GPS-Position"}</strong><span>{hasPosition ? `${latitude!.toFixed(5)}, ${longitude!.toFixed(5)}` : "—"}</span></div>
+        </div>
+        {selected ? <div className="tracking-detail-grid">
+          <div><span>Geschwindigkeit</span><strong>{Math.round(Number(selected.speed_kph || 0))} km/h</strong></div>
+          <div><span>Zündung</span><strong>{Number(selected.ignition) ? "Ein" : "Aus"}</strong></div>
+          <div><span>Kilometerstand</span><strong>{selected.odometer_km == null ? "—" : `${Number(selected.odometer_km).toLocaleString("de-DE")} km`}</strong></div>
+          <div><span>Tracker</span><strong>{selected.provider} · {selected.device_id}</strong></div>
+          <div><span>Koordinaten</span><strong>{hasPosition ? `${latitude!.toFixed(5)}, ${longitude!.toFixed(5)}` : "—"}</strong></div>
+          <div><span>Datenquelle</span><strong>{selected.source === "demo" ? "Demo (nicht live)" : selected.source === "manual" ? "Manuell" : "GPS-Tracker"}</strong></div>
+        </div> : null}
+        {selected?.source === "demo" ? <div className="tracking-demo-note">Demo-Koordinaten: Für echte Live-Daten bitte den eingebauten Tracker oder Telematik-Anbieter verbinden.</div> : null}
+      </section>
+    </div>
+
+    <div className="panel">
+      <div className="panel-title"><div><h2>Positionsverlauf</h2><p>Die letzten 100 Meldungen des ausgewählten Fahrzeugs</p></div></div>
+      <div className="table-wrap"><table><thead><tr><th>Zeit</th><th>Ort</th><th>Geschwindigkeit</th><th>Zündung</th><th>Koordinaten</th><th>Quelle</th></tr></thead><tbody>{history.length ? history.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td>{String(row.recorded_at).slice(0, 16).replace("T", " ")}</td><td>{row.address || "—"}</td><td>{Math.round(Number(row.speed_kph || 0))} km/h</td><td>{Number(row.ignition) ? "Ein" : "Aus"}</td><td>{Number(row.latitude).toFixed(5)}, {Number(row.longitude).toFixed(5)}</td><td>{row.source === "demo" ? "Demo" : row.source === "manual" ? "Manuell" : "Tracker"}</td></tr>) : <tr><td colSpan={6}>Noch keine Positionshistorie</td></tr>}</tbody></table></div>
+    </div>
+
+    {canManage ? <div className="tracking-config-grid">
+      <div className="panel">
+        <div className="panel-title"><div><h2>Tracker verbinden</h2><p>Geräte-ID eindeutig einem Kennzeichen zuordnen</p></div></div>
+        <form className="advanced-form tracking-form" onSubmit={saveTracker}>
+          <select name="licensePlate" required defaultValue=""><option value="">Kennzeichen wählen</option>{vehicles.map((vehicle) => <option key={vehicle.id}>{vehicle.license_plate}</option>)}</select>
+          <select name="provider" defaultValue="Webfleet"><option>Webfleet</option><option>Samsara</option><option>Geotab</option><option>Verizon Connect</option><option>Fleet Complete</option><option>Andere</option></select>
+          <input name="deviceId" required placeholder="Geräte-ID / IMEI" />
+          <button className="primary-button">Tracker speichern</button>
+        </form>
+        <div className="tracking-api-note"><strong>Geschützte Schnittstelle</strong><span>Der Anbieter sendet Daten an <code>/api/tracking/ingest</code>. Der geheime Zugriffsschlüssel wird nur auf dem Server gespeichert.</span></div>
+      </div>
+      <div className="panel">
+        <div className="panel-title"><div><h2>Testposition erfassen</h2><p>Nur für Einrichtung oder als manueller Fallback</p></div></div>
+        <form className="advanced-form tracking-form" onSubmit={addManualPosition}>
+          <select name="licensePlate" required defaultValue=""><option value="">Kennzeichen wählen</option>{rows.map((row) => <option key={row.id}>{row.license_plate}</option>)}</select>
+          <input name="latitude" type="number" min="-90" max="90" step="0.000001" required placeholder="Breitengrad" />
+          <input name="longitude" type="number" min="-180" max="180" step="0.000001" required placeholder="Längengрад" />
+          <input name="speedKph" type="number" min="0" max="250" step="0.1" placeholder="km/h" />
+          <input name="heading" type="number" min="0" max="359.9" step="0.1" placeholder="Richtung 0–359°" />
+          <input name="odometerKm" type="number" min="0" step="0.1" placeholder="Kilometerstand" />
+          <input name="address" placeholder="Ort / Adresse (optional)" />
+          <label className="tracking-check"><input name="ignition" type="checkbox" /> Zündung ein</label>
+          <button className="primary-button">Testposition speichern</button>
+        </form>
+      </div>
+    </div> : null}
+  </div>;
 }
 
 export function PasswordChange({ required, done }: { required: boolean; done: () => void }) {

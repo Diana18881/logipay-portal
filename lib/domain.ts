@@ -116,6 +116,24 @@ export async function ensureDomainDatabase() {
     env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS password_reset_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, resolved_at TEXT)`,
     ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS truck_trackers (id INTEGER PRIMARY KEY AUTOINCREMENT, license_plate TEXT NOT NULL, device_id TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'other', enabled INTEGER NOT NULL DEFAULT 1, last_connected_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS tracker_license_plate_unique ON truck_trackers(license_plate)`,
+    ),
+    env.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS tracker_device_id_unique ON truck_trackers(device_id)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS truck_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, tracker_id INTEGER NOT NULL, license_plate TEXT NOT NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, speed_kph REAL NOT NULL DEFAULT 0, heading REAL, ignition INTEGER NOT NULL DEFAULT 0, odometer_km REAL, address TEXT, source TEXT NOT NULL DEFAULT 'tracker', recorded_at TEXT NOT NULL, received_at TEXT NOT NULL, FOREIGN KEY (tracker_id) REFERENCES truck_trackers(id))`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_truck_positions_plate_recorded ON truck_positions(license_plate, recorded_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_truck_positions_tracker_recorded ON truck_positions(tracker_id, recorded_at)`,
+    ),
   ]);
   const planningColumns = await env.DB.prepare(
     "PRAGMA table_info(weekly_planning)",
@@ -348,4 +366,32 @@ export async function ensureDomainDatabase() {
       ),
     );
   }
+  const trackerCount = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM truck_trackers",
+  ).first<{ count: number }>();
+  if (!trackerCount?.count) {
+    const now = new Date();
+    const demo = [
+      ["B-CY 3603", "DEMO-B-CY-3603", "Demo", 52.520008, 13.404954, 72, 84, 1, 412568, "Berlin-Mitte", 2],
+      ["B-ML 4182", "DEMO-B-ML-4182", "Demo", 52.375892, 9.732010, 0, 0, 0, 286410, "Hannover", 8],
+      ["KR-QG 237", "DEMO-KR-QG-237", "Demo", 52.120533, 11.627624, 96, 248, 1, 350892, "Magdeburg", 1],
+      ["B-YL 7868", "DEMO-B-YL-7868", "Demo", 51.339695, 12.373075, 0, 0, 0, 521044, "Leipzig · Werkstatt", 55],
+      ["B-RS 9120", "DEMO-B-RS-9120", "Demo", 53.551086, 9.993682, 0, 0, 0, 198553, "Hamburg", 20],
+    ] as const;
+    for (const row of demo) {
+      const recordedAt = new Date(now.getTime() - row[10] * 60_000).toISOString();
+      const created = await env.DB.prepare(
+        "INSERT OR IGNORE INTO truck_trackers (license_plate, device_id, provider, enabled, last_connected_at, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)",
+      ).bind(row[0], row[1], row[2], recordedAt, now.toISOString(), now.toISOString()).run();
+      const tracker = created.meta.last_row_id
+        ? { id: Number(created.meta.last_row_id) }
+        : await env.DB.prepare("SELECT id FROM truck_trackers WHERE license_plate=?").bind(row[0]).first<{ id: number }>();
+      if (tracker?.id) {
+        await env.DB.prepare(
+          "INSERT INTO truck_positions (tracker_id, license_plate, latitude, longitude, speed_kph, heading, ignition, odometer_km, address, source, recorded_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'demo', ?, ?)",
+        ).bind(tracker.id, row[0], row[3], row[4], row[5], row[6], row[7], row[8], row[9], recordedAt, recordedAt).run();
+      }
+    }
+  }
+  await env.DB.prepare("PRAGMA optimize").run();
 }
