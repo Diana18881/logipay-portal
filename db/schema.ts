@@ -125,3 +125,12 @@ export const driverConcerns = sqliteTable("driver_concerns", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+export const auditLog = sqliteTable("audit_log", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id),
+  action: text("action").notNull(),
+  entityId: text("entity_id"),
+  details: text("details"),
+  createdAt: text("created_at").notNull(),
+});

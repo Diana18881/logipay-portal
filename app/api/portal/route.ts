@@ -67,7 +67,14 @@ export async function POST(request: Request) {
     await env.DB.prepare("INSERT INTO vehicles (license_plate, company, location, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(body.licensePlate, body.company || "", body.location || "", body.status || "active", body.notes || "", now, now).run();
   } else if (action === "addPlanning" && ["management","dispatcher"].includes(user.role)) {
     const assigned = body.driverName ? await env.DB.prepare("SELECT id FROM staff WHERE full_name=? AND status='active'").bind(body.driverName).first<{id:number}>() : null;
+    const conflict = await env.DB.prepare("SELECT driver_name, license_plate FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?)) LIMIT 1").bind(body.planningYear, body.calendarWeek, assigned?.id || -1, body.licensePlate || "").first<{driver_name:string;license_plate:string}>();
+    if (conflict) return json({ error: `Konflikt: Fahrer oder Fahrzeug ist in dieser KW bereits eingeplant (${conflict.driver_name} / ${conflict.license_plate})` }, 409);
     await env.DB.prepare("INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, block_id, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(body.planningYear, body.calendarWeek, body.company, assigned?.id || null, body.driverName || "", body.location || "", body.licensePlate || "", body.blockId || "", body.status || "planned", body.comments || "", now, now).run();
+  } else if (action === "updatePlanning" && ["management","dispatcher"].includes(user.role)) {
+    const assigned = body.driverName ? await env.DB.prepare("SELECT id FROM staff WHERE full_name=? AND status='active'").bind(body.driverName).first<{id:number}>() : null;
+    const conflict = await env.DB.prepare("SELECT id FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND id!=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?)) LIMIT 1").bind(body.planningYear,body.calendarWeek,body.id,assigned?.id||-1,body.licensePlate||"").first();
+    if (conflict) return json({ error: "Konflikt: Fahrer oder Fahrzeug ist bereits eingeplant" }, 409);
+    await env.DB.prepare("UPDATE weekly_planning SET company=?, staff_id=?, driver_name=?, location=?, license_plate=?, block_id=?, status=?, comments=?, updated_at=? WHERE id=?").bind(body.company,assigned?.id||null,body.driverName||"",body.location||"",body.licensePlate||"",body.blockId||"",body.status||"planned",body.comments||"",now,body.id).run();
   } else if (action === "deletePlanning" && ["management","dispatcher"].includes(user.role)) {
     await env.DB.prepare("DELETE FROM weekly_planning WHERE id=?").bind(body.id).run();
   } else if (action === "copyPreviousWeek" && ["management","dispatcher"].includes(user.role)) {
@@ -89,5 +96,6 @@ export async function POST(request: Request) {
   } else if (action === "deleteConcern" && ["management","dispatcher"].includes(user.role)) {
     await env.DB.prepare("DELETE FROM driver_concerns WHERE id=?").bind(body.id).run();
   } else return json({ error: "Keine Berechtigung oder unbekannte Aktion" }, 403);
+  await env.DB.prepare("INSERT INTO audit_log (user_id, action, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?)").bind(user.id, action, String(body.id || ""), JSON.stringify({ role:user.role, year:body.planningYear, week:body.calendarWeek }), now).run();
   return json({ ok: true });
 }

@@ -43,6 +43,13 @@
       "when": 1785924340900,
       "tag": "0005_wooden_naoko",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1785927008196,
+      "tag": "0006_eminent_dazzler",
+      "breakpoints": true
     }
   ]
 }
