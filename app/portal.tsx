@@ -3,60 +3,1410 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { PortalUser } from "../lib/auth";
 
-type Section = "overview" | "staff" | "vehicles" | "planning" | "concerns" | "documents" | "reports";
+type Section =
+  | "overview"
+  | "staff"
+  | "vehicles"
+  | "planning"
+  | "concerns"
+  | "documents"
+  | "reports";
 type Row = Record<string, string | number | null>;
-type Data = { staff: Row[]; vehicles: Row[]; planning: Row[]; concerns: Row[]; documents: Row[]; files:Row[]; year: number; kw: number };
+type Data = {
+  staff: Row[];
+  vehicles: Row[];
+  planning: Row[];
+  concerns: Row[];
+  documents: Row[];
+  files: Row[];
+  year: number;
+  kw: number;
+};
 
 const nav: { id: Section; label: string; roles: string[] }[] = [
-  { id: "overview", label: "Übersicht", roles: ["management","accountant","dispatcher","driver"] },
-  { id: "staff", label: "Mitarbeiter", roles: ["management","accountant","dispatcher"] },
-  { id: "vehicles", label: "Fahrzeugakte", roles: ["management","dispatcher","driver"] },
-  { id: "planning", label: "KW-Planung", roles: ["management","dispatcher","driver"] },
-  { id: "concerns", label: "Fahreranliegen", roles: ["management","accountant","dispatcher","driver"] },
-  { id: "documents", label: "Lohnabrechnungen", roles: ["management","accountant","driver"] },
-  { id: "reports", label: "Berichte", roles: ["management","accountant"] },
+  {
+    id: "overview",
+    label: "Übersicht",
+    roles: ["management", "accountant", "dispatcher", "driver"],
+  },
+  {
+    id: "staff",
+    label: "Mitarbeiter",
+    roles: ["management", "accountant", "dispatcher"],
+  },
+  {
+    id: "vehicles",
+    label: "Fahrzeugakte",
+    roles: ["management", "dispatcher", "driver"],
+  },
+  {
+    id: "planning",
+    label: "KW-Planung",
+    roles: ["management", "dispatcher", "driver"],
+  },
+  {
+    id: "concerns",
+    label: "Fahreranliegen",
+    roles: ["management", "accountant", "dispatcher", "driver"],
+  },
+  {
+    id: "documents",
+    label: "Lohnabrechnungen",
+    roles: ["management", "accountant", "driver"],
+  },
+  { id: "reports", label: "Berichte", roles: ["management", "accountant"] },
 ];
 
-const labels: Record<string,string> = { management:"Management", accountant:"Buchhaltung", dispatcher:"Disposition", driver:"Fahrer" };
+const labels: Record<string, string> = {
+  management: "Management",
+  accountant: "Buchhaltung",
+  dispatcher: "Disposition",
+  driver: "Fahrer",
+};
 
 export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const [section, setSection] = useState<Section>("overview");
-  const [data, setData] = useState<Data>({ staff:[], vehicles:[], planning:[], concerns:[], documents:[], files:[], year:2026, kw:32 });
-  const [year, setYear] = useState(new Date().getFullYear()); const [kw, setKw] = useState(32); const [loading, setLoading] = useState(true); const [modal, setModal] = useState<"staff"|"vehicle"|"planning"|"concern"|null>(null); const [editing,setEditing]=useState<Row|null>(null); const [notice,setNotice]=useState("");
-  const load = useCallback(async () => { setLoading(true); try { const r=await fetch(`/api/portal?year=${year}&kw=${kw}`); if(r.status===401){location.href="/login";return;} const body=await r.text(); if(!r.ok){setNotice("Datenbank wird aktualisiert. Bitte Seite neu laden.");setLoading(false);return;} setData(JSON.parse(body)); } catch { setNotice("Daten konnten nicht geladen werden. Bitte Seite neu laden."); } finally { setLoading(false); } },[year,kw]);
-  useEffect(()=>{ load(); },[load]);
-  async function action(payload: Record<string,unknown>) { const r=await fetch("/api/portal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}); if(!r.ok){const e=await r.json().catch(()=>({error:"Aktion nicht erlaubt"}));setNotice(e.error||"Aktion nicht erlaubt");return;} setModal(null);setEditing(null); setNotice("Änderung gespeichert"); await load(); }
-  function openModal(kind:"staff"|"vehicle"|"planning"|"concern", row?:Row){setEditing(row||null);setModal(kind)}
-  function printPdf(){window.print()}
-  async function logout(){await fetch("/api/auth/logout",{method:"POST"});location.href="/login";}
-  const active=data.staff.filter(x=>x.status==="active"); const workshop=data.vehicles.filter(x=>x.status==="workshop");
-  const title=nav.find(n=>n.id===section)?.label;
-  return <main className={`app-shell role-${currentUser.role}`}>
-    <aside className="sidebar"><div className="brand"><div className="brand-mark"><span/><span/><span/></div><div><strong>LOGIPAY</strong><small>Personal & Disposition</small></div></div><div className="access-card"><span className="access-dot"/><div><small>ANGEMELDET ALS</small><strong>{labels[currentUser.role]}</strong></div></div><nav><p>ARBEITSBEREICH</p>{nav.filter(n=>n.roles.includes(currentUser.role)).map(n=><button key={n.id} className={section===n.id?"nav-active":""} onClick={()=>setSection(n.id)}><span className="nav-icon">{({overview:"⌂",staff:"◉",vehicles:"▣",planning:"▦",concerns:"!",documents:"€",reports:"▥"} as Record<string,string>)[n.id]}</span>{n.label}</button>)}</nav><div className="sidebar-bottom"><div className="profile"><div className="avatar">{currentUser.fullName.split(" ").map(x=>x[0]).join("").slice(0,2)}</div><div><strong>{currentUser.fullName}</strong><small>{labels[currentUser.role]}</small></div></div><button className="logout-button" onClick={logout}>↪ Abmelden</button></div></aside>
-    <section className="workspace"><header className="topbar"><div className="period-control"><span>Planungszeitraum</span><select value={year} onChange={e=>setYear(+e.target.value)}>{Array.from({length:5},(_,i)=>new Date().getFullYear()-1+i).map(y=><option key={y}>{y}</option>)}</select><select value={kw} onChange={e=>setKw(+e.target.value)}>{Array.from({length:53},(_,i)=>i+1).map(k=><option key={k} value={k}>KW {k}</option>)}</select><button className="next-week" onClick={()=>{if(kw<53)setKw(kw+1);else{setKw(1);setYear(year+1)}}}>Nächste Woche →</button></div><div className="top-actions"><button className="pdf-button" onClick={printPdf}>↓ Als PDF</button><div className="status-chip"><span/> Datenbank verbunden</div></div></header><div className="content"><div className="page-heading"><div><p>LOGISTIKVERWALTUNG</p><h1>{title}</h1><span>Zentrale Daten statt einzelner Excel-Tabellen</span></div>{section==="staff"&&currentUser.role==="management"?<button className="primary-button" onClick={()=>openModal("staff")}>＋ Mitarbeiter einstellen</button>:section==="vehicles"?<button className="primary-button" onClick={()=>openModal("vehicle")}>＋ Fahrzeug anlegen</button>:section==="planning"&&currentUser.role!=="driver"?<button className="primary-button" onClick={()=>openModal("planning")}>＋ Planung für {year} / KW {kw}</button>:section==="concerns"&&currentUser.role!=="accountant"?<button className="primary-button" onClick={()=>openModal("concern")}>＋ Anliegen erfassen</button>:null}</div>
-    {loading?<div className="empty-state">Daten werden geladen…</div>:<>
-      {section==="overview"&&(currentUser.role==="driver"?<DriverHome person={data.staff[0]} planning={data.planning} documents={data.documents} kw={kw}/>:<><div className="metric-grid"><Metric label="Aktive Mitarbeiter" value={String(active.length)} note={`${data.staff.length-active.length} ausgeschieden`}/><Metric label="Fahrzeuge" value={String(data.vehicles.length)} note={`${workshop.length} in Werkstatt`}/><Metric label={`Planung KW ${kw}`} value={String(data.planning.length)} note="Zuordnungen"/><Metric label="Abrechnungen" value={String(data.documents.length)} note="sicher gespeichert"/></div><div className="dashboard-grid"><Card title="Aktuelle Planung"><Planning rows={data.planning.slice(0,6)}/></Card><Card title="Hinweise"><div className="attention-list"><p><b>{workshop.length}</b><span>Fahrzeuge in der Werkstatt</span></p><p><b>{active.filter(x=>x.vacation).length}</b><span>Urlaubseinträge</span></p><p><b>{data.planning.filter(x=>x.status==="attention").length}</b><span>Planungen mit Hinweis</span></p></div></Card></div></>)}
-      {section==="staff"&&<Card title="Mitarbeiterstamm"><div className="table-wrap"><table><thead><tr><th>Name</th><th>Systemart</th><th>Vergütung</th><th>Standort</th><th>Firma</th><th>Urlaub</th><th>Status</th><th/></tr></thead><tbody>{data.staff.map(s=><tr key={s.id}><td><strong>{s.full_name}</strong></td><td>{s.system_type||"—"}</td><td>{s.compensation||"—"}</td><td>{s.location||"—"}</td><td>{s.company||"—"}</td><td>{s.vacation||"—"}</td><td><Badge value={String(s.status)}/></td><td>{currentUser.role==="management"?<div className="row-buttons"><button className="edit-action" onClick={()=>openModal("staff",s)}>Bearbeiten</button><button className="row-action" onClick={()=>action({action:s.status==="active"?"archiveStaff":"restoreStaff",id:s.id})}>{s.status==="active"?"Ausscheiden":"Reaktivieren"}</button>{s.status==="archived"?<button className="delete-action" onClick={()=>confirm("Endgültig löschen?")&&action({action:"deleteStaff",id:s.id})}>Löschen</button>:null}</div>:null}</td></tr>)}</tbody></table></div></Card>}
-      {section==="vehicles"&&<VehicleFiles vehicles={data.vehicles} files={data.files} planning={data.planning} driver={currentUser.role==="driver"} reload={load}/>} 
-      {section==="planning"&&<Card title={`Fahrerplanung ${year} · KW ${kw}`}>{currentUser.role!=="driver"?<div className="planning-tools"><span>Neuen Wochenplan erstellen oder die vorige Woche als Vorlage übernehmen.</span><button onClick={()=>action({action:"copyPreviousWeek",planningYear:year,calendarWeek:kw})}>Vorwoche kopieren</button></div>:null}<Planning rows={data.planning} canEdit={currentUser.role!=="driver"} remove={(id)=>action({action:"deletePlanning",id})}/></Card>}
-      {section==="concerns"&&(currentUser.role==="driver"?<DriverConcerns rows={data.concerns} year={year} kw={kw} submit={action}/>:<Concerns rows={data.concerns} canEdit={currentUser.role!=="accountant"} edit={r=>openModal("concern",r)} remove={id=>action({action:"deleteConcern",id})}/>)} 
-      {section==="documents"&&<Documents rows={data.documents} staff={active} driver={currentUser.role==="driver"} canUpload={["management","accountant"].includes(currentUser.role)} reload={load}/>} 
-      {section==="reports"&&<div className="report-grid"><Report title={`Planning Report KW ${kw}`} text="Block-Rejections, offene Fälle und Hinweise aus der Wochenplanung."/><Report title="Mitarbeiterliste" text="Aktive und ausgeschiedene Mitarbeiter mit Firma, Standort und Systemart."/><Report title="Kennzeichenliste" text="Fahrzeuge, Werkstattstatus, TÜV/SP und Zuordnung."/><Report title="Lohnabrechnungsübersicht" text="Dokumentenstatus je Mitarbeiter und Abrechnungsmonat."/></div>}
-    </>}</div></section>
-    {modal&&<Modal title={modal==="staff"?(editing?"Mitarbeiter bearbeiten":"Mitarbeiter einstellen"):modal==="vehicle"?"Fahrzeug anlegen":modal==="planning"?`Planung ${year} · KW ${kw}`:editing?"Anliegen bearbeiten":"Anliegen erfassen"} close={()=>{setModal(null);setEditing(null)}}><EntryForm kind={modal} kw={kw} staff={active} editing={editing} submit={(payload)=>action({...payload,planningYear:year})}/></Modal>}
-    {notice&&<div className="toast" onClick={()=>setNotice("")}><span>✓</span>{notice}</div>}
-  </main>;
+  const [data, setData] = useState<Data>({
+    staff: [],
+    vehicles: [],
+    planning: [],
+    concerns: [],
+    documents: [],
+    files: [],
+    year: 2026,
+    kw: 32,
+  });
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [kw, setKw] = useState(32);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState<
+    "staff" | "vehicle" | "planning" | "concern" | null
+  >(null);
+  const [editing, setEditing] = useState<Row | null>(null);
+  const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
+  const [notice, setNotice] = useState("");
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/portal?year=${year}&kw=${kw}`);
+      if (r.status === 401) {
+        location.href = "/login";
+        return;
+      }
+      const body = await r.text();
+      if (!r.ok) {
+        setNotice("Datenbank wird aktualisiert. Bitte Seite neu laden.");
+        setLoading(false);
+        return;
+      }
+      setData(JSON.parse(body));
+    } catch {
+      setNotice("Daten konnten nicht geladen werden. Bitte Seite neu laden.");
+    } finally {
+      setLoading(false);
+    }
+  }, [year, kw]);
+  useEffect(() => {
+    load();
+  }, [load]);
+  async function action(payload: Record<string, unknown>) {
+    const r = await fetch("/api/portal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({ error: "Aktion nicht erlaubt" }));
+      setNotice(e.error || "Aktion nicht erlaubt");
+      return;
+    }
+    setModal(null);
+    setEditing(null);
+    setNotice("Änderung gespeichert");
+    await load();
+  }
+  function openModal(
+    kind: "staff" | "vehicle" | "planning" | "concern",
+    row?: Row,
+  ) {
+    setEditing(row || null);
+    setModal(kind);
+  }
+  function printPdf() {
+    window.print();
+  }
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    location.href = "/login";
+  }
+  const active = data.staff.filter((x) => x.status === "active");
+  const workshop = data.vehicles.filter((x) => x.status === "workshop");
+  const title = nav.find((n) => n.id === section)?.label;
+  return (
+    <main className={`app-shell role-${currentUser.role}`}>
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div>
+            <strong>LOGIPAY</strong>
+            <small>Personal & Disposition</small>
+          </div>
+        </div>
+        <div className="access-card">
+          <span className="access-dot" />
+          <div>
+            <small>ANGEMELDET ALS</small>
+            <strong>{labels[currentUser.role]}</strong>
+          </div>
+        </div>
+        <nav>
+          <p>ARBEITSBEREICH</p>
+          {nav
+            .filter((n) => n.roles.includes(currentUser.role))
+            .map((n) => (
+              <button
+                key={n.id}
+                className={section === n.id ? "nav-active" : ""}
+                onClick={() => setSection(n.id)}
+              >
+                <span className="nav-icon">
+                  {
+                    (
+                      {
+                        overview: "⌂",
+                        staff: "◉",
+                        vehicles: "▣",
+                        planning: "▦",
+                        concerns: "!",
+                        documents: "€",
+                        reports: "▥",
+                      } as Record<string, string>
+                    )[n.id]
+                  }
+                </span>
+                {n.label}
+              </button>
+            ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="profile">
+            <div className="avatar">
+              {currentUser.fullName
+                .split(" ")
+                .map((x) => x[0])
+                .join("")
+                .slice(0, 2)}
+            </div>
+            <div>
+              <strong>{currentUser.fullName}</strong>
+              <small>{labels[currentUser.role]}</small>
+            </div>
+          </div>
+          <button className="logout-button" onClick={logout}>
+            ↪ Abmelden
+          </button>
+        </div>
+      </aside>
+      <section className="workspace">
+        <header className="topbar">
+          <div className="period-control">
+            <span>Planungszeitraum</span>
+            <select value={year} onChange={(e) => setYear(+e.target.value)}>
+              {Array.from(
+                { length: 5 },
+                (_, i) => new Date().getFullYear() - 1 + i,
+              ).map((y) => (
+                <option key={y}>{y}</option>
+              ))}
+            </select>
+            <select value={kw} onChange={(e) => setKw(+e.target.value)}>
+              {Array.from({ length: 53 }, (_, i) => i + 1).map((k) => (
+                <option key={k} value={k}>
+                  KW {k}
+                </option>
+              ))}
+            </select>
+            <button
+              className="next-week"
+              onClick={() => {
+                if (kw < 53) setKw(kw + 1);
+                else {
+                  setKw(1);
+                  setYear(year + 1);
+                }
+              }}
+            >
+              Nächste Woche →
+            </button>
+          </div>
+          <div className="top-actions">
+            <button className="pdf-button" onClick={printPdf}>
+              ↓ Als PDF
+            </button>
+            <div className="status-chip">
+              <span /> Datenbank verbunden
+            </div>
+          </div>
+        </header>
+        <div className="content">
+          <div className="page-heading">
+            <div>
+              <p>LOGISTIKVERWALTUNG</p>
+              <h1>{title}</h1>
+              <span>Zentrale Daten statt einzelner Excel-Tabellen</span>
+            </div>
+            {section === "staff" && currentUser.role === "management" ? (
+              <button
+                className="primary-button"
+                onClick={() => openModal("staff")}
+              >
+                ＋ Mitarbeiter einstellen
+              </button>
+            ) : section === "vehicles" ? (
+              <button
+                className="primary-button"
+                onClick={() => openModal("vehicle")}
+              >
+                ＋ Fahrzeug anlegen
+              </button>
+            ) : section === "planning" && currentUser.role !== "driver" ? (
+              <button
+                className="primary-button"
+                onClick={() => openModal("planning")}
+              >
+                ＋ Planung für {year} / KW {kw}
+              </button>
+            ) : section === "concerns" && currentUser.role !== "accountant" ? (
+              <button
+                className="primary-button"
+                onClick={() => openModal("concern")}
+              >
+                ＋ Anliegen erfassen
+              </button>
+            ) : null}
+          </div>
+          {loading ? (
+            <div className="empty-state">Daten werden geladen…</div>
+          ) : (
+            <>
+              {section === "overview" &&
+                (currentUser.role === "driver" ? (
+                  <DriverHome
+                    person={data.staff[0]}
+                    planning={data.planning}
+                    documents={data.documents}
+                    kw={kw}
+                  />
+                ) : (
+                  <>
+                    <div className="metric-grid">
+                      <Metric
+                        label="Aktive Mitarbeiter"
+                        value={String(active.length)}
+                        note={`${data.staff.length - active.length} ausgeschieden`}
+                      />
+                      <Metric
+                        label="Fahrzeuge"
+                        value={String(data.vehicles.length)}
+                        note={`${workshop.length} in Werkstatt`}
+                      />
+                      <Metric
+                        label={`Planung KW ${kw}`}
+                        value={String(data.planning.length)}
+                        note="Zuordnungen"
+                      />
+                      <Metric
+                        label="Abrechnungen"
+                        value={String(data.documents.length)}
+                        note="sicher gespeichert"
+                      />
+                    </div>
+                    <div className="dashboard-grid">
+                      <Card title="Aktuelle Planung">
+                        <Planning rows={data.planning.slice(0, 6)} />
+                      </Card>
+                      <Card title="Hinweise">
+                        <div className="attention-list">
+                          <p>
+                            <b>{workshop.length}</b>
+                            <span>Fahrzeuge in der Werkstatt</span>
+                          </p>
+                          <p>
+                            <b>{active.filter((x) => x.vacation).length}</b>
+                            <span>Urlaubseinträge</span>
+                          </p>
+                          <p>
+                            <b>
+                              {
+                                data.planning.filter(
+                                  (x) => x.status === "attention",
+                                ).length
+                              }
+                            </b>
+                            <span>Planungen mit Hinweis</span>
+                          </p>
+                        </div>
+                      </Card>
+                    </div>
+                  </>
+                ))}
+              {section === "staff" && (
+                <Card title="Mitarbeiterstamm">
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Systemart</th>
+                          <th>Vergütung</th>
+                          <th>Standort</th>
+                          <th>Firma</th>
+                          <th>Urlaub</th>
+                          <th>Status</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.staff.map((s) => (
+                          <tr key={s.id}>
+                            <td>
+                              <button className="staff-link" onClick={() => setSelectedStaff(s)}>
+                                <strong>{s.full_name}</strong><small>Dossier öffnen</small>
+                              </button>
+                            </td>
+                            <td>{s.system_type || "—"}</td>
+                            <td>{s.compensation || "—"}</td>
+                            <td>{s.location || "—"}</td>
+                            <td>{s.company || "—"}</td>
+                            <td>{s.vacation || "—"}</td>
+                            <td>
+                              <Badge value={String(s.status)} />
+                            </td>
+                            <td>
+                              {currentUser.role === "management" ? (
+                                <div className="row-buttons">
+                                  <button
+                                    className="edit-action"
+                                    onClick={() => openModal("staff", s)}
+                                  >
+                                    Bearbeiten
+                                  </button>
+                                  <button
+                                    className="row-action"
+                                    onClick={() =>
+                                      action({
+                                        action:
+                                          s.status === "active"
+                                            ? "archiveStaff"
+                                            : "restoreStaff",
+                                        id: s.id,
+                                      })
+                                    }
+                                  >
+                                    {s.status === "active"
+                                      ? "Ausscheiden"
+                                      : "Reaktivieren"}
+                                  </button>
+                                  {s.status === "archived" ? (
+                                    <button
+                                      className="delete-action"
+                                      onClick={() =>
+                                        confirm("Endgültig löschen?") &&
+                                        action({
+                                          action: "deleteStaff",
+                                          id: s.id,
+                                        })
+                                      }
+                                    >
+                                      Löschen
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              )}
+              {section === "vehicles" && (
+                <VehicleFiles
+                  vehicles={data.vehicles}
+                  files={data.files}
+                  planning={data.planning}
+                  driver={currentUser.role === "driver"}
+                  reload={load}
+                />
+              )}
+              {section === "planning" && (
+                <Card title={`Fahrerplanung ${year} · KW ${kw}`}>
+                  {currentUser.role !== "driver" ? (
+                    <div className="planning-tools">
+                      <span>
+                        Neuen Wochenplan erstellen oder die vorige Woche als
+                        Vorlage übernehmen.
+                      </span>
+                      <button
+                        onClick={() =>
+                          action({
+                            action: "copyPreviousWeek",
+                            planningYear: year,
+                            calendarWeek: kw,
+                          })
+                        }
+                      >
+                        Vorwoche kopieren
+                      </button>
+                    </div>
+                  ) : null}
+                  <Planning
+                    rows={data.planning}
+                    canEdit={currentUser.role !== "driver"}
+                    remove={(id) => action({ action: "deletePlanning", id })}
+                  />
+                </Card>
+              )}
+              {section === "concerns" &&
+                (currentUser.role === "driver" ? (
+                  <DriverConcerns
+                    rows={data.concerns}
+                    year={year}
+                    kw={kw}
+                    submit={action}
+                  />
+                ) : (
+                  <Concerns
+                    rows={data.concerns}
+                    canEdit={currentUser.role !== "accountant"}
+                    edit={(r) => openModal("concern", r)}
+                    remove={(id) => action({ action: "deleteConcern", id })}
+                  />
+                ))}
+              {section === "documents" && (
+                <Documents
+                  rows={data.documents}
+                  staff={active}
+                  driver={currentUser.role === "driver"}
+                  canUpload={["management", "accountant"].includes(
+                    currentUser.role,
+                  )}
+                  reload={load}
+                />
+              )}
+              {section === "reports" && (
+                <div className="report-grid">
+                  <Report
+                    title={`Planning Report KW ${kw}`}
+                    text="Block-Rejections, offene Fälle und Hinweise aus der Wochenplanung."
+                  />
+                  <Report
+                    title="Mitarbeiterliste"
+                    text="Aktive und ausgeschiedene Mitarbeiter mit Firma, Standort und Systemart."
+                  />
+                  <Report
+                    title="Kennzeichenliste"
+                    text="Fahrzeuge, Werkstattstatus, TÜV/SP und Zuordnung."
+                  />
+                  <Report
+                    title="Lohnabrechnungsübersicht"
+                    text="Dokumentenstatus je Mitarbeiter und Abrechnungsmonat."
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+      {modal && (
+        <Modal
+          title={
+            modal === "staff"
+              ? editing
+                ? "Mitarbeiter bearbeiten"
+                : "Mitarbeiter einstellen"
+              : modal === "vehicle"
+                ? "Fahrzeug anlegen"
+                : modal === "planning"
+                  ? `Planung ${year} · KW ${kw}`
+                  : editing
+                    ? "Anliegen bearbeiten"
+                    : "Anliegen erfassen"
+          }
+          close={() => {
+            setModal(null);
+            setEditing(null);
+          }}
+        >
+          <EntryForm
+            kind={modal}
+            kw={kw}
+            staff={active}
+            editing={editing}
+            submit={(payload) => action({ ...payload, planningYear: year })}
+          />
+        </Modal>
+      )}
+      {selectedStaff && <DriverDossier staff={selectedStaff} planning={data.planning} vehicles={data.vehicles} files={data.files} close={() => setSelectedStaff(null)} />}
+      {notice && (
+        <div className="toast" onClick={() => setNotice("")}>
+          <span>✓</span>
+          {notice}
+        </div>
+      )}
+    </main>
+  );
 }
 
-function VehicleFiles({vehicles,files,planning,driver,reload}:{vehicles:Row[],files:Row[],planning:Row[],driver:boolean,reload:()=>Promise<void>}){const plates=Array.from(new Set([...vehicles.map(v=>String(v.license_plate)),...planning.map(p=>String(p.license_plate||"")).filter(Boolean)]));async function upload(e:FormEvent<HTMLFormElement>){e.preventDefault();const r=await fetch("/api/vehicle-files",{method:"POST",body:new FormData(e.currentTarget)});if(r.ok){e.currentTarget.reset();await reload()}else alert((await r.json()).error)}return <><Card title={driver?"Mein Fahrzeug · Fotos und Dokumente":"Digitale Fahrzeugakte"}><form className="upload-form" onSubmit={upload}><select name="licensePlate" required><option value="">Kennzeichen wählen</option>{plates.map(p=><option key={p}>{p}</option>)}</select><select name="category" required><option value="before">Vor Fahrt</option><option value="after">Nach Fahrt</option><option value="damage">Schaden</option><option value="tuev">TÜV / HU / SP</option><option value="document">Fahrzeugdokument</option></select><input name="notes" placeholder="Notiz"/><input name="file" type="file" accept="image/*,application/pdf" capture="environment" required/><button className="primary-button">Hochladen</button></form><div className="table-wrap"><table><thead><tr><th>Datum</th><th>Kennzeichen</th><th>Kategorie</th><th>Datei</th><th>Notiz</th></tr></thead><tbody>{files.length?files.map(f=><tr key={f.id}><td>{String(f.created_at).slice(0,16).replace("T"," ")}</td><td><strong>{f.license_plate}</strong></td><td><Badge value={String(f.category)}/></td><td><a href={`/api/vehicle-files/${f.id}`} target="_blank">{f.file_name}</a></td><td>{f.notes||"—"}</td></tr>):<tr><td colSpan={5}>Noch keine Fotos oder Dokumente.</td></tr>}</tbody></table></div></Card></>}
-function Metric({label,value,note}:{label:string,value:string,note:string}){return <article className="metric-card"><div className="metric-icon mint">✓</div><div className="metric-copy"><span>{label}</span><strong>{value}</strong><small>{note}</small></div></article>}
-function DriverHome({person,planning,documents,kw}:{person?:Row,planning:Row[],documents:Row[],kw:number}){if(!person)return <div className="empty-state"><b>Ihr Fahrerprofil ist noch nicht verknüpft.</b><br/>Bitte wenden Sie sich an das Management.</div>;return <><div className="driver-hero"><div><small>MEINE VERGÜTUNG</small><strong>{person.compensation||"Noch nicht hinterlegt"}</strong><span>{person.company} · {person.location}</span></div><div className="pay-breakdown"><p><span>Systemart</span><b>{person.system_type||"—"}</b></p><p><span>Urlaub</span><b>{person.vacation||"Kein Urlaub eingetragen"}</b></p><p><span>Planungen KW {kw}</span><b>{planning.length}</b></p><p><span>Lohnabrechnungen</span><b>{documents.length}</b></p></div></div><div className="dashboard-grid"><Card title={`Meine Touren und Einsätze · KW ${kw}`}><Planning rows={planning}/></Card><Card title="Mein Profil"><div className="driver-profile"><p><span>Name</span><b>{person.full_name}</b></p><p><span>Firma</span><b>{person.company||"—"}</b></p><p><span>Standort</span><b>{person.location||"—"}</b></p><p><span>Status</span><Badge value={String(person.status)}/></p></div></Card></div></>}
-function Card({title,children}:{title:string,children:React.ReactNode}){return <article className="panel employee-panel"><div className="panel-title"><div><h2>{title}</h2><p>Stand: heute</p></div></div>{children}</article>}
-function Badge({value}:{value:string}){const map:Record<string,string>={active:"Aktiv",archived:"Ausgeschieden",workshop:"Werkstatt",reserve:"Reserve",planned:"Geplant",attention:"Prüfen",vacation:"Urlaub"};return <span className={`badge ${["archived","attention","workshop"].includes(value)?"badge-amber":"badge-mint"}`}>{map[value]||value}</span>}
-function Planning({rows,canEdit=false,remove}:{rows:Row[],canEdit?:boolean,remove?:(id:number)=>void}){return <div className="table-wrap"><table><thead><tr><th>Firma</th><th>Fahrer</th><th>Standort</th><th>Kennzeichen</th><th>Block ID</th><th>Status</th><th>Kommentar</th>{canEdit?<th/>:null}</tr></thead><tbody>{rows.length?rows.map(r=><tr key={r.id}><td><strong>{r.company}</strong></td><td>{r.driver_name||"NO DRIVER"}</td><td>{r.location||"—"}</td><td>{r.license_plate||"—"}</td><td>{r.block_id||"—"}</td><td><Badge value={String(r.status)}/></td><td>{r.comments||"—"}</td>{canEdit?<td><button className="delete-action" onClick={()=>confirm("Planung löschen?")&&remove?.(Number(r.id))}>Löschen</button></td>:null}</tr>):<tr><td colSpan={8}>Keine Einträge für diese Woche.</td></tr>}</tbody></table></div>}
-function Concerns({rows,canEdit,edit,remove}:{rows:Row[],canEdit:boolean,edit:(r:Row)=>void,remove:(id:number)=>void}){const [period,setPeriod]=useState("all");const periods=useMemo(()=>Array.from(new Set(rows.map(r=>String(r.period)))),[rows]);const visible=period==="all"?rows:rows.filter(r=>r.period===period);return <Card title="LKW Fahreranliegen"><div className="concern-toolbar"><span>Alle Anliegen zentral bearbeiten – ohne neue Monatsdatei.</span><select value={period} onChange={e=>setPeriod(e.target.value)}><option value="all">Alle Monate</option>{periods.map(p=><option key={p}>{p}</option>)}</select></div><div className="table-wrap"><table><thead><tr><th>Monat</th><th>Firma / Base</th><th>LKW</th><th>Anliegen</th><th>Bestand</th><th>Erledigung</th><th>Notiz</th>{canEdit?<th/>:null}</tr></thead><tbody>{visible.map(r=><tr key={r.id}><td>{r.period}</td><td><strong>{r.company}</strong><small>{r.base}</small></td><td>{r.truck_number}</td><td>{r.item_name}</td><td>{r.purchase_status||"—"}</td><td><Badge value={String(r.completion_status)}/></td><td>{r.notes||"—"}</td>{canEdit?<td><div className="row-buttons"><button className="edit-action" onClick={()=>edit(r)}>Bearbeiten</button><button className="delete-action" onClick={()=>confirm("Anliegen löschen?")&&remove(Number(r.id))}>Löschen</button></div></td>:null}</tr>)}</tbody></table></div></Card>}
-function DriverConcerns({rows,year,kw,submit}:{rows:Row[],year:number,kw:number,submit:(x:Record<string,unknown>)=>void}){function send(e:FormEvent<HTMLFormElement>){e.preventDefault();const form=e.currentTarget;const values=Object.fromEntries(new FormData(form));submit({action:"driverConcern",planningYear:year,calendarWeek:kw,...values});form.reset()}return <><Card title="Neues Anliegen an die Disposition"><form className="driver-concern-form" onSubmit={send}><div><b>Was wird benötigt?</b><span>Ihr Name, Firma und das für KW {kw} zugeteilte Kennzeichen werden automatisch ergänzt.</span></div><textarea name="itemName" required minLength={3} placeholder="Zum Beispiel: Feuerlöscher, Warnweste, Motoröl …"/><input name="truckNumber" placeholder="Kennzeichen nur falls im Wochenplan noch nicht eingetragen"/><button className="primary-button">An Disposition senden</button></form></Card><Card title="Meine gesendeten Anliegen"><div className="table-wrap"><table><thead><tr><th>Datum</th><th>LKW</th><th>Anliegen</th><th>Status</th></tr></thead><tbody>{rows.length?rows.map(r=><tr key={r.id}><td>{String(r.created_at).slice(0,10)}</td><td>{r.truck_number||"—"}</td><td><strong>{r.item_name}</strong></td><td><Badge value={String(r.completion_status)}/></td></tr>):<tr><td colSpan={4}>Noch keine Anliegen gesendet.</td></tr>}</tbody></table></div></Card></>}
-function Documents({rows,staff,driver,canUpload,reload}:{rows:Row[],staff:Row[],driver:boolean,canUpload:boolean,reload:()=>Promise<void>}){async function upload(e:FormEvent<HTMLFormElement>){e.preventDefault();const r=await fetch("/api/documents",{method:"POST",body:new FormData(e.currentTarget)});if(r.ok){e.currentTarget.reset();await reload();}else alert((await r.json()).error);}return <Card title={driver?"Meine Lohnabrechnungen":"Lohnabrechnungen"}><div className="document-note"><b>Sicherer Dokumentenbereich</b><span>PDF-Lohnabrechnungen werden personenbezogen gespeichert. Fahrer sehen ausschließlich ihre eigenen Dokumente.</span></div>{canUpload?<form className="upload-form" onSubmit={upload}><select name="staffId" required><option value="">Mitarbeiter wählen</option>{staff.map(s=><option key={s.id} value={String(s.id)}>{s.full_name}</option>)}</select><input name="period" type="month" required/><input name="file" type="file" accept="application/pdf" required/><button className="primary-button">PDF hochladen</button></form>:null}<div className="table-wrap"><table><thead><tr><th>Mitarbeiter</th><th>Zeitraum</th><th>Datei</th><th>Größe</th><th>Datum</th></tr></thead><tbody>{rows.length?rows.map(r=><tr key={r.id}><td>{r.full_name}</td><td>{r.period}</td><td><a href={`/api/documents/${r.id}`}><strong>{r.file_name}</strong></a></td><td>{Math.round(Number(r.size_bytes)/1024)} KB</td><td>{String(r.created_at).slice(0,10)}</td></tr>):<tr><td colSpan={5}>Noch keine Dokumente hochgeladen.</td></tr>}</tbody></table></div></Card>}
-function Report({title,text}:{title:string,text:string}){return <article className="report-card"><div>▥</div><h2>{title}</h2><p>{text}</p><button onClick={()=>alert("Bericht wird aus den aktuellen Daten erzeugt.")}>Bericht vorbereiten →</button></article>}
-function Modal({title,close,children}:{title:string,close:()=>void,children:React.ReactNode}){return <div className="modal-backdrop"><div className="modal"><div className="modal-head"><h2>{title}</h2><button onClick={close}>×</button></div>{children}</div></div>}
-function EntryForm({kind,kw,staff,editing,submit}:{kind:"staff"|"vehicle"|"planning"|"concern",kw:number,staff:Row[],editing:Row|null,submit:(x:Record<string,unknown>)=>void}){function go(e:FormEvent<HTMLFormElement>){e.preventDefault();const d=Object.fromEntries(new FormData(e.currentTarget));const action=kind==="staff"?(editing?"updateStaff":"addStaff"):kind==="vehicle"?"addVehicle":kind==="planning"?"addPlanning":editing?"updateConcern":"addConcern";submit({action,id:editing?.id,calendarWeek:kw,...d});} return <form className="entry-form" onSubmit={go}>{kind==="staff"?<><label>Name*<input name="fullName" required defaultValue={String(editing?.full_name||"")}/></label><label>Systemart<select name="systemType" defaultValue={String(editing?.system_type||"2/1")}><option>2/1</option><option>2/2</option><option>SPRINGER</option></select></label><label>Vergütung<input name="compensation" defaultValue={String(editing?.compensation||"")} placeholder="2300–2400 € Netto"/></label><label>Standort<input name="location" defaultValue={String(editing?.location||"")} placeholder="BER8 / HAJ1"/></label><label>Firma<input name="company" defaultValue={String(editing?.company||"")} required/></label><label>Urlaub<input name="vacation" defaultValue={String(editing?.vacation||"")} placeholder="20.07–31.07"/></label>{!editing?<label>Eintrittsdatum<input type="date" name="hiredAt"/></label>:null}<div className="form-section wide"><b>Persönlicher Zugang</b><span>{editing?.login_email?`Login: ${editing.login_email}. Passwort leer lassen, wenn es nicht geändert werden soll.`:"E-Mail und Startpasswort anlegen, damit der Fahrer nur seinen eigenen кабинет sieht."}</span></div><label>Login E-Mail<input type="email" name="loginEmail" defaultValue={String(editing?.login_email||"")}/></label><label>{editing?.login_email?"Neues Passwort":"Startpasswort"}<input type="password" name="loginPassword" minLength={10}/></label></>:kind==="vehicle"?<><label>Kennzeichen*<input name="licensePlate" required placeholder="B-AB 1234"/></label><label>Firma<input name="company"/></label><label>Standort<input name="location"/></label><label>Status<select name="status"><option value="active">Aktiv</option><option value="workshop">Werkstatt</option><option value="reserve">Reserve</option></select></label><label className="wide">Notiz<input name="notes"/></label></>:kind==="planning"?<><label>Firma*<input name="company" required/></label><label>Fahrer<select name="driverName"><option value="">NO DRIVER</option>{staff.map(s=><option key={s.id}>{s.full_name}</option>)}</select></label><label>Standort<input name="location"/></label><label>Kennzeichen<input name="licensePlate"/></label><label>Status<select name="status"><option value="planned">Geplant</option><option value="attention">Prüfen</option><option value="vacation">Urlaub</option></select></label><label>Block ID<input name="blockId"/></label><label className="wide">Kommentar<input name="comments"/></label></>:<><label>Monat*<input type="month" name="period" required defaultValue={String(editing?.period||"2026-02")}/></label><label>Firma*<input name="company" required defaultValue={String(editing?.company||"")}/></label><label>Base<input name="base" defaultValue={String(editing?.base||"")}/></label><label>LKW / Kennzeichen<input name="truckNumber" defaultValue={String(editing?.truck_number||"")}/></label><label className="wide">Anliegen*<input name="itemName" required defaultValue={String(editing?.item_name||"")}/></label><label>Bestand<select name="purchaseStatus" defaultValue={String(editing?.purchase_status||"")}><option value="">—</option><option>In stock</option><option>Sold out</option><option>Repurchase needed</option><option>Temporarily unavailable</option></select></label><label>Erledigung<select name="completionStatus" defaultValue={String(editing?.completion_status||"Not delivered")}><option>Not delivered</option><option>Next week</option><option>in second week</option><option>Delivered</option></select></label><label className="wide">Notiz / Fahrer<input name="notes" defaultValue={String(editing?.notes||"")}/></label></>}<button className="primary-button wide" type="submit">Speichern</button></form>}
+function VehicleFiles({
+  vehicles,
+  files,
+  planning,
+  driver,
+  reload,
+}: {
+  vehicles: Row[];
+  files: Row[];
+  planning: Row[];
+  driver: boolean;
+  reload: () => Promise<void>;
+}) {
+  const plates = Array.from(
+    new Set([
+      ...vehicles.map((v) => String(v.license_plate)),
+      ...planning.map((p) => String(p.license_plate || "")).filter(Boolean),
+    ]),
+  );
+  async function upload(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const r = await fetch("/api/vehicle-files", {
+      method: "POST",
+      body: new FormData(e.currentTarget),
+    });
+    if (r.ok) {
+      e.currentTarget.reset();
+      await reload();
+    } else alert((await r.json()).error);
+  }
+  return (
+    <>
+      <Card
+        title={
+          driver
+            ? "Mein Fahrzeug · Fotos und Dokumente"
+            : "Digitale Fahrzeugakte"
+        }
+      >
+        <form className="upload-form" onSubmit={upload}>
+          <select name="licensePlate" required>
+            <option value="">Kennzeichen wählen</option>
+            {plates.map((p) => (
+              <option key={p}>{p}</option>
+            ))}
+          </select>
+          <select name="category" required>
+            <option value="before">Vor Fahrt</option>
+            <option value="after">Nach Fahrt</option>
+            <option value="damage">Schaden</option>
+            <option value="tuev">TÜV / HU / SP</option>
+            <option value="document">Fahrzeugdokument</option>
+          </select>
+          <input name="notes" placeholder="Notiz" />
+          <input
+            name="file"
+            type="file"
+            accept="image/*,application/pdf"
+            capture="environment"
+            required
+          />
+          <button className="primary-button">Hochladen</button>
+        </form>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Datum</th>
+                <th>Kennzeichen</th>
+                <th>Kategorie</th>
+                <th>Datei</th>
+                <th>Notiz</th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.length ? (
+                files.map((f) => (
+                  <tr key={f.id}>
+                    <td>
+                      {String(f.created_at).slice(0, 16).replace("T", " ")}
+                    </td>
+                    <td>
+                      <strong>{f.license_plate}</strong>
+                    </td>
+                    <td>
+                      <Badge value={String(f.category)} />
+                    </td>
+                    <td>
+                      <a href={`/api/vehicle-files/${f.id}`} target="_blank">
+                        {f.file_name}
+                      </a>
+                    </td>
+                    <td>{f.notes || "—"}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5}>Noch keine Fotos oder Dokumente.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </>
+  );
+}
+function DriverDossier({staff,planning,vehicles,files,close}:{staff:Row;planning:Row[];vehicles:Row[];files:Row[];close:()=>void}){const trips=planning.filter(p=>p.staff_id===staff.id||p.driver_name===staff.full_name);const plates=Array.from(new Set(trips.map(t=>String(t.license_plate||"")).filter(Boolean)));const trucks=vehicles.filter(v=>plates.includes(String(v.license_plate)));const docs=files.filter(f=>plates.includes(String(f.license_plate)));return <div className="modal-backdrop"><div className="dossier"><div className="modal-head"><div><h2>{staff.full_name}</h2><small>Fahrer- und Fahrzeugdossier</small></div><button onClick={close}>×</button></div><div className="dossier-grid"><section><h3>Fahrerdaten</h3><p><span>Status</span><Badge value={String(staff.status)}/></p><p><span>Firma</span><b>{staff.company||"—"}</b></p><p><span>Standort</span><b>{staff.location||"—"}</b></p><p><span>Systemart</span><b>{staff.system_type||"—"}</b></p><p><span>Vergütung</span><b>{staff.compensation||"—"}</b></p><p><span>Login</span><b>{staff.login_email||"Kein Zugang"}</b></p></section><section><h3>Zugeordnete Fahrzeuge</h3>{trucks.length?trucks.map(v=><p key={v.id}><span>{v.license_plate}</span><b>{v.status} · {v.location}</b></p>):<p>Kein Fahrzeug in dieser KW.</p>}</section></div><h3 className="dossier-title">Planung und Touren</h3><Planning rows={trips}/><h3 className="dossier-title">Fotos, TÜV / HU / SP und Dokumente</h3><div className="file-grid">{docs.length?docs.map(f=><a key={f.id} href={`/api/vehicle-files/${f.id}`} target="_blank"><b>{f.category}</b><span>{f.license_plate} · {String(f.created_at).slice(0,10)}</span><small>{f.file_name}</small></a>):<div className="empty-state">Noch keine Fahrzeugdateien.</div>}</div></div></div>}
+function Metric({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note: string;
+}) {
+  return (
+    <article className="metric-card">
+      <div className="metric-icon mint">✓</div>
+      <div className="metric-copy">
+        <span>{label}</span>
+        <strong>{value}</strong>
+        <small>{note}</small>
+      </div>
+    </article>
+  );
+}
+function DriverHome({
+  person,
+  planning,
+  documents,
+  kw,
+}: {
+  person?: Row;
+  planning: Row[];
+  documents: Row[];
+  kw: number;
+}) {
+  if (!person)
+    return (
+      <div className="empty-state">
+        <b>Ihr Fahrerprofil ist noch nicht verknüpft.</b>
+        <br />
+        Bitte wenden Sie sich an das Management.
+      </div>
+    );
+  return (
+    <>
+      <div className="driver-hero">
+        <div>
+          <small>MEINE VERGÜTUNG</small>
+          <strong>{person.compensation || "Noch nicht hinterlegt"}</strong>
+          <span>
+            {person.company} · {person.location}
+          </span>
+        </div>
+        <div className="pay-breakdown">
+          <p>
+            <span>Systemart</span>
+            <b>{person.system_type || "—"}</b>
+          </p>
+          <p>
+            <span>Urlaub</span>
+            <b>{person.vacation || "Kein Urlaub eingetragen"}</b>
+          </p>
+          <p>
+            <span>Planungen KW {kw}</span>
+            <b>{planning.length}</b>
+          </p>
+          <p>
+            <span>Lohnabrechnungen</span>
+            <b>{documents.length}</b>
+          </p>
+        </div>
+      </div>
+      <div className="dashboard-grid">
+        <Card title={`Meine Touren und Einsätze · KW ${kw}`}>
+          <Planning rows={planning} />
+        </Card>
+        <Card title="Mein Profil">
+          <div className="driver-profile">
+            <p>
+              <span>Name</span>
+              <b>{person.full_name}</b>
+            </p>
+            <p>
+              <span>Firma</span>
+              <b>{person.company || "—"}</b>
+            </p>
+            <p>
+              <span>Standort</span>
+              <b>{person.location || "—"}</b>
+            </p>
+            <p>
+              <span>Status</span>
+              <Badge value={String(person.status)} />
+            </p>
+          </div>
+        </Card>
+      </div>
+    </>
+  );
+}
+function Card({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <article className="panel employee-panel">
+      <div className="panel-title">
+        <div>
+          <h2>{title}</h2>
+          <p>Stand: heute</p>
+        </div>
+      </div>
+      {children}
+    </article>
+  );
+}
+function Badge({ value }: { value: string }) {
+  const map: Record<string, string> = {
+    active: "Aktiv",
+    archived: "Ausgeschieden",
+    workshop: "Werkstatt",
+    reserve: "Reserve",
+    planned: "Geplant",
+    attention: "Prüfen",
+    vacation: "Urlaub",
+  };
+  return (
+    <span
+      className={`badge ${["archived", "attention", "workshop"].includes(value) ? "badge-amber" : "badge-mint"}`}
+    >
+      {map[value] || value}
+    </span>
+  );
+}
+function Planning({
+  rows,
+  canEdit = false,
+  remove,
+}: {
+  rows: Row[];
+  canEdit?: boolean;
+  remove?: (id: number) => void;
+}) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Firma</th>
+            <th>Fahrer</th>
+            <th>Standort</th>
+            <th>Kennzeichen</th>
+            <th>Block ID</th>
+            <th>Status</th>
+            <th>Kommentar</th>
+            {canEdit ? <th /> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length ? (
+            rows.map((r) => (
+              <tr key={r.id}>
+                <td>
+                  <strong>{r.company}</strong>
+                </td>
+                <td>{r.driver_name || "NO DRIVER"}</td>
+                <td>{r.location || "—"}</td>
+                <td>{r.license_plate || "—"}</td>
+                <td>{r.block_id || "—"}</td>
+                <td>
+                  <Badge value={String(r.status)} />
+                </td>
+                <td>{r.comments || "—"}</td>
+                {canEdit ? (
+                  <td>
+                    <button
+                      className="delete-action"
+                      onClick={() =>
+                        confirm("Planung löschen?") && remove?.(Number(r.id))
+                      }
+                    >
+                      Löschen
+                    </button>
+                  </td>
+                ) : null}
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={8}>Keine Einträge für diese Woche.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function Concerns({
+  rows,
+  canEdit,
+  edit,
+  remove,
+}: {
+  rows: Row[];
+  canEdit: boolean;
+  edit: (r: Row) => void;
+  remove: (id: number) => void;
+}) {
+  const [period, setPeriod] = useState("all");
+  const periods = useMemo(
+    () => Array.from(new Set(rows.map((r) => String(r.period)))),
+    [rows],
+  );
+  const visible =
+    period === "all" ? rows : rows.filter((r) => r.period === period);
+  return (
+    <Card title="LKW Fahreranliegen">
+      <div className="concern-toolbar">
+        <span>Alle Anliegen zentral bearbeiten – ohne neue Monatsdatei.</span>
+        <select value={period} onChange={(e) => setPeriod(e.target.value)}>
+          <option value="all">Alle Monate</option>
+          {periods.map((p) => (
+            <option key={p}>{p}</option>
+          ))}
+        </select>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Monat</th>
+              <th>Firma / Base</th>
+              <th>LKW</th>
+              <th>Anliegen</th>
+              <th>Bestand</th>
+              <th>Erledigung</th>
+              <th>Notiz</th>
+              {canEdit ? <th /> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((r) => (
+              <tr key={r.id}>
+                <td>{r.period}</td>
+                <td>
+                  <strong>{r.company}</strong>
+                  <small>{r.base}</small>
+                </td>
+                <td>{r.truck_number}</td>
+                <td>{r.item_name}</td>
+                <td>{r.purchase_status || "—"}</td>
+                <td>
+                  <Badge value={String(r.completion_status)} />
+                </td>
+                <td>{r.notes || "—"}</td>
+                {canEdit ? (
+                  <td>
+                    <div className="row-buttons">
+                      <button className="edit-action" onClick={() => edit(r)}>
+                        Bearbeiten
+                      </button>
+                      <button
+                        className="delete-action"
+                        onClick={() =>
+                          confirm("Anliegen löschen?") && remove(Number(r.id))
+                        }
+                      >
+                        Löschen
+                      </button>
+                    </div>
+                  </td>
+                ) : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+function DriverConcerns({
+  rows,
+  year,
+  kw,
+  submit,
+}: {
+  rows: Row[];
+  year: number;
+  kw: number;
+  submit: (x: Record<string, unknown>) => void;
+}) {
+  function send(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const values = Object.fromEntries(new FormData(form));
+    submit({
+      action: "driverConcern",
+      planningYear: year,
+      calendarWeek: kw,
+      ...values,
+    });
+    form.reset();
+  }
+  return (
+    <>
+      <Card title="Neues Anliegen an die Disposition">
+        <form className="driver-concern-form" onSubmit={send}>
+          <div>
+            <b>Was wird benötigt?</b>
+            <span>
+              Ihr Name, Firma und das für KW {kw} zugeteilte Kennzeichen werden
+              automatisch ergänzt.
+            </span>
+          </div>
+          <textarea
+            name="itemName"
+            required
+            minLength={3}
+            placeholder="Zum Beispiel: Feuerlöscher, Warnweste, Motoröl …"
+          />
+          <input
+            name="truckNumber"
+            placeholder="Kennzeichen nur falls im Wochenplan noch nicht eingetragen"
+          />
+          <button className="primary-button">An Disposition senden</button>
+        </form>
+      </Card>
+      <Card title="Meine gesendeten Anliegen">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Datum</th>
+                <th>LKW</th>
+                <th>Anliegen</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length ? (
+                rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{String(r.created_at).slice(0, 10)}</td>
+                    <td>{r.truck_number || "—"}</td>
+                    <td>
+                      <strong>{r.item_name}</strong>
+                    </td>
+                    <td>
+                      <Badge value={String(r.completion_status)} />
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4}>Noch keine Anliegen gesendet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </>
+  );
+}
+function Documents({
+  rows,
+  staff,
+  driver,
+  canUpload,
+  reload,
+}: {
+  rows: Row[];
+  staff: Row[];
+  driver: boolean;
+  canUpload: boolean;
+  reload: () => Promise<void>;
+}) {
+  async function upload(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const r = await fetch("/api/documents", {
+      method: "POST",
+      body: new FormData(e.currentTarget),
+    });
+    if (r.ok) {
+      e.currentTarget.reset();
+      await reload();
+    } else alert((await r.json()).error);
+  }
+  return (
+    <Card title={driver ? "Meine Lohnabrechnungen" : "Lohnabrechnungen"}>
+      <div className="document-note">
+        <b>Sicherer Dokumentenbereich</b>
+        <span>
+          PDF-Lohnabrechnungen werden personenbezogen gespeichert. Fahrer sehen
+          ausschließlich ihre eigenen Dokumente.
+        </span>
+      </div>
+      {canUpload ? (
+        <form className="upload-form" onSubmit={upload}>
+          <select name="staffId" required>
+            <option value="">Mitarbeiter wählen</option>
+            {staff.map((s) => (
+              <option key={s.id} value={String(s.id)}>
+                {s.full_name}
+              </option>
+            ))}
+          </select>
+          <input name="period" type="month" required />
+          <input name="file" type="file" accept="application/pdf" required />
+          <button className="primary-button">PDF hochladen</button>
+        </form>
+      ) : null}
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Mitarbeiter</th>
+              <th>Zeitraum</th>
+              <th>Datei</th>
+              <th>Größe</th>
+              <th>Datum</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length ? (
+              rows.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.full_name}</td>
+                  <td>{r.period}</td>
+                  <td>
+                    <a href={`/api/documents/${r.id}`}>
+                      <strong>{r.file_name}</strong>
+                    </a>
+                  </td>
+                  <td>{Math.round(Number(r.size_bytes) / 1024)} KB</td>
+                  <td>{String(r.created_at).slice(0, 10)}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={5}>Noch keine Dokumente hochgeladen.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+function Report({ title, text }: { title: string; text: string }) {
+  return (
+    <article className="report-card">
+      <div>▥</div>
+      <h2>{title}</h2>
+      <p>{text}</p>
+      <button
+        onClick={() => alert("Bericht wird aus den aktuellen Daten erzeugt.")}
+      >
+        Bericht vorbereiten →
+      </button>
+    </article>
+  );
+}
+function Modal({
+  title,
+  close,
+  children,
+}: {
+  title: string;
+  close: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="modal-backdrop">
+      <div className="modal">
+        <div className="modal-head">
+          <h2>{title}</h2>
+          <button onClick={close}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+function EntryForm({
+  kind,
+  kw,
+  staff,
+  editing,
+  submit,
+}: {
+  kind: "staff" | "vehicle" | "planning" | "concern";
+  kw: number;
+  staff: Row[];
+  editing: Row | null;
+  submit: (x: Record<string, unknown>) => void;
+}) {
+  function go(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(e.currentTarget));
+    const action =
+      kind === "staff"
+        ? editing
+          ? "updateStaff"
+          : "addStaff"
+        : kind === "vehicle"
+          ? "addVehicle"
+          : kind === "planning"
+            ? "addPlanning"
+            : editing
+              ? "updateConcern"
+              : "addConcern";
+    submit({ action, id: editing?.id, calendarWeek: kw, ...d });
+  }
+  return (
+    <form className="entry-form" onSubmit={go}>
+      {kind === "staff" ? (
+        <>
+          <label>
+            Name*
+            <input
+              name="fullName"
+              required
+              defaultValue={String(editing?.full_name || "")}
+            />
+          </label>
+          <label>
+            Systemart
+            <select
+              name="systemType"
+              defaultValue={String(editing?.system_type || "2/1")}
+            >
+              <option>2/1</option>
+              <option>2/2</option>
+              <option>SPRINGER</option>
+            </select>
+          </label>
+          <label>
+            Vergütung
+            <input
+              name="compensation"
+              defaultValue={String(editing?.compensation || "")}
+              placeholder="2300–2400 € Netto"
+            />
+          </label>
+          <label>
+            Standort
+            <input
+              name="location"
+              defaultValue={String(editing?.location || "")}
+              placeholder="BER8 / HAJ1"
+            />
+          </label>
+          <label>
+            Firma
+            <input
+              name="company"
+              defaultValue={String(editing?.company || "")}
+              required
+            />
+          </label>
+          <label>
+            Urlaub
+            <input
+              name="vacation"
+              defaultValue={String(editing?.vacation || "")}
+              placeholder="20.07–31.07"
+            />
+          </label>
+          {!editing ? (
+            <label>
+              Eintrittsdatum
+              <input type="date" name="hiredAt" />
+            </label>
+          ) : null}
+          <div className="form-section wide">
+            <b>Persönlicher Zugang</b>
+            <span>
+              {editing?.login_email
+                ? `Login: ${editing.login_email}. Passwort leer lassen, wenn es nicht geändert werden soll.`
+                : "E-Mail und Startpasswort anlegen, damit der Fahrer nur seinen eigenen кабинет sieht."}
+            </span>
+          </div>
+          <label>
+            Login E-Mail
+            <input
+              type="email"
+              name="loginEmail"
+              defaultValue={String(editing?.login_email || "")}
+            />
+          </label>
+          <label>
+            {editing?.login_email ? "Neues Passwort" : "Startpasswort"}
+            <input type="password" name="loginPassword" minLength={10} />
+          </label>
+        </>
+      ) : kind === "vehicle" ? (
+        <>
+          <label>
+            Kennzeichen*
+            <input name="licensePlate" required placeholder="B-AB 1234" />
+          </label>
+          <label>
+            Firma
+            <input name="company" />
+          </label>
+          <label>
+            Standort
+            <input name="location" />
+          </label>
+          <label>
+            Status
+            <select name="status">
+              <option value="active">Aktiv</option>
+              <option value="workshop">Werkstatt</option>
+              <option value="reserve">Reserve</option>
+            </select>
+          </label>
+          <label className="wide">
+            Notiz
+            <input name="notes" />
+          </label>
+        </>
+      ) : kind === "planning" ? (
+        <>
+          <label>
+            Firma*
+            <input name="company" required />
+          </label>
+          <label>
+            Fahrer
+            <select name="driverName">
+              <option value="">NO DRIVER</option>
+              {staff.map((s) => (
+                <option key={s.id}>{s.full_name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Standort
+            <input name="location" />
+          </label>
+          <label>
+            Kennzeichen
+            <input name="licensePlate" />
+          </label>
+          <label>
+            Status
+            <select name="status">
+              <option value="planned">Geplant</option>
+              <option value="attention">Prüfen</option>
+              <option value="vacation">Urlaub</option>
+            </select>
+          </label>
+          <label>
+            Block ID
+            <input name="blockId" />
+          </label>
+          <label className="wide">
+            Kommentar
+            <input name="comments" />
+          </label>
+        </>
+      ) : (
+        <>
+          <label>
+            Monat*
+            <input
+              type="month"
+              name="period"
+              required
+              defaultValue={String(editing?.period || "2026-02")}
+            />
+          </label>
+          <label>
+            Firma*
+            <input
+              name="company"
+              required
+              defaultValue={String(editing?.company || "")}
+            />
+          </label>
+          <label>
+            Base
+            <input name="base" defaultValue={String(editing?.base || "")} />
+          </label>
+          <label>
+            LKW / Kennzeichen
+            <input
+              name="truckNumber"
+              defaultValue={String(editing?.truck_number || "")}
+            />
+          </label>
+          <label className="wide">
+            Anliegen*
+            <input
+              name="itemName"
+              required
+              defaultValue={String(editing?.item_name || "")}
+            />
+          </label>
+          <label>
+            Bestand
+            <select
+              name="purchaseStatus"
+              defaultValue={String(editing?.purchase_status || "")}
+            >
+              <option value="">—</option>
+              <option>In stock</option>
+              <option>Sold out</option>
+              <option>Repurchase needed</option>
+              <option>Temporarily unavailable</option>
+            </select>
+          </label>
+          <label>
+            Erledigung
+            <select
+              name="completionStatus"
+              defaultValue={String(
+                editing?.completion_status || "Not delivered",
+              )}
+            >
+              <option>Not delivered</option>
+              <option>Next week</option>
+              <option>in second week</option>
+              <option>Delivered</option>
+            </select>
+          </label>
+          <label className="wide">
+            Notiz / Fahrer
+            <input name="notes" defaultValue={String(editing?.notes || "")} />
+          </label>
+        </>
+      )}
+      <button className="primary-button wide" type="submit">
+        Speichern
+      </button>
+    </form>
+  );
+}
