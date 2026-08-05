@@ -29,6 +29,10 @@ export async function ensureDomainDatabase() {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS driver_concerns (id INTEGER PRIMARY KEY AUTOINCREMENT, period TEXT NOT NULL, company TEXT NOT NULL, base TEXT, truck_number TEXT, item_name TEXT NOT NULL, purchase_status TEXT, completion_status TEXT NOT NULL DEFAULT 'Not delivered', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_concerns_period_status ON driver_concerns(period, completion_status)`),
   ]);
+  const planningColumns = await env.DB.prepare("PRAGMA table_info(weekly_planning)").all<{ name: string }>();
+  if (!planningColumns.results.some((column) => column.name === "planning_year")) {
+    await env.DB.prepare("ALTER TABLE weekly_planning ADD COLUMN planning_year INTEGER NOT NULL DEFAULT 2026").run();
+  }
   const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM staff").first<{ count: number }>();
   if (!count?.count) {
     const now = new Date().toISOString();
