@@ -78,13 +78,13 @@ export async function ensureDomainDatabase() {
       `CREATE TABLE IF NOT EXISTS vehicles (id INTEGER PRIMARY KEY AUTOINCREMENT, license_plate TEXT NOT NULL UNIQUE, company TEXT, location TEXT, status TEXT NOT NULL DEFAULT 'active', assigned_staff_id INTEGER, inspection_due TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
-      `CREATE TABLE IF NOT EXISTS weekly_planning (id INTEGER PRIMARY KEY AUTOINCREMENT, planning_year INTEGER NOT NULL DEFAULT 2026, calendar_week INTEGER NOT NULL, company TEXT NOT NULL, staff_id INTEGER, driver_name TEXT, location TEXT, license_plate TEXT, work_days TEXT NOT NULL DEFAULT '1,2,3,4,5,6,7', block_id TEXT, status TEXT NOT NULL DEFAULT 'planned', comments TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS weekly_planning (id INTEGER PRIMARY KEY AUTOINCREMENT, planning_year INTEGER NOT NULL DEFAULT 2026, calendar_week INTEGER NOT NULL, company TEXT NOT NULL, staff_id INTEGER, driver_name TEXT, location TEXT, license_plate TEXT, work_days TEXT NOT NULL DEFAULT '1,2,3,4,5,6,7', start_time TEXT NOT NULL DEFAULT '06:00', block_id TEXT, status TEXT NOT NULL DEFAULT 'planned', comments TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS salary_documents (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, period TEXT NOT NULL, file_name TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, uploaded_by INTEGER NOT NULL, created_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
-      `CREATE TABLE IF NOT EXISTS driver_concerns (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER, period TEXT NOT NULL, company TEXT NOT NULL, base TEXT, truck_number TEXT, item_name TEXT NOT NULL, purchase_status TEXT, completion_status TEXT NOT NULL DEFAULT 'Not delivered', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS driver_concerns (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER, period TEXT NOT NULL, company TEXT NOT NULL, base TEXT, truck_number TEXT, item_name TEXT NOT NULL, purchase_status TEXT, completion_status TEXT NOT NULL DEFAULT 'Neu', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
       `CREATE INDEX IF NOT EXISTS idx_concerns_period_status ON driver_concerns(period, completion_status)`,
@@ -111,8 +111,21 @@ export async function ensureDomainDatabase() {
       "ALTER TABLE weekly_planning ADD COLUMN work_days TEXT NOT NULL DEFAULT '1,2,3,4,5,6,7'",
     ).run();
   }
+  if (!planningColumns.results.some((column) => column.name === "start_time")) {
+    await env.DB.prepare(
+      "ALTER TABLE weekly_planning ADD COLUMN start_time TEXT NOT NULL DEFAULT '06:00'",
+    ).run();
+  }
   await env.DB.prepare(
     "CREATE INDEX IF NOT EXISTS idx_weekly_planning_year_week ON weekly_planning(planning_year, calendar_week)",
+  ).run();
+  await env.DB.prepare(
+    `UPDATE driver_concerns SET completion_status = CASE
+      WHEN completion_status IN ('Delivered') THEN 'Erledigt'
+      WHEN completion_status IN ('Next week', 'in second week') THEN 'In Bearbeitung'
+      WHEN completion_status IN ('New', 'Not delivered') THEN 'Neu'
+      ELSE completion_status END
+    WHERE completion_status IN ('Delivered', 'Next week', 'in second week', 'New', 'Not delivered')`,
   ).run();
   const concernColumns = await env.DB.prepare(
     "PRAGMA table_info(driver_concerns)",

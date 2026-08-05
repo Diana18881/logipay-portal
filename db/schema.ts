@@ -111,6 +111,7 @@ export const weeklyPlanning = sqliteTable("weekly_planning", {
   location: text("location"),
   licensePlate: text("license_plate"),
   workDays: text("work_days").notNull().default("1,2,3,4,5,6,7"),
+  startTime: text("start_time").notNull().default("06:00"),
   blockId: text("block_id"),
   status: text("status").notNull().default("planned"),
   comments: text("comments"),
@@ -143,9 +144,7 @@ export const driverConcerns = sqliteTable("driver_concerns", {
   truckNumber: text("truck_number"),
   itemName: text("item_name").notNull(),
   purchaseStatus: text("purchase_status"),
-  completionStatus: text("completion_status")
-    .notNull()
-    .default("Not delivered"),
+  completionStatus: text("completion_status").notNull().default("Neu"),
   notes: text("notes"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

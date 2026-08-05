@@ -54,7 +54,11 @@ const nav: { id: Section; label: string; roles: string[] }[] = [
     label: "Lohnabrechnungen",
     roles: ["management", "accountant", "driver"],
   },
-  { id: "reports", label: "Berichte", roles: ["management", "accountant"] },
+  {
+    id: "reports",
+    label: "Berichte",
+    roles: ["management", "accountant", "dispatcher"],
+  },
 ];
 
 const labels: Record<string, string> = {
@@ -85,29 +89,34 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const [editing, setEditing] = useState<Row | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
   const [notice, setNotice] = useState("");
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch(`/api/portal?year=${year}&kw=${kw}`);
-      if (r.status === 401) {
-        location.href = "/login";
-        return;
+  const load = useCallback(
+    async (background = false) => {
+      if (!background) setLoading(true);
+      try {
+        const r = await fetch(`/api/portal?year=${year}&kw=${kw}`);
+        if (r.status === 401) {
+          location.href = "/login";
+          return;
+        }
+        const body = await r.text();
+        if (!r.ok) {
+          setNotice("Datenbank wird aktualisiert. Bitte Seite neu laden.");
+          if (!background) setLoading(false);
+          return;
+        }
+        setData(JSON.parse(body));
+      } catch {
+        setNotice("Daten konnten nicht geladen werden. Bitte Seite neu laden.");
+      } finally {
+        if (!background) setLoading(false);
       }
-      const body = await r.text();
-      if (!r.ok) {
-        setNotice("Datenbank wird aktualisiert. Bitte Seite neu laden.");
-        setLoading(false);
-        return;
-      }
-      setData(JSON.parse(body));
-    } catch {
-      setNotice("Daten konnten nicht geladen werden. Bitte Seite neu laden.");
-    } finally {
-      setLoading(false);
-    }
-  }, [year, kw]);
+    },
+    [year, kw],
+  );
   useEffect(() => {
     load();
+    const refresh = window.setInterval(() => load(true), 15000);
+    return () => window.clearInterval(refresh);
   }, [load]);
   async function action(payload: Record<string, unknown>) {
     const r = await fetch("/api/portal", {
@@ -132,8 +141,8 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     setEditing(row || null);
     setModal(kind);
   }
-  function printPdf() {
-    window.print();
+  function downloadPlanningReport() {
+    window.location.href = `/api/reports/planning?year=${year}&kw=${kw}`;
   }
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -141,6 +150,10 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   }
   const active = data.staff.filter((x) => x.status === "active");
   const workshop = data.vehicles.filter((x) => x.status === "workshop");
+  const openConcernCount = data.concerns.filter(
+    (item) =>
+      !["Erledigt", "Delivered"].includes(String(item.completion_status)),
+  ).length;
   const title = nav.find((n) => n.id === section)?.label;
   return (
     <main className={`app-shell role-${currentUser.role}`}>
@@ -189,6 +202,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   }
                 </span>
                 {n.label}
+                {n.id === "concerns" &&
+                ["management", "dispatcher"].includes(currentUser.role) &&
+                openConcernCount ? (
+                  <span className="nav-counter">{openConcernCount}</span>
+                ) : null}
               </button>
             ))}
         </nav>
@@ -244,9 +262,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
             </button>
           </div>
           <div className="top-actions">
-            <button className="pdf-button" onClick={printPdf}>
-              ↓ Als PDF
-            </button>
+            {["management", "dispatcher"].includes(currentUser.role) ? (
+              <button className="pdf-button" onClick={downloadPlanningReport}>
+                ↓ Planning Report PDF
+              </button>
+            ) : null}
             <div className="status-chip">
               <span /> Datenbank verbunden
             </div>
@@ -471,6 +491,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                       </button>
                     </div>
                   ) : null}
+                  <PlanningAlerts
+                    rows={data.planning}
+                    staff={data.staff}
+                    vehicles={data.vehicles}
+                  />
                   <WeeklySchedule
                     rows={data.planning}
                     staff={active}
@@ -478,6 +503,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     kw={kw}
                     showAvailability={currentUser.role !== "driver"}
                     canEdit={currentUser.role !== "driver"}
+                    edit={(row) => openModal("planning", row)}
                     remove={(id) => action({ action: "deletePlanning", id })}
                   />
                 </Card>
@@ -514,6 +540,16 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   <Report
                     title={`Planning Report KW ${kw}`}
                     text="Block-Rejections, offene Fälle und Hinweise aus der Wochenplanung."
+                    action={
+                      ["management", "dispatcher"].includes(currentUser.role)
+                        ? downloadPlanningReport
+                        : undefined
+                    }
+                    actionLabel={
+                      ["management", "dispatcher"].includes(currentUser.role)
+                        ? "Planning Report PDF →"
+                        : "Nur für Disposition"
+                    }
                   />
                   <Report
                     title="Mitarbeiterliste"
@@ -543,7 +579,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
               : modal === "vehicle"
                 ? "Fahrzeug anlegen"
                 : modal === "planning"
-                  ? `Planung ${year} · KW ${kw}`
+                  ? editing
+                    ? `Einsatz bearbeiten · ${year} / KW ${kw}`
+                    : `Planung ${year} · KW ${kw}`
                   : editing
                     ? "Anliegen bearbeiten"
                     : "Anliegen erfassen"
@@ -933,22 +971,36 @@ function Badge({ value }: { value: string }) {
     planned: "Geplant",
     attention: "Prüfen",
     vacation: "Urlaub",
+    Neu: "Neu",
+    "In Bearbeitung": "In Bearbeitung",
+    Bestellt: "Bestellt",
+    Erledigt: "Erledigt",
+    New: "Neu",
+    "Not delivered": "Neu",
+    Delivered: "Erledigt",
   };
-  return (
-    <span
-      className={`badge ${["archived", "attention", "workshop"].includes(value) ? "badge-amber" : "badge-mint"}`}
-    >
-      {map[value] || value}
-    </span>
-  );
+  const badgeClass = ["Neu", "New", "Not delivered"].includes(value)
+    ? "badge-red"
+    : [
+          "archived",
+          "attention",
+          "workshop",
+          "In Bearbeitung",
+          "Bestellt",
+        ].includes(value)
+      ? "badge-amber"
+      : "badge-mint";
+  return <span className={`badge ${badgeClass}`}>{map[value] || value}</span>;
 }
 function Planning({
   rows,
   canEdit = false,
+  edit,
   remove,
 }: {
   rows: Row[];
   canEdit?: boolean;
+  edit?: (row: Row) => void;
   remove?: (id: number) => void;
 }) {
   return (
@@ -961,6 +1013,7 @@ function Planning({
             <th>Standort</th>
             <th>Kennzeichen</th>
             <th>Tage</th>
+            <th>Beginn</th>
             <th>Block ID</th>
             <th>Status</th>
             <th>Kommentar</th>
@@ -974,6 +1027,7 @@ function Planning({
                 <td>
                   <strong>{r.company}</strong>
                 </td>
+                <td>{r.start_time || "06:00"}</td>
                 <td>{r.driver_name || "NO DRIVER"}</td>
                 <td>{r.location || "—"}</td>
                 <td>{r.license_plate || "—"}</td>
@@ -989,21 +1043,28 @@ function Planning({
                 <td>{r.comments || "—"}</td>
                 {canEdit ? (
                   <td>
-                    <button
-                      className="delete-action"
-                      onClick={() =>
-                        confirm("Planung löschen?") && remove?.(Number(r.id))
-                      }
-                    >
-                      Löschen
-                    </button>
+                    <div className="row-buttons">
+                      <button className="edit-action" onClick={() => edit?.(r)}>
+                        Bearbeiten
+                      </button>
+                      <button
+                        className="delete-action"
+                        onClick={() =>
+                          confirm("Planung löschen?") && remove?.(Number(r.id))
+                        }
+                      >
+                        Löschen
+                      </button>
+                    </div>
                   </td>
                 ) : null}
               </tr>
             ))
           ) : (
             <tr>
-              <td colSpan={8}>Keine Einträge für diese Woche.</td>
+              <td colSpan={canEdit ? 10 : 9}>
+                Keine Einträge für diese Woche.
+              </td>
             </tr>
           )}
         </tbody>
@@ -1054,6 +1115,131 @@ function rowDays(row: Row) {
   return new Set(parsed.length ? parsed : [1, 2, 3, 4, 5, 6, 7]);
 }
 
+function PlanningAlerts({
+  rows,
+  staff,
+  vehicles,
+}: {
+  rows: Row[];
+  staff: Row[];
+  vehicles: Row[];
+}) {
+  const alerts: { key: string; level: "danger" | "warning"; text: string }[] =
+    [];
+  const seen = new Set<string>();
+  const add = (key: string, level: "danger" | "warning", text: string) => {
+    if (!seen.has(key)) {
+      seen.add(key);
+      alerts.push({ key, level, text });
+    }
+  };
+
+  for (let day = 1; day <= 7; day++) {
+    const daily = rows.filter((row) => rowDays(row).has(day));
+    for (const row of daily) {
+      const time = String(row.start_time || "06:00");
+      if (row.driver_name) {
+        const duplicates = daily.filter(
+          (other) =>
+            other.id !== row.id &&
+            other.driver_name === row.driver_name &&
+            String(other.start_time || "06:00") === time,
+        );
+        if (duplicates.length)
+          add(
+            `driver-${day}-${row.driver_name}-${time}`,
+            "danger",
+            `${weekDayNames[day - 1]} ${time}: ${row.driver_name} ist gleichzeitig zwei Einsätzen zugeordnet.`,
+          );
+        const driver = staff.find(
+          (person) => person.full_name === row.driver_name,
+        );
+        if (!driver || driver.status !== "active")
+          add(
+            `inactive-${row.driver_name}`,
+            "danger",
+            `Fahrer ${row.driver_name} ist ausgeschieden oder nicht aktiv.`,
+          );
+      }
+      if (!row.license_plate) {
+        add(
+          `plate-${row.id}`,
+          "warning",
+          `${row.driver_name || "Einsatz"}: Kennzeichen fehlt.`,
+        );
+      } else {
+        const duplicates = daily.filter(
+          (other) =>
+            other.id !== row.id &&
+            other.license_plate === row.license_plate &&
+            String(other.start_time || "06:00") === time,
+        );
+        if (duplicates.length)
+          add(
+            `vehicle-${day}-${row.license_plate}-${time}`,
+            "danger",
+            `${weekDayNames[day - 1]} ${time}: ${row.license_plate} ist mehreren Fahrern zugeordnet.`,
+          );
+        const vehicle = vehicles.find(
+          (item) => item.license_plate === row.license_plate,
+        );
+        if (vehicle?.status === "workshop")
+          add(
+            `workshop-${row.license_plate}`,
+            "danger",
+            `${row.license_plate} befindet sich in der Werkstatt.`,
+          );
+      }
+    }
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (const vehicle of vehicles) {
+    if (!vehicle.inspection_due) continue;
+    const due = new Date(String(vehicle.inspection_due));
+    const daysLeft = Math.ceil((due.getTime() - today.getTime()) / 86400000);
+    if (daysLeft <= 30)
+      add(
+        `inspection-${vehicle.id}`,
+        daysLeft < 0 ? "danger" : "warning",
+        daysLeft < 0
+          ? `TÜV/HU/SP für ${vehicle.license_plate} ist seit ${Math.abs(daysLeft)} Tagen abgelaufen.`
+          : `TÜV/HU/SP für ${vehicle.license_plate} läuft in ${daysLeft} Tagen ab.`,
+      );
+  }
+
+  return (
+    <div
+      className={`planning-alerts ${alerts.length ? "has-alerts" : "all-clear"}`}
+    >
+      <div className="alerts-title">
+        <span>{alerts.length ? "!" : "✓"}</span>
+        <div>
+          <b>
+            {alerts.length
+              ? `${alerts.length} automatische Hinweise`
+              : "Keine Konflikte erkannt"}
+          </b>
+          <small>
+            Fahrer, Fahrzeuge, Kennzeichen und Prüftermine werden automatisch
+            geprüft.
+          </small>
+        </div>
+      </div>
+      {alerts.length ? (
+        <div className="alert-list">
+          {alerts.map((alert) => (
+            <p className={alert.level} key={alert.key}>
+              {alert.text}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function WeeklySchedule({
   rows,
   staff,
@@ -1061,6 +1247,7 @@ function WeeklySchedule({
   kw,
   showAvailability = false,
   canEdit = false,
+  edit,
   remove,
 }: {
   rows: Row[];
@@ -1069,6 +1256,7 @@ function WeeklySchedule({
   kw: number;
   showAvailability?: boolean;
   canEdit?: boolean;
+  edit?: (row: Row) => void;
   remove?: (id: number) => void;
 }) {
   const [view, setView] = useState<"calendar" | "table">("calendar");
@@ -1080,10 +1268,20 @@ function WeeklySchedule({
     const daily = rows.filter((row) => rowDays(row).has(day.number));
     for (const row of daily) {
       const sameDriver = row.driver_name
-        ? daily.filter((other) => other.driver_name === row.driver_name)
+        ? daily.filter(
+            (other) =>
+              other.driver_name === row.driver_name &&
+              String(other.start_time || "06:00") ===
+                String(row.start_time || "06:00"),
+          )
         : [];
       const sameVehicle = row.license_plate
-        ? daily.filter((other) => other.license_plate === row.license_plate)
+        ? daily.filter(
+            (other) =>
+              other.license_plate === row.license_plate &&
+              String(other.start_time || "06:00") ===
+                String(row.start_time || "06:00"),
+          )
         : [];
       if (sameDriver.length > 1 || sameVehicle.length > 1)
         conflicts.add(`${day.number}:${row.id}`);
@@ -1119,7 +1317,7 @@ function WeeklySchedule({
         </div>
       </div>
       {view === "table" ? (
-        <Planning rows={rows} canEdit={canEdit} remove={remove} />
+        <Planning rows={rows} canEdit={canEdit} edit={edit} remove={remove} />
       ) : (
         <div className="week-calendar-wrap">
           <div className="week-calendar">
@@ -1161,20 +1359,26 @@ function WeeklySchedule({
                             </div>
                             <span>{row.company}</span>
                             <small>
+                              {row.start_time || "06:00"} ·{" "}
                               {row.license_plate || "Ohne Fahrzeug"} ·{" "}
                               {row.location || "—"}
                             </small>
                             {canEdit ? (
-                              <button
-                                aria-label="Planung löschen"
-                                onClick={() =>
-                                  confirm(
-                                    "Planung für die ganze Woche löschen?",
-                                  ) && remove?.(Number(row.id))
-                                }
-                              >
-                                ×
-                              </button>
+                              <div className="schedule-card-actions">
+                                <button onClick={() => edit?.(row)}>
+                                  Bearbeiten
+                                </button>
+                                <button
+                                  aria-label="Planung löschen"
+                                  onClick={() =>
+                                    confirm(
+                                      "Planung für die ganze Woche löschen?",
+                                    ) && remove?.(Number(row.id))
+                                  }
+                                >
+                                  ×
+                                </button>
+                              </div>
                             ) : null}
                           </article>
                         );
@@ -1459,16 +1663,29 @@ function Documents({
     </Card>
   );
 }
-function Report({ title, text }: { title: string; text: string }) {
+function Report({
+  title,
+  text,
+  action,
+  actionLabel = "Bericht vorbereiten →",
+}: {
+  title: string;
+  text: string;
+  action?: () => void;
+  actionLabel?: string;
+}) {
   return (
     <article className="report-card">
       <div>▥</div>
       <h2>{title}</h2>
       <p>{text}</p>
       <button
-        onClick={() => alert("Bericht wird aus den aktuellen Daten erzeugt.")}
+        onClick={
+          action ||
+          (() => alert("Bericht wird aus den aktuellen Daten erzeugt."))
+        }
       >
-        Bericht vorbereiten →
+        {actionLabel}
       </button>
     </article>
   );
@@ -1520,7 +1737,9 @@ function EntryForm({
         : kind === "vehicle"
           ? "addVehicle"
           : kind === "planning"
-            ? "addPlanning"
+            ? editing
+              ? "updatePlanning"
+              : "addPlanning"
             : editing
               ? "updateConcern"
               : "addConcern";
@@ -1630,6 +1849,10 @@ function EntryForm({
               <option value="reserve">Reserve</option>
             </select>
           </label>
+          <label>
+            TÜV / HU / SP gültig bis
+            <input type="date" name="inspectionDue" />
+          </label>
           <label className="wide">
             Notiz
             <input name="notes" />
@@ -1639,11 +1862,18 @@ function EntryForm({
         <>
           <label>
             Firma*
-            <input name="company" required />
+            <input
+              name="company"
+              required
+              defaultValue={String(editing?.company || "")}
+            />
           </label>
           <label>
             Fahrer
-            <select name="driverName">
+            <select
+              name="driverName"
+              defaultValue={String(editing?.driver_name || "")}
+            >
               <option value="">NO DRIVER</option>
               {staff.map((s) => (
                 <option key={s.id}>{s.full_name}</option>
@@ -1652,15 +1882,33 @@ function EntryForm({
           </label>
           <label>
             Standort
-            <input name="location" />
+            <input
+              name="location"
+              defaultValue={String(editing?.location || "")}
+            />
           </label>
           <label>
             Kennzeichen
-            <input name="licensePlate" />
+            <input
+              name="licensePlate"
+              defaultValue={String(editing?.license_plate || "")}
+            />
+          </label>
+          <label>
+            Beginn
+            <input
+              type="time"
+              name="startTime"
+              required
+              defaultValue={String(editing?.start_time || "06:00")}
+            />
           </label>
           <label>
             Status
-            <select name="status">
+            <select
+              name="status"
+              defaultValue={String(editing?.status || "planned")}
+            >
               <option value="planned">Geplant</option>
               <option value="attention">Prüfen</option>
               <option value="vacation">Urlaub</option>
@@ -1675,7 +1923,7 @@ function EntryForm({
                     type="checkbox"
                     name="workDay"
                     value={index + 1}
-                    defaultChecked
+                    defaultChecked={rowDays(editing || {}).has(index + 1)}
                   />
                   <span>{day.slice(0, 2)}</span>
                   <small>{day}</small>
@@ -1685,11 +1933,17 @@ function EntryForm({
           </fieldset>
           <label>
             Block ID
-            <input name="blockId" />
+            <input
+              name="blockId"
+              defaultValue={String(editing?.block_id || "")}
+            />
           </label>
           <label className="wide">
             Kommentar
-            <input name="comments" />
+            <input
+              name="comments"
+              defaultValue={String(editing?.comments || "")}
+            />
           </label>
         </>
       ) : (
@@ -1747,14 +2001,20 @@ function EntryForm({
             Erledigung
             <select
               name="completionStatus"
-              defaultValue={String(
-                editing?.completion_status || "Not delivered",
-              )}
+              defaultValue={
+                ["Neu", "In Bearbeitung", "Bestellt", "Erledigt"].includes(
+                  String(editing?.completion_status || "Neu"),
+                )
+                  ? String(editing?.completion_status || "Neu")
+                  : String(editing?.completion_status) === "Delivered"
+                    ? "Erledigt"
+                    : "Neu"
+              }
             >
-              <option>Not delivered</option>
-              <option>Next week</option>
-              <option>in second week</option>
-              <option>Delivered</option>
+              <option>Neu</option>
+              <option>In Bearbeitung</option>
+              <option>Bestellt</option>
+              <option>Erledigt</option>
             </select>
           </label>
           <label className="wide">

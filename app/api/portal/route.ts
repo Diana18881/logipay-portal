@@ -115,6 +115,7 @@ export async function POST(request: Request) {
   const body = (await request.json()) as Record<string, string | number | null>;
   const action = String(body.action || "");
   const now = new Date().toISOString();
+  let auditDetails: Record<string, unknown> = {};
   if (action === "addStaff" && user.role === "management") {
     let userId: number | null = null;
     if (body.loginEmail && body.loginPassword) {
@@ -146,11 +147,21 @@ export async function POST(request: Request) {
       )
       .run();
   } else if (action === "archiveStaff" && user.role === "management") {
+    const oldValue = await env.DB.prepare("SELECT * FROM staff WHERE id=?")
+      .bind(body.id)
+      .first();
     await env.DB.prepare(
       "UPDATE staff SET status='archived', terminated_at=?, updated_at=? WHERE id=?",
     )
       .bind(String(body.terminatedAt || now.slice(0, 10)), now, body.id)
       .run();
+    auditDetails = {
+      oldValue,
+      newValue: {
+        status: "archived",
+        terminatedAt: String(body.terminatedAt || now.slice(0, 10)),
+      },
+    };
   } else if (action === "restoreStaff" && user.role === "management") {
     await env.DB.prepare(
       "UPDATE staff SET status='active', terminated_at=NULL, updated_at=? WHERE id=?",
@@ -158,6 +169,9 @@ export async function POST(request: Request) {
       .bind(now, body.id)
       .run();
   } else if (action === "updateStaff" && user.role === "management") {
+    const oldValue = await env.DB.prepare("SELECT * FROM staff WHERE id=?")
+      .bind(body.id)
+      .first();
     await env.DB.prepare(
       "UPDATE staff SET full_name=?, system_type=?, compensation=?, location=?, company=?, vacation=?, updated_at=? WHERE id=?",
     )
@@ -205,7 +219,20 @@ export async function POST(request: Request) {
           .run();
       }
     }
+    auditDetails = {
+      oldValue,
+      newValue: {
+        fullName: body.fullName,
+        systemType: body.systemType,
+        compensation: body.compensation,
+        location: body.location,
+        company: body.company,
+      },
+    };
   } else if (action === "deleteStaff" && user.role === "management") {
+    const oldValue = await env.DB.prepare("SELECT * FROM staff WHERE id=?")
+      .bind(body.id)
+      .first();
     const linked = await env.DB.prepare(
       "SELECT (SELECT COUNT(*) FROM salary_documents WHERE staff_id=?) + (SELECT COUNT(*) FROM weekly_planning WHERE staff_id=?) AS count",
     )
@@ -219,18 +246,20 @@ export async function POST(request: Request) {
     await env.DB.prepare("DELETE FROM staff WHERE id=? AND status='archived'")
       .bind(body.id)
       .run();
+    auditDetails = { oldValue, newValue: null };
   } else if (
     action === "addVehicle" &&
     ["management", "dispatcher"].includes(user.role)
   ) {
     await env.DB.prepare(
-      "INSERT INTO vehicles (license_plate, company, location, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO vehicles (license_plate, company, location, status, inspection_due, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
       .bind(
         body.licensePlate,
         body.company || "",
         body.location || "",
         body.status || "active",
+        body.inspectionDue || null,
         body.notes || "",
         now,
         now,
@@ -250,8 +279,19 @@ export async function POST(request: Request) {
           .bind(body.driverName)
           .first<{ id: number }>()
       : null;
+    if (body.driverName && !assigned)
+      return json({ error: "Fahrer ist ausgeschieden oder nicht aktiv" }, 409);
+    const selectedVehicle = body.licensePlate
+      ? await env.DB.prepare(
+          "SELECT status, inspection_due FROM vehicles WHERE license_plate=?",
+        )
+          .bind(body.licensePlate)
+          .first<{ status: string; inspection_due: string | null }>()
+      : null;
+    if (selectedVehicle?.status === "workshop")
+      return json({ error: "Fahrzeug befindet sich in der Werkstatt" }, 409);
     const possibleConflicts = await env.DB.prepare(
-      "SELECT driver_name, license_plate, work_days FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?))",
+      "SELECT driver_name, license_plate, work_days, start_time FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?))",
     )
       .bind(
         body.planningYear,
@@ -259,9 +299,17 @@ export async function POST(request: Request) {
         assigned?.id || -1,
         body.licensePlate || "",
       )
-      .all<{ driver_name: string; license_plate: string; work_days: string }>();
-    const conflict = possibleConflicts.results.find((entry) =>
-      daySetsOverlap(workDays, normalizeDays(entry.work_days)),
+      .all<{
+        driver_name: string;
+        license_plate: string;
+        work_days: string;
+        start_time: string;
+      }>();
+    const startTime = String(body.startTime || "06:00");
+    const conflict = possibleConflicts.results.find(
+      (entry) =>
+        daySetsOverlap(workDays, normalizeDays(entry.work_days)) &&
+        (!entry.start_time || entry.start_time === startTime),
     );
     if (conflict)
       return json(
@@ -271,7 +319,7 @@ export async function POST(request: Request) {
         409,
       );
     await env.DB.prepare(
-      "INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, work_days, block_id, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, work_days, start_time, block_id, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
       .bind(
         body.planningYear,
@@ -282,6 +330,7 @@ export async function POST(request: Request) {
         body.location || "",
         body.licensePlate || "",
         workDays,
+        startTime,
         body.blockId || "",
         body.status || "planned",
         body.comments || "",
@@ -303,8 +352,24 @@ export async function POST(request: Request) {
           .bind(body.driverName)
           .first<{ id: number }>()
       : null;
+    if (body.driverName && !assigned)
+      return json({ error: "Fahrer ist ausgeschieden oder nicht aktiv" }, 409);
+    const selectedVehicle = body.licensePlate
+      ? await env.DB.prepare(
+          "SELECT status FROM vehicles WHERE license_plate=?",
+        )
+          .bind(body.licensePlate)
+          .first<{ status: string }>()
+      : null;
+    if (selectedVehicle?.status === "workshop")
+      return json({ error: "Fahrzeug befindet sich in der Werkstatt" }, 409);
+    const oldValue = await env.DB.prepare(
+      "SELECT * FROM weekly_planning WHERE id=?",
+    )
+      .bind(body.id)
+      .first();
     const possibleConflicts = await env.DB.prepare(
-      "SELECT id, work_days FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND id!=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?))",
+      "SELECT id, work_days, start_time FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND id!=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?))",
     )
       .bind(
         body.planningYear,
@@ -313,9 +378,12 @@ export async function POST(request: Request) {
         assigned?.id || -1,
         body.licensePlate || "",
       )
-      .all<{ id: number; work_days: string }>();
-    const conflict = possibleConflicts.results.find((entry) =>
-      daySetsOverlap(workDays, normalizeDays(entry.work_days)),
+      .all<{ id: number; work_days: string; start_time: string }>();
+    const startTime = String(body.startTime || "06:00");
+    const conflict = possibleConflicts.results.find(
+      (entry) =>
+        daySetsOverlap(workDays, normalizeDays(entry.work_days)) &&
+        (!entry.start_time || entry.start_time === startTime),
     );
     if (conflict)
       return json(
@@ -323,7 +391,7 @@ export async function POST(request: Request) {
         409,
       );
     await env.DB.prepare(
-      "UPDATE weekly_planning SET company=?, staff_id=?, driver_name=?, location=?, license_plate=?, work_days=?, block_id=?, status=?, comments=?, updated_at=? WHERE id=?",
+      "UPDATE weekly_planning SET company=?, staff_id=?, driver_name=?, location=?, license_plate=?, work_days=?, start_time=?, block_id=?, status=?, comments=?, updated_at=? WHERE id=?",
     )
       .bind(
         body.company,
@@ -332,6 +400,7 @@ export async function POST(request: Request) {
         body.location || "",
         body.licensePlate || "",
         workDays,
+        startTime,
         body.blockId || "",
         body.status || "planned",
         body.comments || "",
@@ -339,13 +408,32 @@ export async function POST(request: Request) {
         body.id,
       )
       .run();
+    auditDetails = {
+      oldValue,
+      newValue: {
+        company: body.company,
+        driverName: body.driverName,
+        licensePlate: body.licensePlate,
+        workDays,
+        startTime,
+        blockId: body.blockId,
+        status: body.status,
+        comments: body.comments,
+      },
+    };
   } else if (
     action === "deletePlanning" &&
     ["management", "dispatcher"].includes(user.role)
   ) {
+    const oldValue = await env.DB.prepare(
+      "SELECT * FROM weekly_planning WHERE id=?",
+    )
+      .bind(body.id)
+      .first();
     await env.DB.prepare("DELETE FROM weekly_planning WHERE id=?")
       .bind(body.id)
       .run();
+    auditDetails = { oldValue, newValue: null };
   } else if (
     action === "copyPreviousWeek" &&
     ["management", "dispatcher"].includes(user.role)
@@ -362,8 +450,8 @@ export async function POST(request: Request) {
     if (existing?.count)
       return json({ error: "Für diese Woche existiert bereits ein Plan" }, 409);
     await env.DB.prepare(
-      `INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, work_days, block_id, status, comments, created_at, updated_at)
-      SELECT ?, ?, company, staff_id, driver_name, location, license_plate, work_days, block_id, 'planned', comments, ?, ? FROM weekly_planning WHERE planning_year=? AND calendar_week=?`,
+      `INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, work_days, start_time, block_id, status, comments, created_at, updated_at)
+      SELECT ?, ?, company, staff_id, driver_name, location, license_plate, work_days, start_time, block_id, 'planned', comments, ?, ? FROM weekly_planning WHERE planning_year=? AND calendar_week=?`,
     )
       .bind(targetYear, targetWeek, now, now, sourceYear, sourceWeek)
       .run();
@@ -385,7 +473,7 @@ export async function POST(request: Request) {
       .bind(body.planningYear, body.calendarWeek, person.id, person.full_name)
       .first<{ license_plate: string }>();
     await env.DB.prepare(
-      "INSERT INTO driver_concerns (staff_id, period, company, base, truck_number, item_name, purchase_status, completion_status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'Requested', 'New', ?, ?, ?)",
+      "INSERT INTO driver_concerns (staff_id, period, company, base, truck_number, item_name, purchase_status, completion_status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'Angefragt', 'Neu', ?, ?, ?)",
     )
       .bind(
         person.id,
@@ -413,16 +501,33 @@ export async function POST(request: Request) {
         body.truckNumber || "",
         body.itemName,
         body.purchaseStatus || "",
-        body.completionStatus || "Not delivered",
+        body.completionStatus || "Neu",
         body.notes || "",
         now,
         now,
       )
       .run();
+    auditDetails = {
+      oldValue: null,
+      newValue: {
+        period: body.period,
+        company: body.company,
+        truckNumber: body.truckNumber,
+        itemName: body.itemName,
+        purchaseStatus: body.purchaseStatus,
+        completionStatus: body.completionStatus || "Neu",
+        notes: body.notes,
+      },
+    };
   } else if (
     action === "updateConcern" &&
     ["management", "dispatcher"].includes(user.role)
   ) {
+    const oldValue = await env.DB.prepare(
+      "SELECT * FROM driver_concerns WHERE id=?",
+    )
+      .bind(body.id)
+      .first();
     await env.DB.prepare(
       "UPDATE driver_concerns SET period=?, company=?, base=?, truck_number=?, item_name=?, purchase_status=?, completion_status=?, notes=?, updated_at=? WHERE id=?",
     )
@@ -433,12 +538,24 @@ export async function POST(request: Request) {
         body.truckNumber || "",
         body.itemName,
         body.purchaseStatus || "",
-        body.completionStatus || "Not delivered",
+        body.completionStatus || "Neu",
         body.notes || "",
         now,
         body.id,
       )
       .run();
+    auditDetails = {
+      oldValue,
+      newValue: {
+        period: body.period,
+        company: body.company,
+        truckNumber: body.truckNumber,
+        itemName: body.itemName,
+        purchaseStatus: body.purchaseStatus,
+        completionStatus: body.completionStatus || "Neu",
+        notes: body.notes,
+      },
+    };
   } else if (
     action === "deleteConcern" &&
     ["management", "dispatcher"].includes(user.role)
@@ -459,6 +576,7 @@ export async function POST(request: Request) {
         role: user.role,
         year: body.planningYear,
         week: body.calendarWeek,
+        ...auditDetails,
       }),
       now,
     )
