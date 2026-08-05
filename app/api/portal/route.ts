@@ -3,6 +3,17 @@ import { ensureDomainDatabase } from "../../../lib/domain";
 import { hashPassword, requirePortalUser } from "../../../lib/auth";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
+const normalizeDays = (value: unknown) => {
+  const days = String(value || "1,2,3,4,5,6,7")
+    .split(",")
+    .map(Number)
+    .filter((day) => Number.isInteger(day) && day >= 1 && day <= 7);
+  return Array.from(new Set(days)).sort().join(",") || "1,2,3,4,5,6,7";
+};
+const daySetsOverlap = (left: string, right: string) => {
+  const rightDays = new Set(right.split(","));
+  return left.split(",").some((day) => rightDays.has(day));
+};
 
 export async function GET(request: Request) {
   const user = await requirePortalUser();
@@ -229,6 +240,9 @@ export async function POST(request: Request) {
     action === "addPlanning" &&
     ["management", "dispatcher"].includes(user.role)
   ) {
+    if (!String(body.workDays || "").trim())
+      return json({ error: "Mindestens einen Einsatztag auswählen" }, 400);
+    const workDays = normalizeDays(body.workDays);
     const assigned = body.driverName
       ? await env.DB.prepare(
           "SELECT id FROM staff WHERE full_name=? AND status='active'",
@@ -236,8 +250,8 @@ export async function POST(request: Request) {
           .bind(body.driverName)
           .first<{ id: number }>()
       : null;
-    const conflict = await env.DB.prepare(
-      "SELECT driver_name, license_plate FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?)) LIMIT 1",
+    const possibleConflicts = await env.DB.prepare(
+      "SELECT driver_name, license_plate, work_days FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?))",
     )
       .bind(
         body.planningYear,
@@ -245,7 +259,10 @@ export async function POST(request: Request) {
         assigned?.id || -1,
         body.licensePlate || "",
       )
-      .first<{ driver_name: string; license_plate: string }>();
+      .all<{ driver_name: string; license_plate: string; work_days: string }>();
+    const conflict = possibleConflicts.results.find((entry) =>
+      daySetsOverlap(workDays, normalizeDays(entry.work_days)),
+    );
     if (conflict)
       return json(
         {
@@ -254,7 +271,7 @@ export async function POST(request: Request) {
         409,
       );
     await env.DB.prepare(
-      "INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, block_id, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, work_days, block_id, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
       .bind(
         body.planningYear,
@@ -264,6 +281,7 @@ export async function POST(request: Request) {
         body.driverName || "",
         body.location || "",
         body.licensePlate || "",
+        workDays,
         body.blockId || "",
         body.status || "planned",
         body.comments || "",
@@ -275,6 +293,9 @@ export async function POST(request: Request) {
     action === "updatePlanning" &&
     ["management", "dispatcher"].includes(user.role)
   ) {
+    if (!String(body.workDays || "").trim())
+      return json({ error: "Mindestens einen Einsatztag auswählen" }, 400);
+    const workDays = normalizeDays(body.workDays);
     const assigned = body.driverName
       ? await env.DB.prepare(
           "SELECT id FROM staff WHERE full_name=? AND status='active'",
@@ -282,8 +303,8 @@ export async function POST(request: Request) {
           .bind(body.driverName)
           .first<{ id: number }>()
       : null;
-    const conflict = await env.DB.prepare(
-      "SELECT id FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND id!=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?)) LIMIT 1",
+    const possibleConflicts = await env.DB.prepare(
+      "SELECT id, work_days FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND id!=? AND ((staff_id IS NOT NULL AND staff_id=?) OR (license_plate!='' AND license_plate=?))",
     )
       .bind(
         body.planningYear,
@@ -292,14 +313,17 @@ export async function POST(request: Request) {
         assigned?.id || -1,
         body.licensePlate || "",
       )
-      .first();
+      .all<{ id: number; work_days: string }>();
+    const conflict = possibleConflicts.results.find((entry) =>
+      daySetsOverlap(workDays, normalizeDays(entry.work_days)),
+    );
     if (conflict)
       return json(
         { error: "Konflikt: Fahrer oder Fahrzeug ist bereits eingeplant" },
         409,
       );
     await env.DB.prepare(
-      "UPDATE weekly_planning SET company=?, staff_id=?, driver_name=?, location=?, license_plate=?, block_id=?, status=?, comments=?, updated_at=? WHERE id=?",
+      "UPDATE weekly_planning SET company=?, staff_id=?, driver_name=?, location=?, license_plate=?, work_days=?, block_id=?, status=?, comments=?, updated_at=? WHERE id=?",
     )
       .bind(
         body.company,
@@ -307,6 +331,7 @@ export async function POST(request: Request) {
         body.driverName || "",
         body.location || "",
         body.licensePlate || "",
+        workDays,
         body.blockId || "",
         body.status || "planned",
         body.comments || "",
@@ -337,8 +362,8 @@ export async function POST(request: Request) {
     if (existing?.count)
       return json({ error: "Für diese Woche existiert bereits ein Plan" }, 409);
     await env.DB.prepare(
-      `INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, block_id, status, comments, created_at, updated_at)
-      SELECT ?, ?, company, staff_id, driver_name, location, license_plate, block_id, 'planned', comments, ?, ? FROM weekly_planning WHERE planning_year=? AND calendar_week=?`,
+      `INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, work_days, block_id, status, comments, created_at, updated_at)
+      SELECT ?, ?, company, staff_id, driver_name, location, license_plate, work_days, block_id, 'planned', comments, ?, ? FROM weekly_planning WHERE planning_year=? AND calendar_week=?`,
     )
       .bind(targetYear, targetWeek, now, now, sourceYear, sourceWeek)
       .run();

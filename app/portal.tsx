@@ -300,6 +300,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     person={data.staff[0]}
                     planning={data.planning}
                     documents={data.documents}
+                    year={year}
                     kw={kw}
                   />
                 ) : (
@@ -470,8 +471,12 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                       </button>
                     </div>
                   ) : null}
-                  <Planning
+                  <WeeklySchedule
                     rows={data.planning}
+                    staff={active}
+                    year={year}
+                    kw={kw}
+                    showAvailability={currentUser.role !== "driver"}
                     canEdit={currentUser.role !== "driver"}
                     remove={(id) => action({ action: "deletePlanning", id })}
                   />
@@ -821,11 +826,13 @@ function DriverHome({
   person,
   planning,
   documents,
+  year,
   kw,
 }: {
   person?: Row;
   planning: Row[];
   documents: Row[];
+  year: number;
   kw: number;
 }) {
   if (!person)
@@ -867,7 +874,12 @@ function DriverHome({
       </div>
       <div className="dashboard-grid">
         <Card title={`Meine Touren und Einsätze · KW ${kw}`}>
-          <Planning rows={planning} />
+          <WeeklySchedule
+            rows={planning}
+            staff={[person]}
+            year={year}
+            kw={kw}
+          />
         </Card>
         <Card title="Mein Profil">
           <div className="driver-profile">
@@ -948,6 +960,7 @@ function Planning({
             <th>Fahrer</th>
             <th>Standort</th>
             <th>Kennzeichen</th>
+            <th>Tage</th>
             <th>Block ID</th>
             <th>Status</th>
             <th>Kommentar</th>
@@ -964,6 +977,11 @@ function Planning({
                 <td>{r.driver_name || "NO DRIVER"}</td>
                 <td>{r.location || "—"}</td>
                 <td>{r.license_plate || "—"}</td>
+                <td>
+                  {Array.from(rowDays(r))
+                    .map((day) => weekDayNames[day - 1].slice(0, 2))
+                    .join(", ")}
+                </td>
                 <td>{r.block_id || "—"}</td>
                 <td>
                   <Badge value={String(r.status)} />
@@ -990,6 +1008,202 @@ function Planning({
           )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const weekDayNames = [
+  "Montag",
+  "Dienstag",
+  "Mittwoch",
+  "Donnerstag",
+  "Freitag",
+  "Samstag",
+  "Sonntag",
+];
+
+function isoWeekDates(year: number, week: number) {
+  const januaryFourth = new Date(Date.UTC(year, 0, 4));
+  const monday = new Date(januaryFourth);
+  monday.setUTCDate(
+    januaryFourth.getUTCDate() -
+      ((januaryFourth.getUTCDay() + 6) % 7) +
+      (week - 1) * 7,
+  );
+  return weekDayNames.map((name, index) => {
+    const date = new Date(monday);
+    date.setUTCDate(monday.getUTCDate() + index);
+    return {
+      number: index + 1,
+      name,
+      short: name.slice(0, 2),
+      date: new Intl.DateTimeFormat("de-DE", {
+        day: "2-digit",
+        month: "2-digit",
+        timeZone: "UTC",
+      }).format(date),
+    };
+  });
+}
+
+function rowDays(row: Row) {
+  const parsed = String(row.work_days || "1,2,3,4,5,6,7")
+    .split(",")
+    .map(Number)
+    .filter((day) => day >= 1 && day <= 7);
+  return new Set(parsed.length ? parsed : [1, 2, 3, 4, 5, 6, 7]);
+}
+
+function WeeklySchedule({
+  rows,
+  staff,
+  year,
+  kw,
+  showAvailability = false,
+  canEdit = false,
+  remove,
+}: {
+  rows: Row[];
+  staff: Row[];
+  year: number;
+  kw: number;
+  showAvailability?: boolean;
+  canEdit?: boolean;
+  remove?: (id: number) => void;
+}) {
+  const [view, setView] = useState<"calendar" | "table">("calendar");
+  const days = isoWeekDates(year, kw);
+  const activeDrivers = staff.filter((person) => person.status === "active");
+  const conflicts = new Set<string>();
+
+  for (const day of days) {
+    const daily = rows.filter((row) => rowDays(row).has(day.number));
+    for (const row of daily) {
+      const sameDriver = row.driver_name
+        ? daily.filter((other) => other.driver_name === row.driver_name)
+        : [];
+      const sameVehicle = row.license_plate
+        ? daily.filter((other) => other.license_plate === row.license_plate)
+        : [];
+      if (sameDriver.length > 1 || sameVehicle.length > 1)
+        conflicts.add(`${day.number}:${row.id}`);
+    }
+  }
+
+  return (
+    <div className="schedule-section">
+      <div className="schedule-toolbar">
+        <div className="schedule-stats">
+          <span>
+            <b>{rows.length}</b> Einsätze
+          </span>
+          {showAvailability ? (
+            <span className={conflicts.size ? "stat-conflict" : "stat-ok"}>
+              <b>{conflicts.size}</b> Konflikte
+            </span>
+          ) : null}
+        </div>
+        <div className="view-switch" aria-label="Planungsansicht">
+          <button
+            className={view === "calendar" ? "active" : ""}
+            onClick={() => setView("calendar")}
+          >
+            Wochenkalender
+          </button>
+          <button
+            className={view === "table" ? "active" : ""}
+            onClick={() => setView("table")}
+          >
+            Tabelle
+          </button>
+        </div>
+      </div>
+      {view === "table" ? (
+        <Planning rows={rows} canEdit={canEdit} remove={remove} />
+      ) : (
+        <div className="week-calendar-wrap">
+          <div className="week-calendar">
+            {days.map((day) => {
+              const dailyRows = rows.filter((row) =>
+                rowDays(row).has(day.number),
+              );
+              const assigned = new Set(
+                dailyRows
+                  .map((row) => String(row.driver_name || ""))
+                  .filter(Boolean),
+              );
+              const free = activeDrivers.filter(
+                (driver) => !assigned.has(String(driver.full_name)),
+              );
+              return (
+                <section className="calendar-day" key={day.number}>
+                  <header>
+                    <div>
+                      <strong>{day.short}</strong>
+                      <span>{day.name}</span>
+                    </div>
+                    <time>{day.date}</time>
+                  </header>
+                  <div className="day-assignments">
+                    {dailyRows.length ? (
+                      dailyRows.map((row) => {
+                        const conflict = conflicts.has(
+                          `${day.number}:${row.id}`,
+                        );
+                        return (
+                          <article
+                            className={`schedule-card ${conflict ? "has-conflict" : ""}`}
+                            key={`${day.number}-${row.id}`}
+                          >
+                            <div className="schedule-card-head">
+                              <b>{row.driver_name || "NO DRIVER"}</b>
+                              {conflict ? <em>Konflikt</em> : null}
+                            </div>
+                            <span>{row.company}</span>
+                            <small>
+                              {row.license_plate || "Ohne Fahrzeug"} ·{" "}
+                              {row.location || "—"}
+                            </small>
+                            {canEdit ? (
+                              <button
+                                aria-label="Planung löschen"
+                                onClick={() =>
+                                  confirm(
+                                    "Planung für die ganze Woche löschen?",
+                                  ) && remove?.(Number(row.id))
+                                }
+                              >
+                                ×
+                              </button>
+                            ) : null}
+                          </article>
+                        );
+                      })
+                    ) : (
+                      <div className="day-empty">Keine Einsätze</div>
+                    )}
+                  </div>
+                  {showAvailability ? (
+                    <details className="free-drivers">
+                      <summary>
+                        <span className="availability-dot" /> {free.length}{" "}
+                        Fahrer frei
+                      </summary>
+                      <div>
+                        {free.length
+                          ? free.map((driver) => (
+                              <span key={driver.id}>{driver.full_name}</span>
+                            ))
+                          : "Keine freien Fahrer"}
+                      </div>
+                    </details>
+                  ) : null}
+                </section>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1295,7 +1509,9 @@ function EntryForm({
 }) {
   function go(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const d = Object.fromEntries(new FormData(e.currentTarget));
+    const formData = new FormData(e.currentTarget);
+    const d = Object.fromEntries(formData);
+    if (kind === "planning") d.workDays = formData.getAll("workDay").join(",");
     const action =
       kind === "staff"
         ? editing
@@ -1450,6 +1666,23 @@ function EntryForm({
               <option value="vacation">Urlaub</option>
             </select>
           </label>
+          <fieldset className="work-days wide">
+            <legend>Einsatztage*</legend>
+            <div>
+              {weekDayNames.map((day, index) => (
+                <label key={day}>
+                  <input
+                    type="checkbox"
+                    name="workDay"
+                    value={index + 1}
+                    defaultChecked
+                  />
+                  <span>{day.slice(0, 2)}</span>
+                  <small>{day}</small>
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <label>
             Block ID
             <input name="blockId" />

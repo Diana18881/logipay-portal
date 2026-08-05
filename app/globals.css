@@ -1365,6 +1365,264 @@ td:last-child button {
   font-size: 9px;
   font-weight: 700;
 }
+.schedule-section {
+  min-width: 0;
+}
+.schedule-toolbar {
+  padding: 13px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.schedule-stats,
+.view-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.schedule-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  border-radius: 20px;
+  background: #f2f6f8;
+  color: #667480;
+  font-size: 9px;
+}
+.schedule-stats span b {
+  color: #233546;
+  font-size: 11px;
+}
+.schedule-stats .stat-ok {
+  background: #e9f8f4;
+  color: #27897d;
+}
+.schedule-stats .stat-conflict {
+  background: #fff0ec;
+  color: #bd553d;
+}
+.view-switch {
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f5f8f9;
+}
+.view-switch button {
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: #7a8894;
+  font-size: 9px;
+  font-weight: 700;
+}
+.view-switch button.active {
+  background: #fff;
+  color: #147f74;
+  box-shadow: 0 2px 8px #17364c12;
+}
+.week-calendar-wrap {
+  width: 100%;
+  overflow-x: auto;
+  padding: 16px;
+  background: #f6f9fa;
+}
+.week-calendar {
+  min-width: 1190px;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(158px, 1fr));
+  gap: 8px;
+}
+.calendar-day {
+  min-width: 0;
+  border: 1px solid #e3e9ec;
+  border-radius: 11px;
+  background: #fff;
+  overflow: hidden;
+}
+.calendar-day > header {
+  min-height: 55px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.calendar-day > header div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.calendar-day > header strong {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: #e7f7f4;
+  color: #158f81;
+  font-size: 9px;
+}
+.calendar-day > header span {
+  font-size: 10px;
+  font-weight: 700;
+  color: #263847;
+}
+.calendar-day > header time {
+  color: #91a0aa;
+  font-size: 8px;
+}
+.day-assignments {
+  min-height: 250px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.schedule-card {
+  position: relative;
+  padding: 10px 24px 10px 10px;
+  border: 1px solid #d9e9e6;
+  border-left: 3px solid #25aa9a;
+  border-radius: 8px;
+  background: #f3fbf9;
+}
+.schedule-card.has-conflict {
+  border-color: #efb3a6;
+  border-left-color: #db654d;
+  background: #fff5f2;
+}
+.schedule-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 5px;
+}
+.schedule-card b,
+.schedule-card span,
+.schedule-card small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.schedule-card b {
+  color: #213543;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.schedule-card em {
+  color: #c85139;
+  font-size: 7px;
+  font-style: normal;
+  text-transform: uppercase;
+}
+.schedule-card span {
+  margin-top: 5px;
+  color: #4e6972;
+  font-size: 8px;
+  white-space: nowrap;
+}
+.schedule-card small {
+  margin-top: 4px;
+  color: #8b9aa3;
+  font-size: 7px;
+  line-height: 1.4;
+}
+.schedule-card > button {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  background: transparent;
+  color: #9ba7ae;
+  font-size: 14px;
+}
+.day-empty {
+  min-height: 80px;
+  display: grid;
+  place-items: center;
+  color: #a3afb6;
+  font-size: 9px;
+  border: 1px dashed #dce4e8;
+  border-radius: 8px;
+}
+.free-drivers {
+  margin: 0 8px 9px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.free-drivers summary {
+  color: #27897d;
+  font-size: 8px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+.availability-dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  border-radius: 50%;
+  background: #31b7a6;
+  margin-right: 4px;
+}
+.free-drivers div {
+  max-height: 130px;
+  overflow: auto;
+  padding: 8px 0 0 12px;
+  color: #71808b;
+  font-size: 8px;
+  line-height: 1.6;
+}
+.free-drivers div span {
+  display: block;
+}
+.work-days {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.work-days legend {
+  margin-bottom: 7px;
+  color: #44515d;
+  font-size: 10px;
+  font-weight: 700;
+}
+.work-days > div {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.work-days label {
+  min-width: 0;
+  padding: 8px 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+}
+.work-days input {
+  width: 14px;
+  height: 14px;
+  margin: 0 auto 5px;
+  accent-color: #1fae9d;
+}
+.work-days span,
+.work-days small {
+  display: block;
+}
+.work-days span {
+  color: #1d786e;
+  font-size: 9px;
+}
+.work-days small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #89969f;
+  font-size: 6px;
+  text-overflow: ellipsis;
+}
 .driver-concern-form {
   display: grid;
   grid-template-columns: 1.2fr 2fr 1.3fr auto;

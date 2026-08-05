@@ -1,0 +1,1 @@
+ALTER TABLE `weekly_planning` ADD `work_days` text DEFAULT '1,2,3,4,5,6,7' NOT NULL;
