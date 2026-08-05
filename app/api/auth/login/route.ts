@@ -1,10 +1,10 @@
 import { env } from "cloudflare:workers";
-import { createSession, ensureAuthDatabase, sessionCookie, verifyPassword, type PortalRole } from "../../../../lib/auth";
+import { createSession, ensureAuthDatabase, generateTwoFactorSecret, sessionCookie, verifyPassword, verifyTwoFactorCode, type PortalRole } from "../../../../lib/auth";
 
 export async function POST(request: Request) {
   try {
     await ensureAuthDatabase();
-    const payload = await request.json().catch(() => null) as { email?: string; password?: string } | null;
+    const payload = await request.json().catch(() => null) as { email?: string; password?: string; twoFactorCode?: string } | null;
     const email = payload?.email?.trim().toLowerCase() ?? "";
     const password = payload?.password ?? "";
     if (!email || !password) {
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     }
 
     const user = await env.DB.prepare(
-      "SELECT id, email, full_name, role, password_hash, active FROM users WHERE email = ? LIMIT 1",
+      "SELECT id, email, full_name, role, password_hash, active, failed_attempts, locked_until, two_factor_secret, two_factor_enabled FROM users WHERE email = ? LIMIT 1",
     ).bind(email).first<{
       id: number;
       email: string;
@@ -20,14 +20,50 @@ export async function POST(request: Request) {
       role: PortalRole;
       password_hash: string;
       active: number;
+      failed_attempts: number;
+      locked_until: string | null;
+      two_factor_secret: string | null;
+      two_factor_enabled: number;
     }>();
 
+    const now = new Date();
+    const ipAddress = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "";
+    const userAgent = request.headers.get("user-agent") || "";
+    if (user?.locked_until && new Date(user.locked_until) > now) {
+      return Response.json({ error: "Учётная запись временно заблокирована. Попробуйте позже." }, { status: 423 });
+    }
     const valid = user?.active === 1 && await verifyPassword(password, user.password_hash);
     if (!valid || !user) {
+      if (user) {
+        const attempts = Number(user.failed_attempts || 0) + 1;
+        const lockedUntil = attempts >= 5 ? new Date(now.getTime() + 15 * 60_000).toISOString() : null;
+        await env.DB.prepare("UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?").bind(attempts >= 5 ? 0 : attempts, lockedUntil, user.id).run();
+      }
+      await env.DB.prepare("INSERT INTO login_audit (user_id, email, success, ip_address, user_agent, created_at) VALUES (?, ?, 0, ?, ?, ?)").bind(user?.id || null, email, ipAddress, userAgent, now.toISOString()).run();
       return Response.json({ error: "Неверный email или пароль" }, { status: 401 });
     }
 
+    if (["management", "accountant"].includes(user.role)) {
+      let secret = user.two_factor_secret;
+      if (!secret) {
+        secret = generateTwoFactorSecret();
+        await env.DB.prepare("UPDATE users SET two_factor_secret=? WHERE id=?").bind(secret, user.id).run();
+      }
+      if (!payload?.twoFactorCode) {
+        return Response.json({ requiresTwoFactor: true, setup: !user.two_factor_enabled, secret, otpauth: `otpauth://totp/LOGIPAY:${encodeURIComponent(user.email)}?secret=${secret}&issuer=LOGIPAY` }, { status: 202 });
+      }
+      if (!(await verifyTwoFactorCode(secret, payload.twoFactorCode))) {
+        await env.DB.prepare("INSERT INTO login_audit (user_id, email, success, ip_address, user_agent, created_at) VALUES (?, ?, 0, ?, ?, ?)").bind(user.id, email, ipAddress, userAgent, now.toISOString()).run();
+        return Response.json({ error: "Неверный код двухфакторной авторизации", requiresTwoFactor: true }, { status: 401 });
+      }
+      if (!user.two_factor_enabled) await env.DB.prepare("UPDATE users SET two_factor_enabled=1 WHERE id=?").bind(user.id).run();
+    }
+
     const session = await createSession(user.id);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?").bind(user.id),
+      env.DB.prepare("INSERT INTO login_audit (user_id, email, success, ip_address, user_agent, created_at) VALUES (?, ?, 1, ?, ?, ?)").bind(user.id, email, ipAddress, userAgent, now.toISOString()),
+    ]);
     const isSecure = new URL(request.url).protocol === "https:";
     return Response.json(
       { user: { email: user.email, fullName: user.full_name, role: user.role } },

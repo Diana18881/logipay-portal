@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `payroll_staff_period_unique` ON `payroll_calculations` (`staff_id`,`period`);

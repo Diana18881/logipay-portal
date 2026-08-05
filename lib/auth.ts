@@ -10,6 +10,7 @@ export type PortalUser = {
   fullName: string;
   role: PortalRole;
   mustChangePassword: boolean;
+  twoFactorEnabled: boolean;
 };
 
 const COOKIE_NAME = "logipay_session";
@@ -28,6 +29,43 @@ function base64ToBytes(value: string) {
 
 function bytesToHex(bytes: Uint8Array) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+function base32ToBytes(value: string) {
+  const clean = value.toUpperCase().replace(/[^A-Z2-7]/g, "");
+  let bits = "";
+  for (const character of clean) bits += BASE32_ALPHABET.indexOf(character).toString(2).padStart(5, "0");
+  const bytes: number[] = [];
+  for (let index = 0; index + 8 <= bits.length; index += 8) bytes.push(Number.parseInt(bits.slice(index, index + 8), 2));
+  return new Uint8Array(bytes);
+}
+
+export function generateTwoFactorSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  let bits = "";
+  for (const byte of bytes) bits += byte.toString(2).padStart(8, "0");
+  let secret = "";
+  for (let index = 0; index < bits.length; index += 5) secret += BASE32_ALPHABET[Number.parseInt(bits.slice(index, index + 5).padEnd(5, "0"), 2)];
+  return secret;
+}
+
+export async function verifyTwoFactorCode(secret: string, code: string) {
+  const normalized = code.replace(/\D/g, "");
+  if (normalized.length !== 6) return false;
+  const counter = Math.floor(Date.now() / 30_000);
+  for (let offset = -1; offset <= 1; offset += 1) {
+    const buffer = new ArrayBuffer(8);
+    const view = new DataView(buffer);
+    view.setUint32(4, counter + offset, false);
+    const key = await crypto.subtle.importKey("raw", base32ToBytes(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+    const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, buffer));
+    const position = digest[digest.length - 1] & 15;
+    const number = (((digest[position] & 127) << 24) | (digest[position + 1] << 16) | (digest[position + 2] << 8) | digest[position + 3]) % 1_000_000;
+    if (number.toString().padStart(6, "0") === normalized) return true;
+  }
+  return false;
 }
 
 async function sha256(value: string) {
@@ -116,6 +154,17 @@ export async function ensureAuthDatabase() {
     ),
   ]);
 
+  const userColumns = await env.DB.prepare("PRAGMA table_info(users)").all<{ name: string }>();
+  const names = new Set(userColumns.results.map((column) => column.name));
+  if (!names.has("failed_attempts")) await env.DB.prepare("ALTER TABLE users ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0").run();
+  if (!names.has("locked_until")) await env.DB.prepare("ALTER TABLE users ADD COLUMN locked_until TEXT").run();
+  if (!names.has("two_factor_secret")) await env.DB.prepare("ALTER TABLE users ADD COLUMN two_factor_secret TEXT").run();
+  if (!names.has("two_factor_enabled")) await env.DB.prepare("ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0").run();
+  await env.DB.batch([
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS login_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, email TEXT NOT NULL, success INTEGER NOT NULL, ip_address TEXT, user_agent TEXT, created_at TEXT NOT NULL)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS password_reset_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, resolved_at TEXT)"),
+  ]);
+
   await env.DB.batch([
     env.DB.prepare(
       "INSERT OR IGNORE INTO users (email, full_name, role, password_hash, must_change_password, active) VALUES (?, ?, ?, ?, 1, 1)",
@@ -138,7 +187,7 @@ export async function getPortalUser(): Promise<PortalUser | null> {
   if (!token) return null;
   const tokenHash = await sha256(token);
   const row = await env.DB.prepare(
-    `SELECT users.id, users.email, users.full_name, users.role, users.must_change_password
+    `SELECT users.id, users.email, users.full_name, users.role, users.must_change_password, users.two_factor_enabled
      FROM sessions
      INNER JOIN users ON users.id = sessions.user_id
      WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.active = 1
@@ -149,6 +198,7 @@ export async function getPortalUser(): Promise<PortalUser | null> {
     full_name: string;
     role: PortalRole;
     must_change_password: number;
+    two_factor_enabled: number;
   }>();
 
   if (!row) return null;
@@ -158,6 +208,7 @@ export async function getPortalUser(): Promise<PortalUser | null> {
     fullName: row.full_name,
     role: row.role,
     mustChangePassword: Boolean(row.must_change_password),
+    twoFactorEnabled: Boolean(row.two_factor_enabled),
   };
 }
 

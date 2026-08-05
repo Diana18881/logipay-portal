@@ -8,6 +8,9 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [twoFactor, setTwoFactor] = useState<{ setup?: boolean; secret?: string } | null>(null);
+  const [message, setMessage] = useState("");
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -16,18 +19,32 @@ export function LoginForm() {
     const response = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, twoFactorCode }),
     });
     const contentType = response.headers.get("content-type") ?? "";
     const result = contentType.includes("application/json")
-      ? await response.json() as { error?: string }
+      ? await response.json() as { error?: string; requiresTwoFactor?: boolean; setup?: boolean; secret?: string }
       : { error: "Сервер входа временно недоступен. Попробуйте ещё раз." };
+    if (result.requiresTwoFactor && response.status === 202) {
+      setTwoFactor({ setup: result.setup, secret: result.secret });
+      setLoading(false);
+      return;
+    }
     if (!response.ok) {
       setError(result.error ?? "Не удалось войти");
       setLoading(false);
       return;
     }
     window.location.href = "/";
+  }
+
+  async function requestReset() {
+    setError("");
+    if (!email) return setError("Сначала введите ваш email");
+    const response = await fetch("/api/auth/reset-request", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+    const result = await response.json() as { message?: string; error?: string };
+    if (!response.ok) setError(result.error || "Не удалось отправить запрос");
+    else setMessage(result.message || "Запрос отправлен администратору");
   }
 
   return (
@@ -54,9 +71,11 @@ export function LoginForm() {
           <p>Используйте корпоративную учётную запись</p>
           <label>Email<input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" required /></label>
           <label>Пароль<div className="password-field"><input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Введите пароль" required /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}>{showPassword ? "Скрыть" : "Показать"}</button></div></label>
+          {twoFactor ? <div className="two-factor-box">{twoFactor.setup ? <><strong>Настройте двухфакторный вход</strong><p>Добавьте этот ключ в Google Authenticator, Microsoft Authenticator или 1Password:</p><code>{twoFactor.secret}</code></> : <strong>Двухфакторная авторизация</strong>}<label>6-значный код<input inputMode="numeric" autoComplete="one-time-code" value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value)} maxLength={6} required /></label></div> : null}
           {error ? <div className="login-error">{error}</div> : null}
+          {message ? <div className="login-message-box">{message}</div> : null}
           <button className="login-submit" type="submit" disabled={loading}>{loading ? "Проверяем…" : "Войти в портал"}<span>→</span></button>
-          <div className="login-help"><span>Нет доступа?</span><button type="button">Обратитесь к администратору</button></div>
+          <div className="login-help"><span>Нет доступа?</span><button type="button" onClick={requestReset}>Запросить сброс пароля</button></div>
           <div className="login-footer">LOGIPAY Security · Доступ только для сотрудников</div>
         </form>
       </section>

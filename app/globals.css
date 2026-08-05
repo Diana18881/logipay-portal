@@ -1218,6 +1218,60 @@ td:last-child button {
   font-size: 8px;
   letter-spacing: 0.5px;
 }
+
+.advanced-stack { display: grid; gap: 18px; }
+.advanced-form, .payroll-form, .import-toolbar { padding: 18px 20px; display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); gap: 12px; align-items: end; border-bottom: 1px solid var(--line); }
+.advanced-form input, .advanced-form select, .payroll-form input, .payroll-form select, .import-toolbar input, .import-toolbar select, .schedule-filter { width: 100%; border: 1px solid #dfe6eb; background: #fff; padding: 10px 11px; border-radius: 7px; color: #334252; font-size: 10px; min-height: 38px; }
+.advanced-form label, .payroll-form label { color: #687684; font-size: 9px; display: grid; gap: 5px; }
+.payroll-form { grid-template-columns: repeat(5,minmax(130px,1fr)); }
+.inline-notice { margin: 12px 20px; padding: 11px 13px; border-radius: 7px; background: var(--mint-pale); color: #168b7e; font-size: 10px; }
+.ok-chip, .danger-chip, .status-pill { display: inline-block; padding: 5px 8px; border-radius: 12px; font-size: 8px; white-space: nowrap; }
+.ok-chip { color: #137d70; background: #e5f7f3; }
+.danger-chip { color: #a94a3e; background: #ffebe8; }
+.status-pill { color: #277eae; background: #e4f2fa; }
+.maintenance-panel { margin-top: 0; }
+.import-toolbar { grid-template-columns: minmax(230px,1fr) minmax(250px,1fr) auto; }
+.import-summary { display: flex; align-items: center; gap: 14px; padding: 13px 20px; font-size: 10px; color: #687684; }
+.import-summary strong { color: #243342; }
+.preview-table { max-height: 500px; }
+.security-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; }
+.security-card { border: 1px solid var(--line); border-radius: 10px; padding: 20px; background: #fff; text-align: left; display: flex; flex-direction: column; min-height: 120px; }
+.security-card strong { color: #152536; font-size: 13px; }
+.security-card span { color: #7b8795; font-size: 10px; line-height: 1.5; margin-top: 10px; }
+.security-action { background: var(--navy); }
+.security-action strong { color: #fff; }
+.security-action span { color: #9eb0c1; }
+details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padding: 10px; font-size: 8px; color: #536171; }
+.password-overlay { position: fixed; inset: 0; z-index: 100; background: #07182de8; display: grid; place-items: center; padding: 20px; }
+.password-change-card { width: min(430px,100%); background: #fff; border-radius: 14px; padding: 30px; box-shadow: 0 30px 90px #0005; }
+.password-change-card h2 { margin: 18px 0 8px; font-size: 21px; }
+.password-change-card > p { color: var(--muted); font-size: 10px; margin-bottom: 20px; }
+.password-change-card label { display: grid; gap: 6px; margin: 13px 0; color: #536171; font-size: 10px; }
+.password-change-card input { border: 1px solid #dde4e9; border-radius: 7px; padding: 11px; }
+.password-change-card .primary-button { width: 100%; margin-top: 10px; }
+.two-factor-box { padding: 14px; border-radius: 8px; background: #eff8f7; border: 1px solid #cfece7; font-size: 10px; }
+.two-factor-box p { color: #627483; font-size: 9px; line-height: 1.45; }
+.two-factor-box code { display: block; padding: 9px; background: #fff; border-radius: 6px; letter-spacing: 1px; word-break: break-all; }
+.two-factor-box label { margin-top: 12px !important; }
+.login-message-box { padding: 10px; border-radius: 7px; background: #e7f8f5; color: #167f72; font-size: 10px; }
+.schedule-filter { max-width: 270px; }
+.schedule-card[draggable="true"] { cursor: grab; }
+.schedule-card[draggable="true"]:active { cursor: grabbing; opacity: .65; }
+.calendar-day:has(.schedule-card[draggable="true"]) { transition: .15s; }
+.dossier-actions { padding: 0 24px 14px; display: flex; justify-content: flex-end; }
+.dossier-actions a { text-decoration: none; }
+.dossier-pay { padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: #fff; display: grid; gap: 6px; }
+.dossier-pay span, .dossier-pay small { color: var(--muted); font-size: 9px; }
+
+@media (max-width: 1100px) {
+  .payroll-form { grid-template-columns: repeat(3,minmax(130px,1fr)); }
+  .security-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 720px) {
+  .payroll-form, .advanced-form, .import-toolbar { grid-template-columns: 1fr; }
+  .security-grid { grid-template-columns: 1fr; }
+  .schedule-filter { max-width: none; }
+}
 .backdrop {
   display: none;
 }
@@ -1850,8 +1904,7 @@ td:last-child button {
   color: var(--muted);
 }
 .entry-form label:has(input[name="vacation"]),
-.pay-breakdown p:nth-child(2),
-.attention-list p:nth-child(2) {
+.pay-breakdown p:nth-child(2) {
   display: none;
 }
 
@@ -1919,6 +1972,7 @@ td:last-child button {
   .top-actions .search {
     display: none;
   }
+  .topbar .pdf-button { display: none; }
   .content {
     padding: 23px 16px 40px;
   }

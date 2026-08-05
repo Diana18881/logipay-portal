@@ -96,6 +96,33 @@ export async function GET(request: Request) {
             "SELECT vf.*, s.full_name AS driver_name FROM vehicle_files vf LEFT JOIN staff s ON s.id=vf.staff_id ORDER BY vf.created_at DESC",
           ).all()
         : { results: [] };
+  const employeeDocuments =
+    user.role === "dispatcher"
+      ? { results: [] }
+      : user.role === "driver"
+        ? await env.DB.prepare("SELECT d.*, s.full_name FROM employee_documents d JOIN staff s ON s.id=d.staff_id WHERE d.staff_id=? ORDER BY d.created_at DESC").bind(driverStaffId || -1).all()
+        : await env.DB.prepare("SELECT d.*, s.full_name FROM employee_documents d JOIN staff s ON s.id=d.staff_id ORDER BY d.created_at DESC").all();
+  const payroll =
+    user.role === "dispatcher"
+      ? { results: [] }
+      : user.role === "driver"
+        ? await env.DB.prepare("SELECT p.*, s.full_name FROM payroll_calculations p JOIN staff s ON s.id=p.staff_id WHERE p.staff_id=? ORDER BY p.period DESC").bind(driverStaffId || -1).all()
+        : await env.DB.prepare("SELECT p.*, s.full_name FROM payroll_calculations p JOIN staff s ON s.id=p.staff_id ORDER BY p.period DESC, s.full_name").all();
+  const maintenance =
+    user.role === "accountant"
+      ? { results: [] }
+      : user.role === "driver"
+        ? await env.DB.prepare("SELECT m.* FROM vehicle_maintenance m WHERE m.license_plate IN (SELECT license_plate FROM weekly_planning WHERE staff_id=?) ORDER BY m.created_at DESC").bind(driverStaffId || -1).all()
+        : await env.DB.prepare("SELECT * FROM vehicle_maintenance ORDER BY created_at DESC").all();
+  const loginAudit = user.role === "management"
+    ? await env.DB.prepare("SELECT * FROM login_audit ORDER BY created_at DESC LIMIT 100").all()
+    : { results: [] };
+  const resetRequests = user.role === "management"
+    ? await env.DB.prepare("SELECT * FROM password_reset_requests WHERE status='open' ORDER BY created_at DESC").all()
+    : { results: [] };
+  const audit = ["management", "accountant"].includes(user.role)
+    ? await env.DB.prepare("SELECT a.*, u.full_name AS user_name FROM audit_log a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 150").all()
+    : { results: [] };
   return json({
     user,
     year,
@@ -106,6 +133,12 @@ export async function GET(request: Request) {
     documents,
     concerns: concerns.results,
     files: files.results,
+    employeeDocuments: employeeDocuments.results,
+    payroll: payroll.results,
+    maintenance: maintenance.results,
+    loginAudit: loginAudit.results,
+    resetRequests: resetRequests.results,
+    audit: audit.results,
   });
 }
 
@@ -155,6 +188,7 @@ export async function POST(request: Request) {
     )
       .bind(String(body.terminatedAt || now.slice(0, 10)), now, body.id)
       .run();
+    await env.DB.prepare("UPDATE users SET active=0 WHERE id=(SELECT user_id FROM staff WHERE id=?)").bind(body.id).run();
     auditDetails = {
       oldValue,
       newValue: {
@@ -168,6 +202,7 @@ export async function POST(request: Request) {
     )
       .bind(now, body.id)
       .run();
+    await env.DB.prepare("UPDATE users SET active=1 WHERE id=(SELECT user_id FROM staff WHERE id=?)").bind(body.id).run();
   } else if (action === "updateStaff" && user.role === "management") {
     const oldValue = await env.DB.prepare("SELECT * FROM staff WHERE id=?")
       .bind(body.id)
@@ -563,6 +598,45 @@ export async function POST(request: Request) {
     await env.DB.prepare("DELETE FROM driver_concerns WHERE id=?")
       .bind(body.id)
       .run();
+  } else if (
+    action === "savePayroll" &&
+    ["management", "accountant"].includes(user.role)
+  ) {
+    const staffId = Number(body.staffId);
+    const period = String(body.period || "");
+    if (!staffId || !/^\d{4}-\d{2}$/.test(period)) return json({ error: "Mitarbeiter und Monat sind erforderlich" }, 400);
+    const baseSalary = Number(body.baseSalary || 0);
+    const tourCount = Number(body.tourCount || 0);
+    const bonuses = Number(body.bonuses || 0);
+    const expenses = Number(body.expenses || 0);
+    const deductions = Number(body.deductions || 0);
+    const netAmount = Math.round((baseSalary + bonuses + expenses - deductions) * 100) / 100;
+    const paymentStatus = String(body.paymentStatus || "draft");
+    if (!["draft", "review", "approved", "paid"].includes(paymentStatus)) return json({ error: "Ungültiger Zahlungsstatus" }, 400);
+    const oldValue = await env.DB.prepare("SELECT * FROM payroll_calculations WHERE staff_id=? AND period=?").bind(staffId, period).first<Record<string, unknown>>();
+    if (oldValue?.locked_at && user.role !== "management") return json({ error: "Freigegebene Abrechnung ist gesperrt" }, 409);
+    await env.DB.prepare(`INSERT INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, deductions, net_amount, payment_status, locked_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(staff_id, period) DO UPDATE SET base_salary=excluded.base_salary, tour_count=excluded.tour_count, bonuses=excluded.bonuses, expenses=excluded.expenses, deductions=excluded.deductions, net_amount=excluded.net_amount, payment_status=excluded.payment_status, locked_at=excluded.locked_at, updated_at=excluded.updated_at`)
+      .bind(staffId, period, baseSalary, tourCount, bonuses, expenses, deductions, netAmount, paymentStatus, ["approved", "paid"].includes(paymentStatus) ? now : null, now, now).run();
+    auditDetails = { oldValue, newValue: { staffId, period, baseSalary, tourCount, bonuses, expenses, deductions, netAmount, paymentStatus } };
+  } else if (
+    action === "addMaintenance" &&
+    ["management", "dispatcher"].includes(user.role)
+  ) {
+    if (!body.licensePlate || !body.description) return json({ error: "Kennzeichen und Beschreibung sind erforderlich" }, 400);
+    await env.DB.prepare("INSERT INTO vehicle_maintenance (license_plate, category, description, cost, status, responsible, due_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(body.licensePlate, body.category || "Wartung", body.description, Number(body.cost || 0), body.status || "Gemeldet", body.responsible || "", body.dueDate || null, now, now).run();
+  } else if (
+    action === "updateMaintenance" &&
+    ["management", "dispatcher"].includes(user.role)
+  ) {
+    const oldValue = await env.DB.prepare("SELECT * FROM vehicle_maintenance WHERE id=?").bind(body.id).first();
+    await env.DB.prepare("UPDATE vehicle_maintenance SET category=?, description=?, cost=?, status=?, responsible=?, due_date=?, updated_at=? WHERE id=?").bind(body.category, body.description, Number(body.cost || 0), body.status, body.responsible || "", body.dueDate || null, now, body.id).run();
+    if (body.status === "Werkstatt") await env.DB.prepare("UPDATE vehicles SET status='workshop', updated_at=? WHERE license_plate=(SELECT license_plate FROM vehicle_maintenance WHERE id=?)").bind(now, body.id).run();
+    if (body.status === "Freigegeben") await env.DB.prepare("UPDATE vehicles SET status='active', updated_at=? WHERE license_plate=(SELECT license_plate FROM vehicle_maintenance WHERE id=?)").bind(now, body.id).run();
+    auditDetails = { oldValue, newValue: { category: body.category, description: body.description, cost: body.cost, status: body.status, responsible: body.responsible, dueDate: body.dueDate } };
+  } else if (action === "resolveResetRequest" && user.role === "management") {
+    await env.DB.prepare("UPDATE password_reset_requests SET status='resolved', resolved_at=? WHERE id=?").bind(now, body.id).run();
   } else
     return json({ error: "Keine Berechtigung oder unbekannte Aktion" }, 403);
   await env.DB.prepare(

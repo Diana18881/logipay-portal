@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -12,6 +12,12 @@ export const users = sqliteTable("users", {
     .notNull()
     .default(true),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
+  failedAttempts: integer("failed_attempts").notNull().default(0),
+  lockedUntil: text("locked_until"),
+  twoFactorSecret: text("two_factor_secret"),
+  twoFactorEnabled: integer("two_factor_enabled", { mode: "boolean" })
+    .notNull()
+    .default(false),
 });
 
 export const sessions = sqliteTable("sessions", {
@@ -159,6 +165,66 @@ export const auditLog = sqliteTable("audit_log", {
   entityId: text("entity_id"),
   details: text("details"),
   createdAt: text("created_at").notNull(),
+});
+
+export const loginAudit = sqliteTable("login_audit", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").references(() => users.id),
+  email: text("email").notNull(),
+  success: integer("success", { mode: "boolean" }).notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: text("created_at").notNull(),
+});
+
+export const passwordResetRequests = sqliteTable("password_reset_requests", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull(),
+  status: text("status").notNull().default("open"),
+  createdAt: text("created_at").notNull(),
+  resolvedAt: text("resolved_at"),
+});
+
+export const employeeDocuments = sqliteTable("employee_documents", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").notNull().references(() => staff.id),
+  category: text("category").notNull(),
+  fileName: text("file_name").notNull(),
+  objectKey: text("object_key").notNull().unique(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  expiresAt: text("expires_at"),
+  uploadedBy: integer("uploaded_by").notNull().references(() => users.id),
+  createdAt: text("created_at").notNull(),
+});
+
+export const payrollCalculations = sqliteTable("payroll_calculations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").notNull().references(() => staff.id),
+  period: text("period").notNull(),
+  baseSalary: real("base_salary").notNull().default(0),
+  tourCount: integer("tour_count").notNull().default(0),
+  bonuses: real("bonuses").notNull().default(0),
+  expenses: real("expenses").notNull().default(0),
+  deductions: real("deductions").notNull().default(0),
+  netAmount: real("net_amount").notNull().default(0),
+  paymentStatus: text("payment_status").notNull().default("draft"),
+  lockedAt: text("locked_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("payroll_staff_period_unique").on(table.staffId, table.period)]);
+
+export const vehicleMaintenance = sqliteTable("vehicle_maintenance", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  licensePlate: text("license_plate").notNull(),
+  category: text("category").notNull(),
+  description: text("description").notNull(),
+  cost: real("cost").notNull().default(0),
+  status: text("status").notNull().default("Gemeldet"),
+  responsible: text("responsible"),
+  dueDate: text("due_date"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
 });
 export const vehicleFiles = sqliteTable("vehicle_files", {
   id: integer("id").primaryKey({ autoIncrement: true }),

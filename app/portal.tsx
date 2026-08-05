@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { PortalUser } from "../lib/auth";
+import { EmployeeDocuments, ExcelImporter, MaintenanceCenter, PasswordChange, PayrollCenter, SecurityCenter } from "./advanced-panels";
 
 type Section =
   | "overview"
@@ -10,6 +11,9 @@ type Section =
   | "planning"
   | "concerns"
   | "documents"
+  | "personnel"
+  | "import"
+  | "security"
   | "reports";
 type Row = Record<string, string | number | null>;
 type Data = {
@@ -19,6 +23,12 @@ type Data = {
   concerns: Row[];
   documents: Row[];
   files: Row[];
+  employeeDocuments: Row[];
+  payroll: Row[];
+  maintenance: Row[];
+  loginAudit: Row[];
+  resetRequests: Row[];
+  audit: Row[];
   year: number;
   kw: number;
 };
@@ -51,9 +61,12 @@ const nav: { id: Section; label: string; roles: string[] }[] = [
   },
   {
     id: "documents",
-    label: "Lohnabrechnungen",
+    label: "Lohn & Abrechnung",
     roles: ["management", "accountant", "driver"],
   },
+  { id: "personnel", label: "Personalakte", roles: ["management", "accountant", "driver"] },
+  { id: "import", label: "Excel-Import", roles: ["management", "dispatcher"] },
+  { id: "security", label: "Sicherheit & Audit", roles: ["management"] },
   {
     id: "reports",
     label: "Berichte",
@@ -77,6 +90,12 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     concerns: [],
     documents: [],
     files: [],
+    employeeDocuments: [],
+    payroll: [],
+    maintenance: [],
+    loginAudit: [],
+    resetRequests: [],
+    audit: [],
     year: 2026,
     kw: 32,
   });
@@ -89,6 +108,8 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const [editing, setEditing] = useState<Row | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
   const [notice, setNotice] = useState("");
+  const [mobileMenu, setMobileMenu] = useState(false);
+  const [renderedAt] = useState(() => new Date().getTime());
   const load = useCallback(
     async (background = false) => {
       if (!background) setLoading(true);
@@ -114,9 +135,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     [year, kw],
   );
   useEffect(() => {
-    load();
+    const initial = window.setTimeout(() => load(), 0);
     const refresh = window.setInterval(() => load(true), 15000);
-    return () => window.clearInterval(refresh);
+    return () => { window.clearTimeout(initial); window.clearInterval(refresh); };
   }, [load]);
   async function action(payload: Record<string, unknown>) {
     const r = await fetch("/api/portal", {
@@ -150,6 +171,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   }
   const active = data.staff.filter((x) => x.status === "active");
   const workshop = data.vehicles.filter((x) => x.status === "workshop");
+  const expiringDocuments = data.employeeDocuments.filter((item) => item.expires_at && new Date(String(item.expires_at)).getTime() <= renderedAt + 60 * 86400000);
   const openConcernCount = data.concerns.filter(
     (item) =>
       !["Erledigt", "Delivered"].includes(String(item.completion_status)),
@@ -157,7 +179,8 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const title = nav.find((n) => n.id === section)?.label;
   return (
     <main className={`app-shell role-${currentUser.role}`}>
-      <aside className="sidebar">
+      {mobileMenu ? <button className="backdrop" aria-label="Menü schließen" onClick={() => setMobileMenu(false)} /> : null}
+      <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
         <div className="brand">
           <div className="brand-mark">
             <span />
@@ -184,7 +207,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
               <button
                 key={n.id}
                 className={section === n.id ? "nav-active" : ""}
-                onClick={() => setSection(n.id)}
+                onClick={() => { setSection(n.id); setMobileMenu(false); }}
               >
                 <span className="nav-icon">
                   {
@@ -196,6 +219,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                         planning: "▦",
                         concerns: "!",
                         documents: "€",
+                        personnel: "▤",
+                        import: "⇧",
+                        security: "⌾",
                         reports: "▥",
                       } as Record<string, string>
                     )[n.id]
@@ -231,6 +257,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
       </aside>
       <section className="workspace">
         <header className="topbar">
+          <button className="menu-toggle" aria-label="Menü öffnen" onClick={() => setMobileMenu(true)}>☰</button>
           <div className="period-control">
             <span>Planungszeitraum</span>
             <select value={year} onChange={(e) => setYear(+e.target.value)}>
@@ -358,8 +385,8 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                             <span>Fahrzeuge in der Werkstatt</span>
                           </p>
                           <p>
-                            <b>{active.filter((x) => x.vacation).length}</b>
-                            <span>Urlaubseinträge</span>
+                            <b>{expiringDocuments.length}</b>
+                            <span>Dokumente laufen bald ab</span>
                           </p>
                           <p>
                             <b>
@@ -387,7 +414,6 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                           <th>Vergütung</th>
                           <th>Standort</th>
                           <th>Firma</th>
-                          <th>Urlaub</th>
                           <th>Status</th>
                           <th />
                         </tr>
@@ -408,7 +434,6 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                             <td>{s.compensation || "—"}</td>
                             <td>{s.location || "—"}</td>
                             <td>{s.company || "—"}</td>
-                            <td>{s.vacation || "—"}</td>
                             <td>
                               <Badge value={String(s.status)} />
                             </td>
@@ -462,13 +487,10 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 </Card>
               )}
               {section === "vehicles" && (
-                <VehicleFiles
-                  vehicles={data.vehicles}
-                  files={data.files}
-                  planning={data.planning}
-                  driver={currentUser.role === "driver"}
-                  reload={load}
-                />
+                <div className="advanced-stack">
+                  <VehicleFiles vehicles={data.vehicles} files={data.files} planning={data.planning} driver={currentUser.role === "driver"} reload={load} />
+                  <MaintenanceCenter rows={data.maintenance} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} action={action} />
+                </div>
               )}
               {section === "planning" && (
                 <Card title={`Fahrerplanung ${year} · KW ${kw}`}>
@@ -505,6 +527,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     canEdit={currentUser.role !== "driver"}
                     edit={(row) => openModal("planning", row)}
                     remove={(id) => action({ action: "deletePlanning", id })}
+                    move={(row, day) => action({ action: "updatePlanning", id: row.id, planningYear: year, calendarWeek: kw, company: row.company, driverName: row.driver_name, location: row.location, licensePlate: row.license_plate, workDays: String(day), startTime: row.start_time || "06:00", blockId: row.block_id, status: row.status, comments: row.comments })}
                   />
                 </Card>
               )}
@@ -525,16 +548,14 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   />
                 ))}
               {section === "documents" && (
-                <Documents
-                  rows={data.documents}
-                  staff={active}
-                  driver={currentUser.role === "driver"}
-                  canUpload={["management", "accountant"].includes(
-                    currentUser.role,
-                  )}
-                  reload={load}
-                />
+                <div className="advanced-stack">
+                  <PayrollCenter rows={data.payroll} staff={active} driver={currentUser.role === "driver"} action={action} />
+                  <Documents rows={data.documents} staff={active} driver={currentUser.role === "driver"} canUpload={["management", "accountant"].includes(currentUser.role)} reload={load} />
+                </div>
               )}
+              {section === "personnel" && <EmployeeDocuments rows={data.employeeDocuments} staff={data.staff} driver={currentUser.role === "driver"} reload={load} />}
+              {section === "import" && <ExcelImporter staff={data.staff} vehicles={data.vehicles} planning={data.planning} year={year} kw={kw} reload={load} />}
+              {section === "security" && <SecurityCenter loginAudit={data.loginAudit} resetRequests={data.resetRequests} audit={data.audit} action={action} />}
               {section === "reports" && (
                 <div className="report-grid">
                   <Report
@@ -606,6 +627,8 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           planning={data.planning}
           vehicles={data.vehicles}
           files={data.files}
+          employeeDocuments={data.employeeDocuments}
+          payroll={data.payroll}
           close={() => setSelectedStaff(null)}
         />
       )}
@@ -615,6 +638,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           {notice}
         </div>
       )}
+      {currentUser.mustChangePassword ? <PasswordChange required done={() => location.reload()} /> : null}
     </main>
   );
 }
@@ -742,12 +766,16 @@ function DriverDossier({
   planning,
   vehicles,
   files,
+  employeeDocuments,
+  payroll,
   close,
 }: {
   staff: Row;
   planning: Row[];
   vehicles: Row[];
   files: Row[];
+  employeeDocuments: Row[];
+  payroll: Row[];
   close: () => void;
 }) {
   const trips = planning.filter(
@@ -760,6 +788,8 @@ function DriverDossier({
     plates.includes(String(v.license_plate)),
   );
   const docs = files.filter((f) => f.staff_id === staff.id);
+  const personnel = employeeDocuments.filter((f) => f.staff_id === staff.id);
+  const salary = payroll.filter((record) => record.staff_id === staff.id);
   return (
     <div className="modal-backdrop">
       <div className="dossier">
@@ -770,6 +800,7 @@ function DriverDossier({
           </div>
           <button onClick={close}>×</button>
         </div>
+        <div className="dossier-actions"><a className="primary-button" href={`/api/staff/${staff.id}/export`} target="_blank">DSGVO-Datenexport</a></div>
         <div className="dossier-grid">
           <section>
             <h3>Fahrerdaten</h3>
@@ -816,6 +847,8 @@ function DriverDossier({
         </div>
         <h3 className="dossier-title">Planung und Touren</h3>
         <Planning rows={trips} />
+        {personnel.length ? <><h3 className="dossier-title">Personalakte</h3><div className="file-grid">{personnel.map((file) => <a key={file.id} href={`/api/employee-documents/${file.id}`} target="_blank"><b>{file.category}</b><span>Gültig bis {file.expires_at || "unbefristet"}</span><small>{file.file_name}</small></a>)}</div></> : null}
+        {salary.length ? <><h3 className="dossier-title">Lohnjournal</h3><div className="file-grid">{salary.map((record) => <div key={record.id} className="dossier-pay"><b>{record.period}</b><span>Netto {Number(record.net_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</span><small>{record.payment_status}</small></div>)}</div></> : null}
         <h3 className="dossier-title">
           Vom Fahrer hochgeladene Fotos und Dokumente
         </h3>
@@ -1249,6 +1282,7 @@ function WeeklySchedule({
   canEdit = false,
   edit,
   remove,
+  move,
 }: {
   rows: Row[];
   staff: Row[];
@@ -1258,14 +1292,17 @@ function WeeklySchedule({
   canEdit?: boolean;
   edit?: (row: Row) => void;
   remove?: (id: number) => void;
+  move?: (row: Row, day: number) => void;
 }) {
   const [view, setView] = useState<"calendar" | "table">("calendar");
+  const [filter, setFilter] = useState("");
   const days = isoWeekDates(year, kw);
   const activeDrivers = staff.filter((person) => person.status === "active");
+  const visibleRows = filter ? rows.filter((row) => [row.driver_name, row.license_plate, row.company, row.block_id, row.location].some((item) => String(item || "").toLowerCase().includes(filter.toLowerCase()))) : rows;
   const conflicts = new Set<string>();
 
   for (const day of days) {
-    const daily = rows.filter((row) => rowDays(row).has(day.number));
+    const daily = visibleRows.filter((row) => rowDays(row).has(day.number));
     for (const row of daily) {
       const sameDriver = row.driver_name
         ? daily.filter(
@@ -1301,6 +1338,7 @@ function WeeklySchedule({
             </span>
           ) : null}
         </div>
+        <input className="schedule-filter" placeholder="Fahrer, Kennzeichen, Firma, Block…" value={filter} onChange={(event) => setFilter(event.target.value)} />
         <div className="view-switch" aria-label="Planungsansicht">
           <button
             className={view === "calendar" ? "active" : ""}
@@ -1317,12 +1355,12 @@ function WeeklySchedule({
         </div>
       </div>
       {view === "table" ? (
-        <Planning rows={rows} canEdit={canEdit} edit={edit} remove={remove} />
+        <Planning rows={visibleRows} canEdit={canEdit} edit={edit} remove={remove} />
       ) : (
         <div className="week-calendar-wrap">
           <div className="week-calendar">
             {days.map((day) => {
-              const dailyRows = rows.filter((row) =>
+              const dailyRows = visibleRows.filter((row) =>
                 rowDays(row).has(day.number),
               );
               const assigned = new Set(
@@ -1334,7 +1372,7 @@ function WeeklySchedule({
                 (driver) => !assigned.has(String(driver.full_name)),
               );
               return (
-                <section className="calendar-day" key={day.number}>
+                <section className="calendar-day" key={day.number} onDragOver={(event) => canEdit && event.preventDefault()} onDrop={(event) => { if (!canEdit) return; const id = Number(event.dataTransfer.getData("text/plain")); const row = rows.find((entry) => Number(entry.id) === id); if (row) move?.(row, day.number); }}>
                   <header>
                     <div>
                       <strong>{day.short}</strong>
@@ -1352,6 +1390,8 @@ function WeeklySchedule({
                           <article
                             className={`schedule-card ${conflict ? "has-conflict" : ""}`}
                             key={`${day.number}-${row.id}`}
+                            draggable={canEdit}
+                            onDragStart={(event) => event.dataTransfer.setData("text/plain", String(row.id))}
                           >
                             <div className="schedule-card-head">
                               <b>{row.driver_name || "NO DRIVER"}</b>
@@ -1790,14 +1830,6 @@ function EntryForm({
               name="company"
               defaultValue={String(editing?.company || "")}
               required
-            />
-          </label>
-          <label>
-            Urlaub
-            <input
-              name="vacation"
-              defaultValue={String(editing?.vacation || "")}
-              placeholder="20.07–31.07"
             />
           </label>
           {!editing ? (
