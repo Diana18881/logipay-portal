@@ -1,5 +1,16 @@
 # LOGIPAY auf Vercel deployen
 
+## Repository
+
+- **GitHub:** https://github.com/Diana18881/logipay-portal
+- **Live-URL:** https://logipay-portal.vercel.app
+
+## GitHub mit Vercel verbinden (Auto-Deploy)
+
+1. Öffnen Sie https://vercel.com/dianas-projects-47f8bde8/logipay-portal/settings/git
+2. **Connect Git Repository** → `Diana18881/logipay-portal` auswählen
+3. Branch **main** → jeder Push deployt automatisch
+
 ## 1. Turso-Datenbank (SQLite)
 
 ```bash
