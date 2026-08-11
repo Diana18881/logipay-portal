@@ -757,6 +757,79 @@ export async function POST(request: Request) {
       },
     };
   } else if (
+    action === "movePlanningResource" &&
+    ["management", "dispatcher"].includes(user.role)
+  ) {
+    const sourceId = Number(body.sourceId);
+    const targetId = Number(body.targetId);
+    const resourceType = String(body.resourceType);
+    if (!sourceId || !targetId || sourceId === targetId || !["driver", "vehicle"].includes(resourceType))
+      return json({ error: "Ungültiges Drag-&-Drop-Ziel" }, 400);
+    type PlanningResourceRow = {
+      id: number;
+      planning_year: number;
+      calendar_week: number;
+      staff_id: number | null;
+      driver_name: string;
+      license_plate: string;
+      work_days: string;
+      start_time: string;
+    };
+    const source = await env.DB.prepare("SELECT id, planning_year, calendar_week, staff_id, driver_name, license_plate, work_days, start_time FROM weekly_planning WHERE id=?")
+      .bind(sourceId).first<PlanningResourceRow>();
+    const target = await env.DB.prepare("SELECT id, planning_year, calendar_week, staff_id, driver_name, license_plate, work_days, start_time FROM weekly_planning WHERE id=?")
+      .bind(targetId).first<PlanningResourceRow>();
+    if (!source || !target) return json({ error: "Einsatz wurde nicht gefunden" }, 404);
+    const sourceDriver = source.driver_name || "";
+    const targetDriver = target.driver_name || "";
+    const sourcePlate = source.license_plate || "";
+    const targetPlate = target.license_plate || "";
+    if (resourceType === "driver") {
+      if (!sourceDriver) return json({ error: "Im Quell-Einsatz ist kein Fahrer" }, 400);
+      const activeDrivers = await env.DB.prepare("SELECT id, full_name FROM staff WHERE full_name IN (?, ?) AND status='active'")
+        .bind(sourceDriver, targetDriver || sourceDriver).all<{ id: number; full_name: string }>();
+      const sourceStaff = activeDrivers.results.find((row) => row.full_name === sourceDriver);
+      const targetStaff = activeDrivers.results.find((row) => row.full_name === targetDriver);
+      if (!sourceStaff || (targetDriver && !targetStaff)) return json({ error: "Fahrer ist ausgeschieden oder nicht aktiv" }, 409);
+      const sourceConflicts = await env.DB.prepare("SELECT work_days, start_time FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND id NOT IN (?, ?) AND staff_id=?")
+        .bind(target.planning_year, target.calendar_week, sourceId, targetId, sourceStaff.id).all<{ work_days: string; start_time: string }>();
+      const targetConflicts = targetStaff
+        ? await env.DB.prepare("SELECT work_days, start_time FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND id NOT IN (?, ?) AND staff_id=?")
+          .bind(source.planning_year, source.calendar_week, sourceId, targetId, targetStaff.id).all<{ work_days: string; start_time: string }>()
+        : { results: [] as { work_days: string; start_time: string }[] };
+      const sourceBlocked = sourceConflicts.results.some((row) => daySetsOverlap(normalizeDays(target.work_days), normalizeDays(row.work_days)) && (!row.start_time || row.start_time === target.start_time));
+      const targetBlocked = targetConflicts.results.some((row) => daySetsOverlap(normalizeDays(source.work_days), normalizeDays(row.work_days)) && (!row.start_time || row.start_time === source.start_time));
+      if (sourceBlocked || targetBlocked) return json({ error: "Konflikt: Fahrer ist zu dieser Zeit bereits eingeplant" }, 409);
+      await env.DB.batch([
+        env.DB.prepare("UPDATE weekly_planning SET staff_id=?, driver_name=?, updated_at=? WHERE id=?").bind(sourceStaff.id, sourceDriver, now, targetId),
+        env.DB.prepare("UPDATE weekly_planning SET staff_id=?, driver_name=?, updated_at=? WHERE id=?").bind(targetStaff?.id || null, targetDriver, now, sourceId),
+      ]);
+    } else {
+      if (!sourcePlate) return json({ error: "Im Quell-Einsatz ist kein Fahrzeug" }, 400);
+      const selectedVehicles = await env.DB.prepare("SELECT license_plate, status FROM vehicles WHERE license_plate IN (?, ?)")
+        .bind(sourcePlate, targetPlate || sourcePlate).all<{ license_plate: string; status: string }>();
+      if (!selectedVehicles.results.some((row) => row.license_plate === sourcePlate) || (targetPlate && !selectedVehicles.results.some((row) => row.license_plate === targetPlate)))
+        return json({ error: "Fahrzeug ist nicht im Fahrzeugstamm vorhanden" }, 409);
+      if (selectedVehicles.results.some((row) => row.status === "workshop")) return json({ error: "Fahrzeug befindet sich in der Werkstatt" }, 409);
+      const sourceConflicts = await env.DB.prepare("SELECT work_days, start_time FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND id NOT IN (?, ?) AND license_plate=?")
+        .bind(target.planning_year, target.calendar_week, sourceId, targetId, sourcePlate).all<{ work_days: string; start_time: string }>();
+      const targetConflicts = targetPlate
+        ? await env.DB.prepare("SELECT work_days, start_time FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND id NOT IN (?, ?) AND license_plate=?")
+          .bind(source.planning_year, source.calendar_week, sourceId, targetId, targetPlate).all<{ work_days: string; start_time: string }>()
+        : { results: [] as { work_days: string; start_time: string }[] };
+      const sourceBlocked = sourceConflicts.results.some((row) => daySetsOverlap(normalizeDays(target.work_days), normalizeDays(row.work_days)) && (!row.start_time || row.start_time === target.start_time));
+      const targetBlocked = targetConflicts.results.some((row) => daySetsOverlap(normalizeDays(source.work_days), normalizeDays(row.work_days)) && (!row.start_time || row.start_time === source.start_time));
+      if (sourceBlocked || targetBlocked) return json({ error: "Konflikt: Fahrzeug ist zu dieser Zeit bereits eingeplant" }, 409);
+      await env.DB.batch([
+        env.DB.prepare("UPDATE weekly_planning SET license_plate=?, updated_at=? WHERE id=?").bind(sourcePlate, now, targetId),
+        env.DB.prepare("UPDATE weekly_planning SET license_plate=?, updated_at=? WHERE id=?").bind(targetPlate, now, sourceId),
+      ]);
+    }
+    auditDetails = {
+      oldValue: { source, target },
+      newValue: { sourceId, targetId, resourceType, moved: resourceType === "driver" ? sourceDriver : sourcePlate, swappedWith: resourceType === "driver" ? targetDriver : targetPlate },
+    };
+  } else if (
     action === "deletePlanning" &&
     ["management", "dispatcher"].includes(user.role)
   ) {

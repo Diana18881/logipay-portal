@@ -6,6 +6,7 @@ const portalUrl = new URL("../app/portal.tsx", import.meta.url);
 const operationsUrl = new URL("../app/operations-panels.tsx", import.meta.url);
 const cssUrl = new URL("../app/globals.css", import.meta.url);
 const layoutUrl = new URL("../app/layout.tsx", import.meta.url);
+const portalApiUrl = new URL("../app/api/portal/route.ts", import.meta.url);
 
 test("provides a dedicated role-protected trip chat inbox", async () => {
   const [portal, operations] = await Promise.all([
@@ -36,4 +37,24 @@ test("ships the refreshed responsive LOGIPAY visual system", async () => {
   assert.match(css, /@media screen and \(max-width: 760px\)/);
   assert.match(layout, /LOGIPAY/);
   assert.doesNotMatch(layout, /Starter Project|sandbox-preview/);
+});
+
+test("includes the operations command center, global search and driver 360 dossier", async () => {
+  const [portal, css, portalApi] = await Promise.all([
+    readFile(portalUrl, "utf8"),
+    readFile(cssUrl, "utf8"),
+    readFile(portalApiUrl, "utf8"),
+  ]);
+
+  assert.match(portal, /className="smart-status-grid"/);
+  assert.match(portal, /className=\{`global-search/);
+  assert.match(portal, /function DispatchBoard/);
+  assert.match(portal, /application\/x-logipay/);
+  assert.match(portal, /FAHRER 360°/);
+  assert.match(portal, /Touren & Kommunikation/);
+  assert.match(css, /\.dispatch-board/);
+  assert.match(css, /\.dossier-kpis/);
+  assert.match(css, /\.global-search-results/);
+  assert.match(portalApi, /action === "movePlanningResource"/);
+  assert.match(portalApi, /env\.DB\.batch/);
 });

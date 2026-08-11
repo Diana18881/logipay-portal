@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PortalUser } from "../lib/auth";
 import { EmployeeDocuments, ExcelImporter, MaintenanceCenter, PasswordChange, PayrollCenter, SecurityCenter, TruckTracking } from "./advanced-panels";
 import { AnalyticsCenter, ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
@@ -27,6 +27,7 @@ type Section =
   | "security"
   | "reports";
 type Row = Record<string, string | number | null>;
+type SearchResult = { id: string; kind: string; title: string; meta: string; section: Section; row?: Row };
 type Data = {
   staff: Row[];
   vehicles: Row[];
@@ -173,6 +174,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
   const [notice, setNotice] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const globalSearchRef = useRef<HTMLInputElement | null>(null);
   const [locale, setLocale] = useState<DriverLocale>("de");
   const [pushState, setPushState] = useState<"default" | "granted" | "denied" | "unsupported">("default");
   // Keep the first server and browser render identical; the real connection
@@ -223,6 +227,18 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     if (supported) void navigator.serviceWorker.register("/sw.js");
     return () => window.clearTimeout(syncPreferences);
   }, [isDriver]);
+  useEffect(() => {
+    const openSearch = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        globalSearchRef.current?.focus();
+        setSearchOpen(true);
+      }
+      if (event.key === "Escape") setSearchOpen(false);
+    };
+    window.addEventListener("keydown", openSearch);
+    return () => window.removeEventListener("keydown", openSearch);
+  }, []);
   useEffect(() => {
     if (!isDriver || pushState !== "granted" || !data.notifications.length || !("serviceWorker" in navigator)) return;
     const storageKey = `logipay_last_notification_${currentUser.id}`;
@@ -337,8 +353,33 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     const age = renderedAt - new Date(String(item.recorded_at)).getTime();
     return age > 30 * 60_000 || Number(item.speed_kph || 0) > 90;
   }).length;
+  const todayNumber = new Date().getDay() || 7;
+  const todayPlanning = data.planning.filter((item) => rowDays(item).has(todayNumber));
+  const delayedTrips = data.tripOperations.filter((item) => item.status === "Problem" || Boolean(item.delay_reason) || (item.eta && new Date(String(item.eta)).getTime() < renderedAt && item.status !== "Zugestellt"));
+  const pendingExpenses = data.expenses.filter((item) => ["Eingereicht", "In Prüfung"].includes(String(item.status)));
   const unreadNotificationCount = data.notifications.filter((item) => !item.read_at).length;
   const unreadChatCount = data.tripMessages.filter((item) => !Number(item.read_by_me) && Number(item.sender_user_id) !== currentUser.id).length;
+  const globalResults = useMemo<SearchResult[]>(() => {
+    const query = globalSearch.trim().toLowerCase();
+    if (query.length < 2) return [];
+    const matches = (...values: unknown[]) => values.some((value) => String(value || "").toLowerCase().includes(query));
+    const results: SearchResult[] = [];
+    data.staff.filter((row) => matches(row.full_name, row.company, row.location, row.login_email)).forEach((row) => results.push({ id: `staff-${row.id}`, kind: "Fahrer", title: String(row.full_name), meta: `${row.company || "Ohne Firma"} · ${row.location || "Kein Standort"}`, section: "staff", row }));
+    data.vehicles.filter((row) => matches(row.license_plate, row.company, row.location, row.status)).forEach((row) => results.push({ id: `vehicle-${row.id}`, kind: "Fahrzeug", title: String(row.license_plate), meta: `${row.company || "Ohne Firma"} · ${row.status || "—"}`, section: "vehicles", row }));
+    data.planning.filter((row) => matches(row.driver_name, row.license_plate, row.block_id, row.company, row.location, row.comments)).forEach((row) => results.push({ id: `planning-${row.id}`, kind: "Planung", title: `${row.driver_name || "Ohne Fahrer"} · ${row.license_plate || "Ohne Fahrzeug"}`, meta: `${row.company || "—"} · Block ${row.block_id || "—"}`, section: "planning", row }));
+    data.tripOperations.filter((row) => matches(row.driver_name, row.license_plate, row.block_id, row.pickup_address, row.delivery_address, row.delay_reason)).forEach((row) => results.push({ id: `trip-${row.id}`, kind: "Tour", title: `${row.license_plate || "Tour"} · ${row.driver_name || "Ohne Fahrer"}`, meta: `${row.status || "—"} · ${row.block_id || "Kein Block"}`, section: "operations", row }));
+    data.employeeDocuments.filter((row) => matches(row.full_name, row.category, row.file_name, row.document_number)).forEach((row) => results.push({ id: `employee-document-${row.id}`, kind: "Dokument", title: String(row.category || row.file_name || "Dokument"), meta: `${row.full_name || "Mitarbeiter"} · ${row.expires_at || "unbefristet"}`, section: "personnel", row }));
+    data.files.filter((row) => matches(row.driver_name, row.license_plate, row.category, row.file_name, row.notes)).forEach((row) => results.push({ id: `vehicle-file-${row.id}`, kind: "Foto / Datei", title: String(row.file_name || row.category || "Fahrzeugdatei"), meta: `${row.driver_name || "Fahrer"} · ${row.license_plate || "—"}`, section: "vehicles", row }));
+    data.tripMessages.filter((row) => matches(row.sender_name, row.body, row.file_name, row.license_plate, row.block_id)).forEach((row) => results.push({ id: `message-${row.id}`, kind: "Nachricht", title: String(row.sender_name || "Tour-Chat"), meta: String(row.body || row.file_name || "Anhang").slice(0, 90), section: "messages", row }));
+    data.expenses.filter((row) => matches(row.full_name, row.license_plate, row.block_id, row.merchant, row.receipt_number, row.cost_center)).forEach((row) => results.push({ id: `expense-${row.id}`, kind: "Ausgabe", title: `${row.merchant || row.category || "Ausgabe"} · ${Number(row.gross_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}`, meta: `${row.full_name || "Mitarbeiter"} · ${row.status || "—"}`, section: "expenses", row }));
+    return results.slice(0, 18);
+  }, [data, globalSearch]);
+  function openGlobalResult(result: SearchResult) {
+    if (result.kind === "Fahrer" && result.row) setSelectedStaff(result.row);
+    else setSection(result.section);
+    setSearchOpen(false);
+    setGlobalSearch("");
+  }
   const title = isDriver ? t(section, nav.find((n) => n.id === section)?.label) : nav.find((n) => n.id === section)?.label;
   return (
     <main className={`app-shell role-${currentUser.role} ${isDriver ? "driver-mobile-shell" : ""}`}>
@@ -469,6 +510,18 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
               {isDriver ? t("nextWeek") : "Nächste Woche"} →
             </button>
           </div>
+          <button className="mobile-global-search" type="button" aria-label="Globale Suche öffnen" onClick={() => { setSearchOpen(true); window.setTimeout(() => globalSearchRef.current?.focus(), 20); }}>⌕</button>
+          <div className={`global-search ${searchOpen ? "global-search-open" : ""}`}>
+            <label>
+              <span>⌕</span>
+              <input ref={globalSearchRef} value={globalSearch} onChange={(event) => { setGlobalSearch(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onBlur={() => window.setTimeout(() => setSearchOpen(false), 150)} placeholder="Fahrer, Kennzeichen, Block, Dokument …" aria-label="Portal durchsuchen" />
+              <kbd>⌘ K</kbd>
+            </label>
+            {searchOpen ? <div className="global-search-results" onMouseDown={(event) => event.preventDefault()}>
+              <header><span>Globale Suche</span><button type="button" onClick={() => setSearchOpen(false)}>Schließen</button></header>
+              {globalSearch.trim().length < 2 ? <div className="global-search-hint"><b>Alles an einem Ort finden</b><span>Name, Kennzeichen, Block ID, Tour, Dokument oder Nachricht eingeben.</span></div> : globalResults.length ? globalResults.map((result) => <button type="button" key={result.id} onClick={() => openGlobalResult(result)}><span>{result.kind.slice(0, 1)}</span><div><b>{result.title}</b><small>{result.meta}</small></div><em>{result.kind}</em></button>) : <div className="global-search-hint"><b>Keine Ergebnisse</b><span>Prüfen Sie die Schreibweise oder verwenden Sie einen kürzeren Suchbegriff.</span></div>}
+            </div> : null}
+          </div>
           {isDriver ? <div className="driver-language-switch" role="group" aria-label={t("language")}>
             {driverLanguages.map((item) => <button key={item.code} type="button" className={locale === item.code ? "language-active" : ""} title={item.label} aria-label={item.label} onClick={() => changeLocale(item.code)}>{item.short}</button>)}
           </div> : null}
@@ -563,54 +616,28 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                         <button type="button" onClick={() => setSection("concerns")}><span>!</span><b>Fahreranliegen</b><small>{openConcernCount} offen</small></button>
                       </div>
                     </div>
-                    <div className="metric-grid">
-                      <Metric
-                        label="Aktive Mitarbeiter"
-                        value={String(active.length)}
-                        note={`${data.staff.length - active.length} ausgeschieden`}
-                      />
-                      <Metric
-                        label="Fahrzeuge"
-                        value={String(data.vehicles.length)}
-                        note={`${workshop.length} in Werkstatt`}
-                      />
-                      <Metric
-                        label={`Planung KW ${kw}`}
-                        value={String(data.planning.length)}
-                        note="Zuordnungen"
-                      />
-                      <Metric
-                        label="Abrechnungen"
-                        value={String(data.documents.length)}
-                        note="sicher gespeichert"
-                      />
+                    <div className="smart-status-grid">
+                      <button type="button" onClick={() => setSection("planning")}><span className="smart-icon icon-route">➜</span><small>Heutige Touren</small><b>{todayPlanning.length}</b><em>{data.planning.length} in KW {kw}</em></button>
+                      <button type="button" className={delayedTrips.length ? "smart-alert" : ""} onClick={() => setSection("operations")}><span className="smart-icon icon-delay">◷</span><small>Verspätungen</small><b>{delayedTrips.length}</b><em>{delayedTrips.length ? "Sofort prüfen" : "Keine Probleme"}</em></button>
+                      <button type="button" className={unreadChatCount ? "smart-alert" : ""} onClick={() => setSection("messages")}><span className="smart-icon icon-chat">✉</span><small>Neue Nachrichten</small><b>{unreadChatCount}</b><em>{unreadChatCount ? "Antwort erforderlich" : "Alles gelesen"}</em></button>
+                      <button type="button" className={workshop.length ? "smart-warning" : ""} onClick={() => setSection("vehicles")}><span className="smart-icon icon-truck">▣</span><small>In der Werkstatt</small><b>{workshop.length}</b><em>{data.vehicles.length} Fahrzeuge gesamt</em></button>
+                      <button type="button" className={expiringDocuments.length ? "smart-warning" : ""} onClick={() => setSection("personnel")}><span className="smart-icon icon-doc">▤</span><small>Dokumente laufen ab</small><b>{expiringDocuments.length}</b><em>Innerhalb 60 Tagen</em></button>
+                      <button type="button" className={pendingExpenses.length ? "smart-warning" : ""} onClick={() => setSection("expenses")}><span className="smart-icon icon-money">€</span><small>Ausgaben prüfen</small><b>{pendingExpenses.length}</b><em>{pendingExpenses.reduce((sum, item) => sum + Number(item.gross_amount || 0), 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</em></button>
                     </div>
-                    <div className="dashboard-grid">
-                      <Card title="Aktuelle Planung">
-                        <Planning rows={data.planning.slice(0, 6)} />
-                      </Card>
-                      <Card title="Hinweise">
-                        <div className="attention-list">
-                          <p>
-                            <b>{workshop.length}</b>
-                            <span>Fahrzeuge in der Werkstatt</span>
-                          </p>
-                          <p>
-                            <b>{expiringDocuments.length}</b>
-                            <span>Dokumente laufen bald ab</span>
-                          </p>
-                          <p>
-                            <b>
-                              {
-                                data.planning.filter(
-                                  (x) => x.status === "attention",
-                                ).length
-                              }
-                            </b>
-                            <span>Planungen mit Hinweis</span>
-                          </p>
+                    <div className="smart-dashboard-grid">
+                      <section className="panel today-routes-panel">
+                        <div className="panel-title"><div><h2>Heute im Einsatz</h2><p>{new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "2-digit", month: "long" }).format(new Date())} · KW {kw}</p></div><button type="button" onClick={() => setSection("planning")}>Alle öffnen →</button></div>
+                        <div className="today-route-list">{todayPlanning.length ? todayPlanning.slice(0, 6).map((item) => <button type="button" key={item.id} onClick={() => setSection("planning")}><span className="route-time">{item.start_time || "06:00"}</span><span className="route-driver"><b>{item.driver_name || "Kein Fahrer"}</b><small>{item.company || "—"} · {item.location || "—"}</small></span><span className="route-vehicle">{item.license_plate || "Ohne Fahrzeug"}<small>{item.block_id || "Kein Block"}</small></span><Badge value={String(item.status || "planned")} /></button>) : <div className="empty-state">Für heute sind noch keine Touren geplant.</div>}</div>
+                      </section>
+                      <section className="panel attention-center-panel">
+                        <div className="panel-title"><div><h2>Aufmerksamkeit erforderlich</h2><p>Priorisiert nach Dringlichkeit</p></div><span className="attention-total">{delayedTrips.length + unreadChatCount + workshop.length + expiringDocuments.length + pendingExpenses.length}</span></div>
+                        <div className="attention-action-list">
+                          <button type="button" onClick={() => setSection("operations")}><i className="danger-dot" /><span><b>{delayedTrips.length} Touren mit Problem</b><small>Verspätung, Problemstatus oder überschrittene ETA</small></span><em>Öffnen</em></button>
+                          <button type="button" onClick={() => setSection("messages")}><i className="message-dot" /><span><b>{unreadChatCount} ungelesene Nachrichten</b><small>Direkte Tour-Chats von Fahrern</small></span><em>Antworten</em></button>
+                          <button type="button" onClick={() => setSection("personnel")}><i className="warning-dot" /><span><b>{expiringDocuments.length} Dokumente prüfen</b><small>Führerschein, Fahrerkarte oder Aufenthaltstitel</small></span><em>Prüfen</em></button>
+                          <button type="button" onClick={() => setSection("expenses")}><i className="money-dot" /><span><b>{pendingExpenses.length} Belege in Prüfung</b><small>Erstattungen und Firmenausgaben</small></span><em>Freigeben</em></button>
                         </div>
-                      </Card>
+                      </section>
                     </div>
                   </>
                 ))}
@@ -734,6 +761,39 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     </div>
                   ) : null}
                   {currentUser.role !== "driver" ? <PlanningAlerts rows={data.planning} staff={data.staff} vehicles={data.vehicles} /> : null}
+                  {currentUser.role !== "driver" ? (
+                    <DispatchBoard
+                      rows={data.planning}
+                      staff={data.staff}
+                      vehicles={data.vehicles}
+                      assign={(row, type, value) =>
+                        action({
+                          action: "updatePlanning",
+                          id: row.id,
+                          planningYear: year,
+                          calendarWeek: kw,
+                          company: row.company,
+                          driverName: type === "driver" ? value : row.driver_name,
+                          location: row.location,
+                          licensePlate: type === "vehicle" ? value : row.license_plate,
+                          workDays: String(row.work_days || "1,2,3,4,5,6,7"),
+                          startTime: row.start_time || "06:00",
+                          blockId: row.block_id,
+                          status: row.status,
+                          comments: row.comments,
+                        })
+                      }
+                      moveResource={(sourceId, targetId, type, value) =>
+                        action({
+                          action: "movePlanningResource",
+                          sourceId,
+                          targetId,
+                          resourceType: type,
+                          value,
+                        })
+                      }
+                    />
+                  ) : null}
                   <WeeklySchedule
                     rows={data.planning}
                     staff={active}
@@ -865,6 +925,14 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           files={data.files}
           employeeDocuments={data.employeeDocuments}
           payroll={data.payroll}
+          tripOperations={data.tripOperations}
+          tripMessages={data.tripMessages}
+          tripDocuments={data.tripDocuments}
+          expenses={data.expenses}
+          tachograph={data.tachograph}
+          audit={data.audit}
+          concerns={data.concerns}
+          checklists={data.checklists}
           close={() => setSelectedStaff(null)}
         />
       )}
@@ -1012,6 +1080,14 @@ function DriverDossier({
   files,
   employeeDocuments,
   payroll,
+  tripOperations,
+  tripMessages,
+  tripDocuments,
+  expenses,
+  tachograph,
+  audit,
+  concerns,
+  checklists,
   close,
 }: {
   staff: Row;
@@ -1020,10 +1096,20 @@ function DriverDossier({
   files: Row[];
   employeeDocuments: Row[];
   payroll: Row[];
+  tripOperations: Row[];
+  tripMessages: Row[];
+  tripDocuments: Row[];
+  expenses: Row[];
+  tachograph: Row[];
+  audit: Row[];
+  concerns: Row[];
+  checklists: Row[];
   close: () => void;
 }) {
+  const [tab, setTab] = useState<"overview" | "operations" | "documents" | "finance">("overview");
+  const [dossierNow] = useState(() => new Date().getTime());
   const trips = planning.filter(
-    (p) => p.staff_id === staff.id || p.driver_name === staff.full_name,
+    (p) => String(p.staff_id) === String(staff.id) || p.driver_name === staff.full_name,
   );
   const plates = Array.from(
     new Set(trips.map((t) => String(t.license_plate || "")).filter(Boolean)),
@@ -1031,110 +1117,91 @@ function DriverDossier({
   const trucks = vehicles.filter((v) =>
     plates.includes(String(v.license_plate)),
   );
-  const docs = files.filter((f) => f.staff_id === staff.id);
-  const personnel = employeeDocuments.filter((f) => f.staff_id === staff.id);
-  const salary = payroll.filter((record) => record.staff_id === staff.id);
+  const docs = files.filter((f) => String(f.staff_id) === String(staff.id) || f.driver_name === staff.full_name);
+  const personnel = employeeDocuments.filter((f) => String(f.staff_id) === String(staff.id));
+  const salary = payroll.filter((record) => String(record.staff_id) === String(staff.id));
+  const operations = tripOperations.filter((row) => String(row.staff_id) === String(staff.id) || row.driver_name === staff.full_name);
+  const operationIds = new Set(operations.map((row) => Number(row.id)));
+  const messages = tripMessages.filter((row) => operationIds.has(Number(row.trip_operation_id)) || row.driver_name === staff.full_name);
+  const operationDocuments = tripDocuments.filter((row) => operationIds.has(Number(row.trip_operation_id)) || String(row.staff_id) === String(staff.id));
+  const driverExpenses = expenses.filter((row) => String(row.staff_id) === String(staff.id) || row.full_name === staff.full_name);
+  const driverTachograph = tachograph.filter((row) => String(row.staff_id) === String(staff.id) || row.full_name === staff.full_name);
+  const driverConcerns = concerns.filter((row) => String(row.staff_id) === String(staff.id) || row.driver_name === staff.full_name || row.full_name === staff.full_name);
+  const driverChecks = checklists.filter((row) => String(row.staff_id) === String(staff.id) || row.full_name === staff.full_name);
+  const driverAudit = audit.filter((row) => {
+    const detail = String(row.details || "").toLowerCase();
+    return detail.includes(String(staff.full_name || "").toLowerCase()) || detail.includes(`\"staffId\":${staff.id}`) || detail.includes(`\"staffId\":\"${staff.id}\"`);
+  });
+  const totalExpenses = driverExpenses.reduce((sum, row) => sum + Number(row.gross_amount || 0), 0);
+  const completedTrips = operations.filter((row) => row.status === "Zugestellt").length;
+  const violations = driverTachograph.filter((row) => row.infringement || Number(row.remaining_minutes) <= 90);
+  const expiring = personnel.filter((row) => row.expires_at && new Date(String(row.expires_at)).getTime() <= dossierNow + 60 * 86400000);
+  const dossierEmpty = (text: string) => <div className="dossier-empty">{text}</div>;
   return (
     <div className="modal-backdrop">
       <div className="dossier">
-        <div className="modal-head">
-          <div>
+        <div className="dossier-hero">
+          <div className="dossier-avatar">{String(staff.full_name || "F").split(" ").map((part) => part[0]).join("").slice(0, 2)}</div>
+          <div className="dossier-identity">
+            <small>FAHRER 360° · PERSONALNUMMER {staff.id}</small>
             <h2>{staff.full_name}</h2>
-            <small>Fahrer- und Fahrzeugdossier</small>
+            <p>{staff.company || "Ohne Firma"} · {staff.location || "Kein Standort"} · {staff.system_type || "Systemart offen"}</p>
           </div>
-          <button onClick={close}>×</button>
+          <div className="dossier-hero-actions">
+            <Badge value={String(staff.status)} />
+            <a href={`/api/staff/${staff.id}/export`} target="_blank" rel="noreferrer">DSGVO-Export</a>
+            <button type="button" onClick={close} aria-label="Dossier schließen">×</button>
+          </div>
         </div>
-        <div className="dossier-actions"><a className="primary-button" href={`/api/staff/${staff.id}/export`} target="_blank">DSGVO-Datenexport</a></div>
-        <div className="dossier-grid">
-          <section>
-            <h3>Fahrerdaten</h3>
-            <p>
-              <span>Status</span>
-              <Badge value={String(staff.status)} />
-            </p>
-            <p>
-              <span>Firma</span>
-              <b>{staff.company || "—"}</b>
-            </p>
-            <p>
-              <span>Standort</span>
-              <b>{staff.location || "—"}</b>
-            </p>
-            <p>
-              <span>Systemart</span>
-              <b>{staff.system_type || "—"}</b>
-            </p>
-            <p>
-              <span>Vergütung</span>
-              <b>{staff.compensation || "—"}</b>
-            </p>
-            <p>
-              <span>Login</span>
-              <b>{staff.login_email || "Kein Zugang"}</b>
-            </p>
-          </section>
-          <section>
-            <h3>Zugeordnete Fahrzeuge</h3>
-            {trucks.length ? (
-              trucks.map((v) => (
-                <p key={v.id}>
-                  <span>{v.license_plate}</span>
-                  <b>
-                    {v.status} · {v.location}
-                  </b>
-                </p>
-              ))
-            ) : (
-              <p>Kein Fahrzeug in dieser KW.</p>
-            )}
-          </section>
+        <div className="dossier-kpis">
+          <div><span>Touren</span><b>{operations.length || trips.length}</b><small>{completedTrips} zugestellt</small></div>
+          <div><span>Fahrzeug</span><b>{plates[0] || "—"}</b><small>{trucks[0]?.status || "Keine Zuordnung"}</small></div>
+          <div className={expiring.length ? "kpi-warning" : ""}><span>Dokumente</span><b>{personnel.length}</b><small>{expiring.length} laufen bald ab</small></div>
+          <div className={violations.length ? "kpi-danger" : ""}><span>Verstöße</span><b>{violations.length}</b><small>Tachograph / Ruhezeit</small></div>
+          <div><span>Ausgaben</span><b>{totalExpenses.toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</b><small>{driverExpenses.length} Belege</small></div>
+          <div><span>Nachrichten</span><b>{messages.length}</b><small>{driverConcerns.length} Anliegen</small></div>
         </div>
-        <h3 className="dossier-title">Planung und Touren</h3>
-        <Planning rows={trips} />
-        {personnel.length ? <><h3 className="dossier-title">Personalakte</h3><div className="file-grid">{personnel.map((file) => <a key={file.id} href={`/api/employee-documents/${file.id}`} target="_blank"><b>{file.category}</b><span>Gültig bis {file.expires_at || "unbefristet"}</span><small>{file.file_name}</small></a>)}</div></> : null}
-        {salary.length ? <><h3 className="dossier-title">Lohnjournal</h3><div className="file-grid">{salary.map((record) => <div key={record.id} className="dossier-pay"><b>{record.period}</b><span>Netto {Number(record.net_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</span><small>{record.payment_status}</small></div>)}</div></> : null}
-        <h3 className="dossier-title">
-          Vom Fahrer hochgeladene Fotos und Dokumente
-        </h3>
-        <div className="file-grid">
-          {docs.length ? (
-            docs.map((f) => (
-              <a key={f.id} href={`/api/vehicle-files/${f.id}`} target="_blank">
-                <b>{f.category}</b>
-                <span>
-                  {f.license_plate} · {String(f.created_at).slice(0, 10)}
-                </span>
-                <small>{f.file_name}</small>
-              </a>
-            ))
-          ) : (
-            <div className="empty-state">
-              Dieser Fahrer hat noch keine Fahrzeugfotos hochgeladen.
+        <div className="dossier-tabs" role="tablist">
+          <button type="button" className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Übersicht</button>
+          <button type="button" className={tab === "operations" ? "active" : ""} onClick={() => setTab("operations")}>Touren & Kommunikation</button>
+          <button type="button" className={tab === "documents" ? "active" : ""} onClick={() => setTab("documents")}>Dokumente & Fotos</button>
+          <button type="button" className={tab === "finance" ? "active" : ""} onClick={() => setTab("finance")}>Finanzen & Verlauf</button>
+        </div>
+        <div className="dossier-body">
+          {tab === "overview" ? <>
+            <div className="dossier-grid">
+              <section><h3>Fahrerdaten</h3><p><span>Status</span><Badge value={String(staff.status)} /></p><p><span>Firma</span><b>{staff.company || "—"}</b></p><p><span>Standort</span><b>{staff.location || "—"}</b></p><p><span>Systemart</span><b>{staff.system_type || "—"}</b></p><p><span>Vergütung</span><b>{staff.compensation || "—"}</b></p><p><span>Eintritt</span><b>{staff.start_date || "—"}</b></p><p><span>Login</span><b>{staff.login_email || "Kein Zugang"}</b></p></section>
+              <section><h3>Aktuelle Fahrzeugzuordnung</h3>{trucks.length ? trucks.map((vehicle) => <div className="dossier-truck" key={vehicle.id}><span>▣</span><div><b>{vehicle.license_plate}</b><small>{vehicle.company || "—"} · {vehicle.location || "—"}</small></div><Badge value={String(vehicle.status || "active")} /></div>) : dossierEmpty("Für diese Woche ist kein Fahrzeug zugeordnet.")}</section>
             </div>
-          )}
+            <h3 className="dossier-title">Wochenplanung</h3>
+            {trips.length ? <Planning rows={trips} /> : dossierEmpty("Für die ausgewählte Kalenderwoche gibt es keine Planung.")}
+            <div className="dossier-mini-grid">
+              <section><h3>Letzte Fahrzeug-Checks</h3>{driverChecks.slice(0, 4).map((row) => <p key={row.id}><span>{row.phase} · {row.license_plate}</span><Badge value={String(row.status)} /></p>)}{!driverChecks.length ? dossierEmpty("Noch keine Fahrzeug-Checks") : null}</section>
+              <section><h3>Offene Anliegen</h3>{driverConcerns.slice(0, 4).map((row) => <p key={row.id}><span>{row.item_name || row.subject || "Fahreranliegen"}</span><Badge value={String(row.completion_status || row.status || "Neu")} /></p>)}{!driverConcerns.length ? dossierEmpty("Keine offenen Anliegen") : null}</section>
+            </div>
+          </> : null}
+
+          {tab === "operations" ? <div className="dossier-split">
+            <section><div className="dossier-section-head"><div><small>TOUREN</small><h3>Operative Einsätze</h3></div><span>{operations.length}</span></div>{operations.length ? <div className="dossier-operation-list">{operations.map((row) => <article key={row.id}><header><b>{row.license_plate || "Ohne Kennzeichen"}</b><Badge value={String(row.status || "Geplant")} /></header><p>{row.pickup_address || row.location || "Start offen"} <span>→</span> {row.delivery_address || "Ziel offen"}</p><small>{row.block_id || "Kein Block"} · ETA {row.eta ? String(row.eta).slice(0, 16).replace("T", " ") : "offen"}</small>{row.delay_reason ? <em>{row.delay_reason}</em> : null}</article>)}</div> : dossierEmpty("Noch keine operativen Touren")}</section>
+            <section><div className="dossier-section-head"><div><small>KOMMUNIKATION</small><h3>Nachrichten zum Fahrer</h3></div><span>{messages.length}</span></div>{messages.length ? <div className="dossier-message-list">{messages.slice(-12).reverse().map((row) => <article key={row.id}><div><b>{row.sender_name || row.sender_role}</b><time>{String(row.created_at || "").slice(0, 16).replace("T", " ")}</time></div><p>{row.body || (row.message_type === "voice" ? "🎙 Sprachnachricht" : "📷 Foto")}</p><small>{row.license_plate || "—"} · {row.block_id || "Kein Block"}</small></article>)}</div> : dossierEmpty("Noch keine Tour-Nachrichten")}</section>
+          </div> : null}
+
+          {tab === "documents" ? <>
+            <div className="dossier-section-head"><div><small>GESCHÜTZTE PERSONALAKTE</small><h3>Mitarbeiterdokumente</h3></div><span>{personnel.length}</span></div>
+            <div className="file-grid">{personnel.length ? personnel.map((file) => <a key={file.id} href={`/api/employee-documents/${file.id}`} target="_blank" rel="noreferrer"><b>{file.category}</b><span>Gültig bis {file.expires_at || "unbefristet"}</span><small>{file.file_name}</small></a>) : dossierEmpty("Noch keine Mitarbeiterdokumente")}</div>
+            <div className="dossier-section-head"><div><small>FAHRZEUGAKTE</small><h3>Fotos vor/nach der Fahrt und Fahrzeugdokumente</h3></div><span>{docs.length}</span></div>
+            <div className="file-grid">{docs.length ? docs.map((file) => <a key={file.id} href={`/api/vehicle-files/${file.id}`} target="_blank" rel="noreferrer"><b>{file.category}</b><span>{file.license_plate} · {String(file.created_at).slice(0, 10)}</span><small>{file.file_name}</small></a>) : dossierEmpty("Dieser Fahrer hat noch keine Fahrzeugfotos hochgeladen.")}</div>
+            <div className="dossier-section-head"><div><small>TOURNACHWEISE</small><h3>Lieferung, Schaden und Unterschrift</h3></div><span>{operationDocuments.length}</span></div>
+            <div className="file-grid">{operationDocuments.length ? operationDocuments.map((file) => <a key={file.id} href={`/api/trip-documents/${file.id}`} target="_blank" rel="noreferrer"><b>{file.category}</b><span>{file.license_plate || "Tourdokument"} · {String(file.created_at).slice(0, 10)}</span><small>{file.file_name}</small></a>) : dossierEmpty("Noch keine Tournachweise")}</div>
+          </> : null}
+
+          {tab === "finance" ? <div className="dossier-split">
+            <section><div className="dossier-section-head"><div><small>BUCHHALTUNG</small><h3>Lohn & Auslagen</h3></div><span>{salary.length + driverExpenses.length}</span></div><div className="dossier-finance-list">{salary.map((record) => <article key={`salary-${record.id}`}><div><b>Lohnabrechnung {record.period}</b><small>{record.payment_status || "In Vorbereitung"}</small></div><strong>{Number(record.net_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</strong></article>)}{driverExpenses.map((record) => <article key={`expense-${record.id}`}><div><b>{record.category || "Ausgabe"} · {record.merchant || "Beleg"}</b><small>{record.expense_date} · {record.status}</small></div><strong>{Number(record.gross_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</strong></article>)}{!salary.length && !driverExpenses.length ? dossierEmpty("Noch keine Finanzdaten") : null}</div></section>
+            <section><div className="dossier-section-head"><div><small>COMPLIANCE</small><h3>Verstöße & Änderungshistorie</h3></div><span>{violations.length + driverAudit.length}</span></div><div className="dossier-timeline">{violations.map((row) => <article className="timeline-danger" key={`violation-${row.id}`}><i /><div><b>{row.infringement || "Restfahrzeit unter 90 Minuten"}</b><small>{row.record_date} · {row.license_plate}</small></div></article>)}{driverAudit.slice(0, 12).map((row) => <article key={`audit-${row.id}`}><i /><div><b>{row.action}</b><small>{String(row.created_at || "").slice(0, 16).replace("T", " ")} · {row.user_name || "System"}</small></div></article>)}{!violations.length && !driverAudit.length ? dossierEmpty("Keine Verstöße oder Änderungen vorhanden") : null}</div></section>
+          </div> : null}
         </div>
       </div>
     </div>
-  );
-}
-function Metric({
-  label,
-  value,
-  note,
-}: {
-  label: string;
-  value: string;
-  note: string;
-}) {
-  return (
-    <article className="metric-card">
-      <div className="metric-icon mint">✓</div>
-      <div className="metric-copy">
-        <span>{label}</span>
-        <strong>{value}</strong>
-        <small>{note}</small>
-      </div>
-    </article>
   );
 }
 function DriverHome({
@@ -1548,6 +1615,105 @@ function PlanningAlerts({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function DispatchBoard({
+  rows,
+  staff,
+  vehicles,
+  assign,
+  moveResource,
+}: {
+  rows: Row[];
+  staff: Row[];
+  vehicles: Row[];
+  assign: (row: Row, type: "driver" | "vehicle", value: string) => void | Promise<void>;
+  moveResource: (sourceId: string | number, targetId: string | number, type: "driver" | "vehicle", value: string) => void | Promise<void>;
+}) {
+  const [dragging, setDragging] = useState<"driver" | "vehicle" | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const activeStaff = staff.filter((person) => person.status === "active");
+  const usableVehicles = vehicles.filter((vehicle) => vehicle.status !== "workshop");
+  const driverUse = (name: string) => rows.filter((row) => row.driver_name === name).length;
+  const vehicleUse = (plate: string) => rows.filter((row) => row.license_plate === plate).length;
+  const rowConflict = (row: Row) => rows.some((other) => {
+    if (other.id === row.id) return false;
+    const overlapping = [...rowDays(row)].some((day) => rowDays(other).has(day));
+    if (!overlapping) return false;
+    return Boolean(row.driver_name && other.driver_name === row.driver_name) || Boolean(row.license_plate && other.license_plate === row.license_plate);
+  });
+  const rowUnavailable = (row: Row) => {
+    const driver = staff.find((person) => person.full_name === row.driver_name);
+    const vehicle = vehicles.find((item) => item.license_plate === row.license_plate);
+    return Boolean((row.driver_name && (!driver || driver.status !== "active")) || vehicle?.status === "workshop");
+  };
+  function startDrag(event: DragEvent, type: "driver" | "vehicle", value: string, sourceId?: string | number | null) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-logipay", JSON.stringify({ type, value, sourceId: sourceId || null }));
+    setDragging(type);
+  }
+  async function drop(event: DragEvent, target: Row) {
+    event.preventDefault();
+    setDropTarget(null);
+    setDragging(null);
+    try {
+      const payload = JSON.parse(event.dataTransfer.getData("application/x-logipay")) as { type: "driver" | "vehicle"; value: string; sourceId?: string | number | null };
+      if (!payload.value || !["driver", "vehicle"].includes(payload.type)) return;
+      if (payload.sourceId && String(payload.sourceId) !== String(target.id)) {
+        await moveResource(payload.sourceId, target.id as string | number, payload.type, payload.value);
+      } else await assign(target, payload.type, payload.value);
+    } catch {
+      setDropTarget(null);
+    }
+  }
+  return (
+    <section className="dispatch-board">
+      <div className="dispatch-board-head">
+        <div><small>LIVE-DISPOSITION</small><h3>Fahrer und Fahrzeuge per Drag & Drop zuordnen</h3><p>Element greifen und auf den gewünschten Einsatz ziehen. Konflikte werden sofort markiert.</p></div>
+        <div className="dispatch-legend"><span><i className="legend-free" /> Verfügbar</span><span><i className="legend-used" /> Zugeordnet</span><span><i className="legend-danger" /> Konflikt</span></div>
+      </div>
+      <div className="dispatch-layout">
+        <aside className="dispatch-pool">
+          <header><span>◉</span><div><b>Fahrer</b><small>{activeStaff.length} aktiv</small></div></header>
+          <div className="dispatch-pool-list">
+            {activeStaff.map((person) => {
+              const useCount = driverUse(String(person.full_name));
+              return <button type="button" draggable onDragStart={(event) => startDrag(event, "driver", String(person.full_name))} onDragEnd={() => setDragging(null)} className={useCount ? "pool-used" : "pool-free"} key={person.id}><span>{String(person.full_name || "F").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><div><b>{person.full_name}</b><small>{person.company || "—"} · {useCount ? `${useCount}× eingeplant` : "frei"}</small></div><i>⋮⋮</i></button>;
+            })}
+            {staff.filter((person) => person.status !== "active").slice(0, 3).map((person) => <div className="pool-disabled" key={person.id}><span>×</span><div><b>{person.full_name}</b><small>Nicht aktiv</small></div></div>)}
+          </div>
+        </aside>
+        <div className="dispatch-assignments">
+          <header><div><b>Einsätze dieser Woche</b><small>{rows.length} Positionen · Zielbereich für Fahrer oder Fahrzeug</small></div><span>{dragging ? `${dragging === "driver" ? "Fahrer" : "Fahrzeug"} ablegen` : "Bereit"}</span></header>
+          <div className="dispatch-assignment-list">
+            {rows.length ? rows.map((row) => {
+              const conflict = rowConflict(row);
+              const unavailable = rowUnavailable(row);
+              const target = dropTarget === String(row.id);
+              return <article key={row.id} className={`${conflict ? "assignment-conflict" : ""} ${unavailable ? "assignment-unavailable" : ""} ${target ? "assignment-target" : ""}`} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropTarget(String(row.id)); }} onDragLeave={() => setDropTarget(null)} onDrop={(event) => void drop(event, row)}>
+                <div className="assignment-route"><span>{row.start_time || "06:00"}</span><div><b>{row.company || "Ohne Firma"}</b><small>{row.location || "—"} · Block {row.block_id || "—"}</small></div></div>
+                <div className="assignment-slots">
+                  <div className={!row.driver_name ? "slot-empty" : ""}>{row.driver_name ? <button type="button" draggable onDragStart={(event) => startDrag(event, "driver", String(row.driver_name), row.id)} onDragEnd={() => setDragging(null)}><span>◉</span><b>{row.driver_name}</b></button> : <span>Fahrer hier ablegen</span>}{row.driver_name ? <button type="button" className="slot-clear" onClick={() => void assign(row, "driver", "")} aria-label="Fahrer entfernen">×</button> : null}</div>
+                  <div className={!row.license_plate ? "slot-empty" : ""}>{row.license_plate ? <button type="button" draggable onDragStart={(event) => startDrag(event, "vehicle", String(row.license_plate), row.id)} onDragEnd={() => setDragging(null)}><span>▣</span><b>{row.license_plate}</b></button> : <span>Fahrzeug hier ablegen</span>}{row.license_plate ? <button type="button" className="slot-clear" onClick={() => void assign(row, "vehicle", "")} aria-label="Fahrzeug entfernen">×</button> : null}</div>
+                </div>
+                <div className="assignment-state">{conflict ? <span className="state-danger">Konflikt</span> : unavailable ? <span className="state-warning">Nicht verfügbar</span> : <span className="state-ok">Planbar</span>}<small>{String(row.work_days || "1,2,3,4,5,6,7").split(",").length} Tage</small></div>
+              </article>;
+            }) : <div className="dispatch-empty">Noch keine Einsätze. Legen Sie zuerst eine Planung an.</div>}
+          </div>
+        </div>
+        <aside className="dispatch-pool">
+          <header><span>▣</span><div><b>Fahrzeuge</b><small>{usableVehicles.length} verfügbar</small></div></header>
+          <div className="dispatch-pool-list">
+            {vehicles.map((vehicle) => {
+              const workshop = vehicle.status === "workshop";
+              const useCount = vehicleUse(String(vehicle.license_plate));
+              return <button type="button" draggable={!workshop} disabled={workshop} onDragStart={(event) => startDrag(event, "vehicle", String(vehicle.license_plate))} onDragEnd={() => setDragging(null)} className={workshop ? "pool-disabled" : useCount ? "pool-used" : "pool-free"} key={vehicle.id}><span>▣</span><div><b>{vehicle.license_plate}</b><small>{workshop ? "In Werkstatt" : useCount ? `${useCount}× eingeplant` : `${vehicle.location || "—"} · frei`}</small></div><i>{workshop ? "!" : "⋮⋮"}</i></button>;
+            })}
+          </div>
+        </aside>
+      </div>
+    </section>
   );
 }
 
