@@ -2213,16 +2213,28 @@ function EntryForm({
               : "addConcern";
     submit({ action, id: editing?.id, calendarWeek: kw, ...d });
   }
+  const submitLabel = editing
+    ? "Änderungen speichern"
+    : kind === "staff"
+      ? "Mitarbeiter anlegen"
+      : kind === "vehicle"
+        ? "Fahrzeug anlegen"
+        : kind === "planning"
+          ? `Planung für KW ${kw} speichern`
+          : "Anliegen speichern";
   return (
     <form className="entry-form" onSubmit={go}>
       {kind === "staff" ? (
         <>
+          <div className="form-intro wide"><span>01</span><div><b>Stammdaten des Mitarbeiters</b><small>Pflichtfelder sind mit einem Stern gekennzeichnet.</small></div></div>
           <label>
             Name*
             <input
               name="fullName"
               required
+              autoComplete="name"
               defaultValue={String(editing?.full_name || "")}
+              placeholder="Vor- und Nachname"
             />
           </label>
           <label>
@@ -2258,6 +2270,7 @@ function EntryForm({
               name="company"
               defaultValue={String(editing?.company || "")}
               required
+              placeholder="z. B. EuRide GmbH"
             />
           </label>
           {!editing ? (
@@ -2271,7 +2284,7 @@ function EntryForm({
             <span>
               {editing?.login_email
                 ? `Login: ${editing.login_email}. Passwort leer lassen, wenn es nicht geändert werden soll.`
-                : "E-Mail und Startpasswort anlegen, damit der Fahrer nur seinen eigenen кабинет sieht."}
+                : "E-Mail und Startpasswort anlegen, damit der Fahrer nur sein eigenes Fahrerportal sieht."}
             </span>
           </div>
           <label>
@@ -2279,27 +2292,30 @@ function EntryForm({
             <input
               type="email"
               name="loginEmail"
+              autoComplete="email"
               defaultValue={String(editing?.login_email || "")}
+              placeholder="fahrer@firma.de"
             />
           </label>
           <label>
             {editing?.login_email ? "Neues Passwort" : "Startpasswort"}
-            <input type="password" name="loginPassword" minLength={10} />
+            <input type="password" name="loginPassword" minLength={10} autoComplete="new-password" placeholder="Mindestens 10 Zeichen" />
           </label>
         </>
       ) : kind === "vehicle" ? (
         <>
+          <div className="form-intro wide"><span>02</span><div><b>Fahrzeugdaten</b><small>Kennzeichen, Standort und Prüfdatum eindeutig hinterlegen.</small></div></div>
           <label>
             Kennzeichen*
             <input name="licensePlate" required placeholder="B-AB 1234" />
           </label>
           <label>
             Firma
-            <input name="company" />
+            <input name="company" placeholder="z. B. EuRide GmbH" />
           </label>
           <label>
             Standort
-            <input name="location" />
+            <input name="location" placeholder="z. B. BER8" />
           </label>
           <label>
             Status
@@ -2315,17 +2331,19 @@ function EntryForm({
           </label>
           <label className="wide">
             Notiz
-            <input name="notes" />
+            <textarea name="notes" rows={3} placeholder="Ausstattung, Besonderheiten oder wichtige Hinweise" />
           </label>
         </>
       ) : kind === "planning" ? (
         <>
+          <div className="form-intro wide"><span>03</span><div><b>Wochenplanung</b><small>Fahrer, Fahrzeug, Einsatztage und Block für KW {kw} festlegen.</small></div></div>
           <label>
             Firma*
             <input
               name="company"
               required
               defaultValue={String(editing?.company || "")}
+              placeholder="Auftraggeber / Firma"
             />
           </label>
           <label>
@@ -2345,6 +2363,7 @@ function EntryForm({
             <input
               name="location"
               defaultValue={String(editing?.location || "")}
+              placeholder="z. B. BER8"
             />
           </label>
           <label>
@@ -2352,6 +2371,7 @@ function EntryForm({
             <input
               name="licensePlate"
               defaultValue={String(editing?.license_plate || "")}
+              placeholder="B-AB 1234"
             />
           </label>
           <label>
@@ -2396,18 +2416,22 @@ function EntryForm({
             <input
               name="blockId"
               defaultValue={String(editing?.block_id || "")}
+              placeholder="Amazon Block ID"
             />
           </label>
           <label className="wide">
             Kommentar
-            <input
+            <textarea
               name="comments"
+              rows={3}
               defaultValue={String(editing?.comments || "")}
+              placeholder="Hinweise für Disposition und Fahrer"
             />
           </label>
         </>
       ) : (
         <>
+          <div className="form-intro wide"><span>04</span><div><b>Fahreranliegen</b><small>Anliegen eindeutig einem Zeitraum, Fahrzeug und Status zuordnen.</small></div></div>
           <label>
             Monat*
             <input
@@ -2427,13 +2451,14 @@ function EntryForm({
           </label>
           <label>
             Base
-            <input name="base" defaultValue={String(editing?.base || "")} />
+            <input name="base" defaultValue={String(editing?.base || "")} placeholder="z. B. BER8" />
           </label>
           <label>
             LKW / Kennzeichen
             <input
               name="truckNumber"
               defaultValue={String(editing?.truck_number || "")}
+              placeholder="B-AB 1234"
             />
           </label>
           <label className="wide">
@@ -2442,6 +2467,7 @@ function EntryForm({
               name="itemName"
               required
               defaultValue={String(editing?.item_name || "")}
+              placeholder="Was benötigt der Fahrer?"
             />
           </label>
           <label>
@@ -2479,12 +2505,12 @@ function EntryForm({
           </label>
           <label className="wide">
             Notiz / Fahrer
-            <input name="notes" defaultValue={String(editing?.notes || "")} />
+            <textarea name="notes" rows={3} defaultValue={String(editing?.notes || "")} placeholder="Weitere Informationen oder Rückmeldung an den Fahrer" />
           </label>
         </>
       )}
       <button className="primary-button wide" type="submit">
-        Speichern
+        {submitLabel} →
       </button>
     </form>
   );
