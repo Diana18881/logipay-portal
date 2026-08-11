@@ -84,6 +84,11 @@ export async function GET(request: Request) {
       : await env.DB.prepare(
           "SELECT * FROM driver_concerns ORDER BY period DESC, completion_status, company",
         ).all();
+  const voiceMessages = user.role === "driver"
+    ? await env.DB.prepare("SELECT vm.*, s.full_name FROM voice_messages vm JOIN staff s ON s.id=vm.staff_id WHERE vm.user_id=? ORDER BY vm.created_at DESC LIMIT 100").bind(user.id).all()
+    : ["management", "dispatcher"].includes(user.role)
+      ? await env.DB.prepare("SELECT vm.*, s.full_name FROM voice_messages vm JOIN staff s ON s.id=vm.staff_id ORDER BY vm.status='Neu' DESC, vm.created_at DESC LIMIT 200").all()
+      : { results: [] };
   const files =
     user.role === "driver"
       ? await env.DB.prepare(
@@ -180,6 +185,7 @@ export async function GET(request: Request) {
     planning: planning.results,
     documents,
     concerns: concerns.results,
+    voiceMessages: voiceMessages.results,
     files: files.results,
     employeeDocuments: employeeDocuments.results,
     payroll: payroll.results,
@@ -281,6 +287,20 @@ export async function POST(request: Request) {
       await env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('dispatcher', 'trip', 'Einsatz benötigt Aufmerksamkeit', ?, 'planning', ?, 'urgent', ?)")
         .bind(`${plan.license_plate || "Ohne Kennzeichen"}: ${body.delayReason || "Problem gemeldet"}`, String(planningId), now).run();
     auditDetails = { oldValue, newValue: { planningId, status, pickupAddress: body.pickupAddress, deliveryAddress: body.deliveryAddress, eta: body.eta, delayReason: body.delayReason, recipientName: body.recipientName } };
+  } else if (action === "updateVoiceMessageStatus" && ["management", "dispatcher"].includes(user.role)) {
+    const id = Number(body.id || 0);
+    const status = String(body.status || "");
+    if (!id || !["Neu", "Abgehört", "Erledigt"].includes(status))
+      return json({ error: "Ungültiger Nachrichtenstatus" }, 400);
+    const oldValue = await env.DB.prepare("SELECT * FROM voice_messages WHERE id=?").bind(id).first<Record<string, string | number | null>>();
+    if (!oldValue) return json({ error: "Sprachnachricht nicht gefunden" }, 404);
+    await env.DB.prepare("UPDATE voice_messages SET status=?, listened_by=?, listened_at=? WHERE id=?")
+      .bind(status, status === "Neu" ? null : user.id, status === "Neu" ? null : now, id).run();
+    if (status === "Erledigt") {
+      await env.DB.prepare("INSERT INTO notifications (user_id, category, title, message, entity_type, entity_id, severity, created_at) VALUES (?, 'voice', 'Sprachnachricht bearbeitet', 'Die Disposition hat Ihre Sprachnachricht bearbeitet.', 'voice_message', ?, 'info', ?)")
+        .bind(oldValue.user_id, String(id), now).run();
+    }
+    auditDetails = { oldValue, newValue: { status, listenedBy: user.id, listenedAt: status === "Neu" ? null : now } };
   } else if (action === "updateExpenseStatus" && ["management", "accountant"].includes(user.role)) {
     const status = String(body.status || "");
     if (!["Eingereicht", "In Prüfung", "Freigegeben", "Zur Zahlung", "Erstattet", "Abgelehnt", "Exportiert"].includes(status))

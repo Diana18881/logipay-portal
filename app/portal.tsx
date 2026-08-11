@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PortalUser } from "../lib/auth";
 import { EmployeeDocuments, ExcelImporter, MaintenanceCenter, PasswordChange, PayrollCenter, SecurityCenter, TruckTracking } from "./advanced-panels";
 import { AnalyticsCenter, ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
+import { driverLanguages, driverText, type DriverLocale } from "./driver-i18n";
 
 type Section =
   | "overview"
@@ -30,6 +31,7 @@ type Data = {
   vehicles: Row[];
   planning: Row[];
   concerns: Row[];
+  voiceMessages: Row[];
   documents: Row[];
   files: Row[];
   employeeDocuments: Row[];
@@ -117,6 +119,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     vehicles: [],
     planning: [],
     concerns: [],
+    voiceMessages: [],
     documents: [],
     files: [],
     employeeDocuments: [],
@@ -146,10 +149,14 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
   const [notice, setNotice] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [locale, setLocale] = useState<DriverLocale>("de");
+  const [pushState, setPushState] = useState<"default" | "granted" | "denied" | "unsupported">("default");
   // Keep the first server and browser render identical; the real connection
   // state is applied after hydration in the effect below.
   const [online, setOnline] = useState(true);
   const [renderedAt] = useState(() => new Date().getTime());
+  const isDriver = currentUser.role === "driver";
+  const t = useCallback((key: string, fallback?: string) => driverText(locale, key, fallback), [locale]);
   const load = useCallback(
     async (background = false) => {
       if (!background) setLoading(true);
@@ -161,24 +168,62 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
         }
         const body = await r.text();
         if (!r.ok) {
-          setNotice("Datenbank wird aktualisiert. Bitte Seite neu laden.");
+          setNotice(isDriver ? t("databaseUpdate") : "Datenbank wird aktualisiert. Bitte Seite neu laden.");
           if (!background) setLoading(false);
           return;
         }
         setData(JSON.parse(body));
       } catch {
-        setNotice("Daten konnten nicht geladen werden. Bitte Seite neu laden.");
+        setNotice(isDriver ? t("loadError") : "Daten konnten nicht geladen werden. Bitte Seite neu laden.");
       } finally {
         if (!background) setLoading(false);
       }
     },
-    [year, kw],
+    [year, kw, isDriver, t],
   );
   useEffect(() => {
     const initial = window.setTimeout(() => load(), 0);
     const refresh = window.setInterval(() => load(true), 15000);
     return () => { window.clearTimeout(initial); window.clearInterval(refresh); };
   }, [load]);
+  useEffect(() => {
+    if (!isDriver) return;
+    const savedLocale = localStorage.getItem("logipay_driver_locale") as DriverLocale | null;
+    const requestedSection = new URLSearchParams(window.location.search).get("section") as Section | null;
+    const supported = "serviceWorker" in navigator && "Notification" in window;
+    const syncPreferences = window.setTimeout(() => {
+      if (savedLocale && driverLanguages.some((item) => item.code === savedLocale)) setLocale(savedLocale);
+      if (requestedSection && nav.some((item) => item.id === requestedSection && item.roles.includes("driver"))) setSection(requestedSection);
+      setPushState(supported ? Notification.permission : "unsupported");
+    }, 0);
+    if (supported) void navigator.serviceWorker.register("/sw.js");
+    return () => window.clearTimeout(syncPreferences);
+  }, [isDriver]);
+  useEffect(() => {
+    if (!isDriver || pushState !== "granted" || !data.notifications.length || !("serviceWorker" in navigator)) return;
+    const storageKey = `logipay_last_notification_${currentUser.id}`;
+    const newestId = Math.max(...data.notifications.map((item) => Number(item.id || 0)));
+    const previous = Number(localStorage.getItem(storageKey) || 0);
+    if (!previous) {
+      localStorage.setItem(storageKey, String(newestId));
+      return;
+    }
+    const fresh = data.notifications
+      .filter((item) => !item.read_at && Number(item.id || 0) > previous)
+      .sort((left, right) => Number(left.id) - Number(right.id))
+      .slice(-3);
+    if (!fresh.length) return;
+    void navigator.serviceWorker.ready.then((registration) => {
+      fresh.forEach((item) => registration.showNotification(String(item.title || "LOGIPAY"), {
+        body: String(item.message || ""),
+        tag: `logipay-${item.id}`,
+        icon: "/favicon.svg",
+        badge: "/favicon.svg",
+        data: { url: "/?section=notifications" },
+      }));
+    });
+    localStorage.setItem(storageKey, String(newestId));
+  }, [currentUser.id, data.notifications, isDriver, pushState]);
   useEffect(() => {
     async function flushOfflineQueue() {
       const queue = JSON.parse(localStorage.getItem("logipay_offline_queue") || "[]") as Record<string, unknown>[];
@@ -191,7 +236,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
         } catch { remaining.push(payload); }
       }
       localStorage.setItem("logipay_offline_queue", JSON.stringify(remaining));
-      if (!remaining.length) { setNotice("Offline-Eingaben wurden synchronisiert"); await load(true); }
+      if (!remaining.length) { setNotice(isDriver ? t("synced") : "Offline-Eingaben wurden synchronisiert"); await load(true); }
     }
     const handleOnline = () => { setOnline(true); void flushOfflineQueue(); };
     const handleOffline = () => setOnline(false);
@@ -199,17 +244,38 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     window.addEventListener("online", handleOnline); window.addEventListener("offline", handleOffline);
     if (navigator.onLine) void flushOfflineQueue();
     return () => { window.clearTimeout(syncConnectionState); window.removeEventListener("online", handleOnline); window.removeEventListener("offline", handleOffline); };
-  }, [load]);
+  }, [isDriver, load, t]);
+  function changeLocale(nextLocale: DriverLocale) {
+    setLocale(nextLocale);
+    localStorage.setItem("logipay_driver_locale", nextLocale);
+    document.documentElement.setAttribute("lang", nextLocale === "uk" ? "uk" : nextLocale);
+  }
+  async function enablePush() {
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setPushState("unsupported");
+      return;
+    }
+    try {
+      const permission = await Notification.requestPermission();
+      setPushState(permission);
+      if (permission === "granted") {
+        await navigator.serviceWorker.register("/sw.js");
+        setNotice(t("pushReady"));
+      }
+    } catch {
+      setNotice(t("pushPermissionError"));
+    }
+  }
   async function action(payload: Record<string, unknown>) {
     let r: Response;
     try {
       r = await fetch("/api/portal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     } catch {
       const offlineSafe = new Set(["saveTripOperation", "saveChecklist", "driverConcern"]);
-      if (!offlineSafe.has(String(payload.action || ""))) { setNotice("Keine Verbindung. Diese sensible Aktion wird nicht offline gespeichert."); return; }
+      if (!offlineSafe.has(String(payload.action || ""))) { setNotice(isDriver ? t("offlineBlocked") : "Keine Verbindung. Diese sensible Aktion wird nicht offline gespeichert."); return; }
       const queue = JSON.parse(localStorage.getItem("logipay_offline_queue") || "[]") as Record<string, unknown>[];
       queue.push(payload); localStorage.setItem("logipay_offline_queue", JSON.stringify(queue.slice(-50)));
-      setNotice("Offline gespeichert — wird bei Verbindung automatisch gesendet"); return;
+      setNotice(isDriver ? t("offlineSaved") : "Offline gespeichert — wird bei Verbindung automatisch gesendet"); return;
     }
     if (!r.ok) {
       const e = await r.json().catch(() => ({ error: "Aktion nicht erlaubt" }));
@@ -218,7 +284,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     }
     setModal(null);
     setEditing(null);
-    setNotice("Änderung gespeichert");
+    setNotice(isDriver ? t("saved") : "Änderung gespeichert");
     await load();
   }
   function openModal(
@@ -241,17 +307,17 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const openConcernCount = data.concerns.filter(
     (item) =>
       !["Erledigt", "Delivered"].includes(String(item.completion_status)),
-  ).length;
+  ).length + data.voiceMessages.filter((item) => String(item.status) === "Neu").length;
   const trackingAlertCount = data.tracking.filter((item) => {
     if (!item.recorded_at) return true;
     const age = renderedAt - new Date(String(item.recorded_at)).getTime();
     return age > 30 * 60_000 || Number(item.speed_kph || 0) > 90;
   }).length;
   const unreadNotificationCount = data.notifications.filter((item) => !item.read_at).length;
-  const title = nav.find((n) => n.id === section)?.label;
+  const title = isDriver ? t(section, nav.find((n) => n.id === section)?.label) : nav.find((n) => n.id === section)?.label;
   return (
-    <main className={`app-shell role-${currentUser.role}`}>
-      {mobileMenu ? <button className="backdrop" aria-label="Menü schließen" onClick={() => setMobileMenu(false)} /> : null}
+    <main className={`app-shell role-${currentUser.role} ${isDriver ? "driver-mobile-shell" : ""}`}>
+      {mobileMenu ? <button className="backdrop" aria-label={isDriver ? t("menuClose") : "Menü schließen"} onClick={() => setMobileMenu(false)} /> : null}
       <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
         <div className="brand">
           <div className="brand-mark">
@@ -261,18 +327,18 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           </div>
           <div>
             <strong>LOGIPAY</strong>
-            <small>Personal & Disposition</small>
+            <small>{isDriver ? t("driver") : "Personal & Disposition"}</small>
           </div>
         </div>
         <div className="access-card">
           <span className="access-dot" />
           <div>
-            <small>ANGEMELDET ALS</small>
-            <strong>{labels[currentUser.role]}</strong>
+            <small>{isDriver ? t("signedInAs") : "ANGEMELDET ALS"}</small>
+            <strong>{isDriver ? t("driver") : labels[currentUser.role]}</strong>
           </div>
         </div>
         <nav>
-          <p>ARBEITSBEREICH</p>
+          <p>{isDriver ? t("workArea") : "ARBEITSBEREICH"}</p>
           {nav
             .filter((n) => n.roles.includes(currentUser.role))
             .map((n) => (
@@ -307,7 +373,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     )[n.id]
                   }
                 </span>
-                {n.label}
+                {isDriver ? t(n.id, n.label) : n.label}
                 {n.id === "concerns" &&
                 ["management", "dispatcher"].includes(currentUser.role) &&
                 openConcernCount ? (
@@ -333,19 +399,19 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
             </div>
             <div>
               <strong>{currentUser.fullName}</strong>
-              <small>{labels[currentUser.role]}</small>
+              <small>{isDriver ? t("driver") : labels[currentUser.role]}</small>
             </div>
           </div>
           <button className="logout-button" onClick={logout}>
-            ↪ Abmelden
+            ↪ {isDriver ? t("logout") : "Abmelden"}
           </button>
         </div>
       </aside>
       <section className="workspace">
         <header className="topbar">
-          <button className="menu-toggle" aria-label="Menü öffnen" onClick={() => setMobileMenu(true)}>☰</button>
+          <button className="menu-toggle" aria-label={isDriver ? t("menuOpen") : "Menü öffnen"} onClick={() => setMobileMenu(true)}>☰</button>
           <div className="period-control">
-            <span>Planungszeitraum</span>
+            <span>{isDriver ? t("planningPeriod") : "Planungszeitraum"}</span>
             <select value={year} onChange={(e) => setYear(+e.target.value)}>
               {Array.from(
                 { length: 5 },
@@ -371,26 +437,32 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 }
               }}
             >
-              Nächste Woche →
+              {isDriver ? t("nextWeek") : "Nächste Woche"} →
             </button>
           </div>
+          {isDriver ? <div className="driver-language-switch" role="group" aria-label={t("language")}>
+            {driverLanguages.map((item) => <button key={item.code} type="button" className={locale === item.code ? "language-active" : ""} title={item.label} aria-label={item.label} onClick={() => changeLocale(item.code)}>{item.short}</button>)}
+          </div> : null}
           <div className="top-actions">
             {["management", "dispatcher"].includes(currentUser.role) ? (
               <button className="pdf-button" onClick={downloadPlanningReport}>
                 ↓ Planning Report PDF
               </button>
             ) : null}
+            {isDriver ? <button className={`push-button push-${pushState}`} type="button" onClick={enablePush} disabled={pushState === "granted" || pushState === "unsupported"}>
+              {pushState === "granted" ? t("notificationsOn") : pushState === "denied" ? t("notificationsDenied") : pushState === "unsupported" ? t("notificationsUnsupported") : t("notificationsEnable")}
+            </button> : null}
             <div className={`status-chip ${online ? "" : "status-offline"}`}>
-              <span /> {online ? "Datenbank verbunden" : "Offline-Modus"}
+              <span /> {online ? (isDriver ? t("connected") : "Datenbank verbunden") : (isDriver ? t("offline") : "Offline-Modus")}
             </div>
           </div>
         </header>
         <div className="content">
           <div className="page-heading">
             <div>
-              <p>LOGISTIKVERWALTUNG</p>
+              <p>{isDriver ? t("logistics") : "LOGISTIKVERWALTUNG"}</p>
               <h1>{title}</h1>
-              <span>Zentrale Daten statt einzelner Excel-Tabellen</span>
+              <span>{isDriver ? t("centralData") : "Zentrale Daten statt einzelner Excel-Tabellen"}</span>
             </div>
             {section === "staff" && currentUser.role === "management" ? (
               <button
@@ -419,12 +491,12 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 className="primary-button"
                 onClick={() => openModal("concern")}
               >
-                ＋ Anliegen erfassen
+                ＋ {isDriver ? t("messages") : "Anliegen erfassen"}
               </button>
             ) : null}
           </div>
           {loading ? (
-            <div className="empty-state">Daten werden geladen…</div>
+            <div className="empty-state">{isDriver ? t("loading") : "Daten werden geladen…"}</div>
           ) : (
             <>
               {section === "overview" &&
@@ -435,6 +507,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     documents={data.documents}
                     year={year}
                     kw={kw}
+                    locale={locale}
+                    pushState={pushState}
+                    enablePush={enablePush}
+                    unreadCount={unreadNotificationCount}
+                    openSection={setSection}
                   />
                 ) : (
                   <>
@@ -574,7 +651,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
               )}
               {section === "vehicles" && (
                 <div className="advanced-stack">
-                  <VehicleFiles vehicles={data.vehicles} files={data.files} planning={data.planning} driver={currentUser.role === "driver"} reload={load} />
+                  <VehicleFiles vehicles={data.vehicles} files={data.files} planning={data.planning} driver={currentUser.role === "driver"} locale={locale} reload={load} />
                   <MaintenanceCenter rows={data.maintenance} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} action={action} />
                 </div>
               )}
@@ -583,11 +660,12 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   rows={data.tracking}
                   vehicles={data.vehicles}
                   canManage={["management", "dispatcher"].includes(currentUser.role)}
+                  locale={locale}
                   action={action}
                 />
               )}
               {section === "planning" && (
-                <Card title={`Fahrerplanung ${year} · KW ${kw}`}>
+                <Card title={isDriver ? `${t("myTours")} · KW ${kw}` : `Fahrerplanung ${year} · KW ${kw}`} subtitle={isDriver ? t("today") : undefined}>
                   {currentUser.role !== "driver" ? (
                     <div className="planning-tools">
                       <span>
@@ -607,16 +685,13 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                       </button>
                     </div>
                   ) : null}
-                  <PlanningAlerts
-                    rows={data.planning}
-                    staff={data.staff}
-                    vehicles={data.vehicles}
-                  />
+                  {currentUser.role !== "driver" ? <PlanningAlerts rows={data.planning} staff={data.staff} vehicles={data.vehicles} /> : null}
                   <WeeklySchedule
                     rows={data.planning}
                     staff={active}
                     year={year}
                     kw={kw}
+                    locale={isDriver ? locale : undefined}
                     showAvailability={currentUser.role !== "driver"}
                     canEdit={currentUser.role !== "driver"}
                     edit={(row) => openModal("planning", row)}
@@ -625,34 +700,36 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   />
                 </Card>
               )}
-              {section === "operations" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} driver={currentUser.role === "driver"} action={action} reload={load} />}
-              {section === "tachograph" && <TachographCenter rows={data.tachograph} staff={active} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} action={action} />}
-              {section === "expenses" && <ExpenseCenter rows={data.expenses} staff={active} vehicles={data.vehicles} driver={currentUser.role === "driver"} canApprove={["management", "accountant"].includes(currentUser.role)} action={action} reload={load} />}
-              {section === "checklists" && <ChecklistCenter rows={data.checklists} staff={active} vehicles={data.vehicles} planning={data.planning} driver={currentUser.role === "driver"} action={action} />}
+              {section === "operations" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} driver={currentUser.role === "driver"} locale={locale} action={action} reload={load} />}
+              {section === "tachograph" && <TachographCenter rows={data.tachograph} staff={active} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} />}
+              {section === "expenses" && <ExpenseCenter rows={data.expenses} staff={active} vehicles={data.vehicles} driver={currentUser.role === "driver"} canApprove={["management", "accountant"].includes(currentUser.role)} locale={locale} action={action} reload={load} />}
+              {section === "checklists" && <ChecklistCenter rows={data.checklists} staff={active} vehicles={data.vehicles} planning={data.planning} driver={currentUser.role === "driver"} locale={locale} action={action} />}
               {section === "concerns" &&
                 (currentUser.role === "driver" ? (
                   <DriverConcerns
                     rows={data.concerns}
                     year={year}
                     kw={kw}
+                    locale={locale}
+                    voiceMessages={data.voiceMessages}
+                    planning={data.planning}
+                    reload={load}
                     submit={action}
                   />
                 ) : (
-                  <Concerns
-                    rows={data.concerns}
-                    canEdit={currentUser.role !== "accountant"}
-                    edit={(r) => openModal("concern", r)}
-                    remove={(id) => action({ action: "deleteConcern", id })}
-                  />
+                  <div className="advanced-stack">
+                    <Concerns rows={data.concerns} canEdit={currentUser.role !== "accountant"} edit={(r) => openModal("concern", r)} remove={(id) => action({ action: "deleteConcern", id })} />
+                    {["management", "dispatcher"].includes(currentUser.role) ? <VoiceMessagesCenter rows={data.voiceMessages} action={action} /> : null}
+                  </div>
                 ))}
               {section === "documents" && (
                 <div className="advanced-stack">
-                  <PayrollCenter rows={data.payroll} staff={active} driver={currentUser.role === "driver"} action={action} />
-                  <Documents rows={data.documents} staff={active} driver={currentUser.role === "driver"} canUpload={["management", "accountant"].includes(currentUser.role)} reload={load} />
+                  <PayrollCenter rows={data.payroll} staff={active} driver={currentUser.role === "driver"} locale={locale} action={action} />
+                  <Documents rows={data.documents} staff={active} driver={currentUser.role === "driver"} locale={locale} canUpload={["management", "accountant"].includes(currentUser.role)} reload={load} />
                 </div>
               )}
-              {section === "personnel" && <EmployeeDocuments rows={data.employeeDocuments} staff={data.staff} driver={currentUser.role === "driver"} reload={load} />}
-              {section === "notifications" && <NotificationsCenter rows={data.notifications} action={action} />}
+              {section === "personnel" && <EmployeeDocuments rows={data.employeeDocuments} staff={data.staff} driver={currentUser.role === "driver"} locale={locale} reload={load} />}
+              {section === "notifications" && <NotificationsCenter rows={data.notifications} driver={currentUser.role === "driver"} locale={locale} action={action} />}
               {section === "analytics" && <AnalyticsCenter staff={data.staff} vehicles={data.vehicles} operations={data.tripOperations} expenses={data.expenses} tachograph={data.tachograph} concerns={data.concerns} checklists={data.checklists} />}
               {section === "users" && <UserManagement rows={data.portalUsers} staff={data.staff} resetRequests={data.resetRequests} action={action} />}
               {section === "import" && <ExcelImporter staff={data.staff} vehicles={data.vehicles} planning={data.planning} year={year} kw={kw} reload={load} />}
@@ -691,6 +768,15 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           )}
         </div>
       </section>
+      {isDriver ? <nav className="driver-bottom-nav" aria-label={t("workArea")}>
+        {([
+          ["overview", "⌂", "home"],
+          ["operations", "➜", "operations"],
+          ["concerns", "●", "messages"],
+          ["expenses", "◈", "receipts"],
+          ["notifications", "!", "alerts"],
+        ] as Array<[Section, string, string]>).map(([id, icon, key]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id)}><span>{icon}</span><b>{t(key)}</b>{id === "notifications" && unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}</button>)}
+      </nav> : null}
       {modal && (
         <Modal
           title={
@@ -749,14 +835,22 @@ function VehicleFiles({
   files,
   planning,
   driver,
+  locale,
   reload,
 }: {
   vehicles: Row[];
   files: Row[];
   planning: Row[];
   driver: boolean;
+  locale: DriverLocale;
   reload: () => Promise<void>;
 }) {
+  const c = {
+    de: { title: "Mein Fahrzeug · Fotos und Dokumente", plate: "Kennzeichen wählen", before: "Vor Fahrt", after: "Nach Fahrt", damage: "Schaden", docs: "Fahrzeugdokument", note: "Notiz", upload: "Hochladen", date: "Datum", category: "Kategorie", file: "Datei", empty: "Noch keine Fotos oder Dokumente." },
+    pl: { title: "Mój pojazd · zdjęcia i dokumenty", plate: "Wybierz pojazd", before: "Przed trasą", after: "Po trasie", damage: "Uszkodzenie", docs: "Dokument pojazdu", note: "Notatka", upload: "Wyślij", date: "Data", category: "Kategoria", file: "Plik", empty: "Brak zdjęć i dokumentów." },
+    uk: { title: "Моя вантажівка · фото та документи", plate: "Виберіть авто", before: "Перед рейсом", after: "Після рейсу", damage: "Пошкодження", docs: "Документ авто", note: "Примітка", upload: "Завантажити", date: "Дата", category: "Категорія", file: "Файл", empty: "Фото та документів ще немає." },
+    ru: { title: "Мой грузовик · фото и документы", plate: "Выберите машину", before: "До рейса", after: "После рейса", damage: "Повреждение", docs: "Документ машины", note: "Заметка", upload: "Загрузить", date: "Дата", category: "Категория", file: "Файл", empty: "Фото и документов пока нет." },
+  }[locale];
   const plates = Array.from(
     new Set([
       ...vehicles.map((v) => String(v.license_plate)),
@@ -779,26 +873,26 @@ function VehicleFiles({
       <Card
         title={
           driver
-            ? "Mein Fahrzeug · Fotos und Dokumente"
+            ? c.title
             : "Digitale Fahrzeugakte"
         }
       >
         {driver ? (
           <form className="upload-form" onSubmit={upload}>
             <select name="licensePlate" required>
-              <option value="">Kennzeichen wählen</option>
+              <option value="">{c.plate}</option>
               {plates.map((p) => (
                 <option key={p}>{p}</option>
               ))}
             </select>
             <select name="category" required>
-              <option value="before">Vor Fahrt</option>
-              <option value="after">Nach Fahrt</option>
-              <option value="damage">Schaden</option>
+              <option value="before">{c.before}</option>
+              <option value="after">{c.after}</option>
+              <option value="damage">{c.damage}</option>
               <option value="tuev">TÜV / HU / SP</option>
-              <option value="document">Fahrzeugdokument</option>
+              <option value="document">{c.docs}</option>
             </select>
-            <input name="notes" placeholder="Notiz" />
+            <input name="notes" placeholder={c.note} />
             <input
               name="file"
               type="file"
@@ -806,7 +900,7 @@ function VehicleFiles({
               capture="environment"
               required
             />
-            <button className="primary-button">Hochladen</button>
+            <button className="primary-button">{c.upload}</button>
           </form>
         ) : (
           <div className="viewer-note">
@@ -818,12 +912,12 @@ function VehicleFiles({
           <table>
             <thead>
               <tr>
-                <th>Datum</th>
-                <th>Kennzeichen</th>
-                <th>Kategorie</th>
+                <th>{driver ? c.date : "Datum"}</th>
+                <th>{driver ? c.plate : "Kennzeichen"}</th>
+                <th>{driver ? c.category : "Kategorie"}</th>
                 {!driver ? <th>Fahrer</th> : null}
-                <th>Datei</th>
-                <th>Notiz</th>
+                <th>{driver ? c.file : "Datei"}</th>
+                <th>{driver ? c.note : "Notiz"}</th>
               </tr>
             </thead>
             <tbody>
@@ -851,7 +945,7 @@ function VehicleFiles({
               ) : (
                 <tr>
                   <td colSpan={driver ? 5 : 6}>
-                    Noch keine Fotos oder Dokumente.
+                    {driver ? c.empty : "Noch keine Fotos oder Dokumente."}
                   </td>
                 </tr>
               )}
@@ -1000,75 +1094,100 @@ function DriverHome({
   documents,
   year,
   kw,
+  locale,
+  pushState,
+  enablePush,
+  unreadCount,
+  openSection,
 }: {
   person?: Row;
   planning: Row[];
   documents: Row[];
   year: number;
   kw: number;
+  locale: DriverLocale;
+  pushState: "default" | "granted" | "denied" | "unsupported";
+  enablePush: () => Promise<void>;
+  unreadCount: number;
+  openSection: (section: Section) => void;
 }) {
+  const t = (key: string, fallback?: string) => driverText(locale, key, fallback);
   if (!person)
     return (
       <div className="empty-state">
-        <b>Ihr Fahrerprofil ist noch nicht verknüpft.</b>
+        <b>{t("noProfile")}</b>
         <br />
-        Bitte wenden Sie sich an das Management.
+        {t("contactManagement")}
       </div>
     );
   return (
     <>
+      <section className={`driver-push-card push-${pushState}`}>
+        <div><span className="driver-push-icon">{pushState === "granted" ? "✓" : "●"}</span><div><strong>{t("pushTitle")}</strong><p>{pushState === "granted" ? t("pushReady") : t("pushText")}</p></div></div>
+        {pushState !== "granted" && pushState !== "unsupported" ? <button type="button" onClick={enablePush}>{pushState === "denied" ? t("notificationsDenied") : t("notificationsEnable")}</button> : null}
+      </section>
       <div className="driver-hero">
         <div>
-          <small>MEINE VERGÜTUNG</small>
-          <strong>{person.compensation || "Noch nicht hinterlegt"}</strong>
+          <small>{t("myPay")}</small>
+          <strong>{person.compensation || t("notStored")}</strong>
           <span>
             {person.company} · {person.location}
           </span>
         </div>
         <div className="pay-breakdown">
           <p>
-            <span>Systemart</span>
+            <span>{t("systemType")}</span>
             <b>{person.system_type || "—"}</b>
           </p>
           <p>
-            <span>Urlaub</span>
-            <b>{person.vacation || "Kein Urlaub eingetragen"}</b>
+            <span>{t("vacation")}</span>
+            <b>{person.vacation || t("noVacation")}</b>
           </p>
           <p>
-            <span>Planungen KW {kw}</span>
+            <span>{t("plansThisWeek")} · KW {kw}</span>
             <b>{planning.length}</b>
           </p>
           <p>
-            <span>Lohnabrechnungen</span>
+            <span>{t("payslips")}</span>
             <b>{documents.length}</b>
           </p>
         </div>
       </div>
+      <section className="driver-quick-panel">
+        <div className="driver-quick-heading"><div><small>{t("quickActions")}</small><strong>{planning[0] ? `${planning[0].start_time || "06:00"} · ${planning[0].license_plate || "—"}` : t("noTrips")}</strong></div>{unreadCount ? <button type="button" onClick={() => openSection("notifications")}>{unreadCount} {t("alerts")}</button> : null}</div>
+        <div className="driver-quick-actions">
+          <button type="button" onClick={() => openSection("operations")}><span>➜</span><b>{t("openRoute")}</b></button>
+          <button type="button" onClick={() => openSection("concerns")}><span>●</span><b>{t("sendVoice")}</b></button>
+          <button type="button" onClick={() => openSection("expenses")}><span>▣</span><b>{t("uploadReceipt")}</b></button>
+          <button type="button" onClick={() => openSection("checklists")}><span>✓</span><b>{t("vehicleCheck")}</b></button>
+        </div>
+      </section>
       <div className="dashboard-grid">
-        <Card title={`Meine Touren und Einsätze · KW ${kw}`}>
+        <Card title={`${t("myTours")} · KW ${kw}`} subtitle={t("today")}>
           <WeeklySchedule
             rows={planning}
             staff={[person]}
             year={year}
             kw={kw}
+            locale={locale}
           />
         </Card>
-        <Card title="Mein Profil">
+        <Card title={t("myProfile")} subtitle={t("today")}>
           <div className="driver-profile">
             <p>
-              <span>Name</span>
+              <span>{t("name")}</span>
               <b>{person.full_name}</b>
             </p>
             <p>
-              <span>Firma</span>
+              <span>{t("company")}</span>
               <b>{person.company || "—"}</b>
             </p>
             <p>
-              <span>Standort</span>
+              <span>{t("location")}</span>
               <b>{person.location || "—"}</b>
             </p>
             <p>
-              <span>Status</span>
+              <span>{t("status")}</span>
               <Badge value={String(person.status)} />
             </p>
           </div>
@@ -1079,9 +1198,11 @@ function DriverHome({
 }
 function Card({
   title,
+  subtitle,
   children,
 }: {
   title: string;
+  subtitle?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -1089,7 +1210,7 @@ function Card({
       <div className="panel-title">
         <div>
           <h2>{title}</h2>
-          <p>Stand: heute</p>
+          <p>{subtitle || "Stand: heute"}</p>
         </div>
       </div>
       {children}
@@ -1217,7 +1338,14 @@ const weekDayNames = [
   "Sonntag",
 ];
 
-function isoWeekDates(year: number, week: number) {
+const localizedWeekDayNames: Record<DriverLocale, string[]> = {
+  de: weekDayNames,
+  pl: ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"],
+  uk: ["Понеділок", "Вівторок", "Середа", "Четвер", "П’ятниця", "Субота", "Неділя"],
+  ru: ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"],
+};
+
+function isoWeekDates(year: number, week: number, locale: DriverLocale = "de") {
   const januaryFourth = new Date(Date.UTC(year, 0, 4));
   const monday = new Date(januaryFourth);
   monday.setUTCDate(
@@ -1225,14 +1353,14 @@ function isoWeekDates(year: number, week: number) {
       ((januaryFourth.getUTCDay() + 6) % 7) +
       (week - 1) * 7,
   );
-  return weekDayNames.map((name, index) => {
+  return localizedWeekDayNames[locale].map((name, index) => {
     const date = new Date(monday);
     date.setUTCDate(monday.getUTCDate() + index);
     return {
       number: index + 1,
       name,
       short: name.slice(0, 2),
-      date: new Intl.DateTimeFormat("de-DE", {
+      date: new Intl.DateTimeFormat(locale === "de" ? "de-DE" : locale === "pl" ? "pl-PL" : locale === "uk" ? "uk-UA" : "ru-RU", {
         day: "2-digit",
         month: "2-digit",
         timeZone: "UTC",
@@ -1384,6 +1512,7 @@ function WeeklySchedule({
   edit,
   remove,
   move,
+  locale,
 }: {
   rows: Row[];
   staff: Row[];
@@ -1394,10 +1523,18 @@ function WeeklySchedule({
   edit?: (row: Row) => void;
   remove?: (id: number) => void;
   move?: (row: Row, day: number) => void;
+  locale?: DriverLocale;
 }) {
   const [view, setView] = useState<"calendar" | "table">("calendar");
   const [filter, setFilter] = useState("");
-  const days = isoWeekDates(year, kw);
+  const days = isoWeekDates(year, kw, locale || "de");
+  const driverMode = Boolean(locale);
+  const scheduleCopy = {
+    de: { assignments: "Einsätze", conflicts: "Konflikte", search: "Fahrer, Kennzeichen, Firma, Block…", calendar: "Wochenkalender", table: "Tabelle", conflict: "Konflikt", noDriver: "KEIN FAHRER", noVehicle: "Ohne Fahrzeug", empty: "Keine Einsätze" },
+    pl: { assignments: "Trasy", conflicts: "Konflikty", search: "Kierowca, pojazd, firma, blok…", calendar: "Kalendarz tygodnia", table: "Tabela", conflict: "Konflikt", noDriver: "BRAK KIEROWCY", noVehicle: "Bez pojazdu", empty: "Brak tras" },
+    uk: { assignments: "Рейси", conflicts: "Конфлікти", search: "Водій, авто, компанія, блок…", calendar: "Календар тижня", table: "Таблиця", conflict: "Конфлікт", noDriver: "НЕМАЄ ВОДІЯ", noVehicle: "Без авто", empty: "Рейсів немає" },
+    ru: { assignments: "Рейсы", conflicts: "Конфликты", search: "Водитель, машина, компания, блок…", calendar: "Календарь недели", table: "Таблица", conflict: "Конфликт", noDriver: "НЕТ ВОДИТЕЛЯ", noVehicle: "Без машины", empty: "Рейсов нет" },
+  }[locale || "de"];
   const activeDrivers = staff.filter((person) => person.status === "active");
   const visibleRows = filter ? rows.filter((row) => [row.driver_name, row.license_plate, row.company, row.block_id, row.location].some((item) => String(item || "").toLowerCase().includes(filter.toLowerCase()))) : rows;
   const conflicts = new Set<string>();
@@ -1431,29 +1568,29 @@ function WeeklySchedule({
       <div className="schedule-toolbar">
         <div className="schedule-stats">
           <span>
-            <b>{rows.length}</b> Einsätze
+            <b>{rows.length}</b> {scheduleCopy.assignments}
           </span>
           {showAvailability ? (
             <span className={conflicts.size ? "stat-conflict" : "stat-ok"}>
-              <b>{conflicts.size}</b> Konflikte
+              <b>{conflicts.size}</b> {scheduleCopy.conflicts}
             </span>
           ) : null}
         </div>
-        <input className="schedule-filter" placeholder="Fahrer, Kennzeichen, Firma, Block…" value={filter} onChange={(event) => setFilter(event.target.value)} />
-        <div className="view-switch" aria-label="Planungsansicht">
+        {!driverMode ? <input className="schedule-filter" placeholder={scheduleCopy.search} value={filter} onChange={(event) => setFilter(event.target.value)} /> : null}
+        {!driverMode ? <div className="view-switch" aria-label="Planungsansicht">
           <button
             className={view === "calendar" ? "active" : ""}
             onClick={() => setView("calendar")}
           >
-            Wochenkalender
+            {scheduleCopy.calendar}
           </button>
           <button
             className={view === "table" ? "active" : ""}
             onClick={() => setView("table")}
           >
-            Tabelle
+            {scheduleCopy.table}
           </button>
-        </div>
+        </div> : null}
       </div>
       {view === "table" ? (
         <Planning rows={visibleRows} canEdit={canEdit} edit={edit} remove={remove} />
@@ -1495,13 +1632,13 @@ function WeeklySchedule({
                             onDragStart={(event) => event.dataTransfer.setData("text/plain", String(row.id))}
                           >
                             <div className="schedule-card-head">
-                              <b>{row.driver_name || "NO DRIVER"}</b>
-                              {conflict ? <em>Konflikt</em> : null}
+                              <b>{row.driver_name || scheduleCopy.noDriver}</b>
+                              {conflict ? <em>{scheduleCopy.conflict}</em> : null}
                             </div>
                             <span>{row.company}</span>
                             <small>
                               {row.start_time || "06:00"} ·{" "}
-                              {row.license_plate || "Ohne Fahrzeug"} ·{" "}
+                              {row.license_plate || scheduleCopy.noVehicle} ·{" "}
                               {row.location || "—"}
                             </small>
                             {canEdit ? (
@@ -1525,7 +1662,7 @@ function WeeklySchedule({
                         );
                       })
                     ) : (
-                      <div className="day-empty">Keine Einsätze</div>
+                      <div className="day-empty">{scheduleCopy.empty}</div>
                     )}
                   </div>
                   {showAvailability ? (
@@ -1639,13 +1776,22 @@ function DriverConcerns({
   rows,
   year,
   kw,
+  locale,
+  voiceMessages,
+  planning,
+  reload,
   submit,
 }: {
   rows: Row[];
   year: number;
   kw: number;
+  locale: DriverLocale;
+  voiceMessages: Row[];
+  planning: Row[];
+  reload: () => Promise<void>;
   submit: (x: Record<string, unknown>) => void;
 }) {
+  const t = (key: string, fallback?: string) => driverText(locale, key, fallback);
   function send(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = e.currentTarget;
@@ -1660,37 +1806,35 @@ function DriverConcerns({
   }
   return (
     <>
-      <Card title="Neues Anliegen an die Disposition">
+      <VoiceRecorder locale={locale} planning={planning} reload={reload} />
+      <Card title={t("newConcern")} subtitle={t("concernHelp")}>
         <form className="driver-concern-form" onSubmit={send}>
           <div>
-            <b>Was wird benötigt?</b>
-            <span>
-              Ihr Name, Firma und das für KW {kw} zugeteilte Kennzeichen werden
-              automatisch ergänzt.
-            </span>
+            <b>{t("whatNeeded")}</b>
+            <span>{t("concernAuto")}</span>
           </div>
           <textarea
             name="itemName"
             required
             minLength={3}
-            placeholder="Zum Beispiel: Feuerlöscher, Warnweste, Motoröl …"
+            placeholder={t("concernPlaceholder")}
           />
           <input
             name="truckNumber"
-            placeholder="Kennzeichen nur falls im Wochenplan noch nicht eingetragen"
+            placeholder={t("plateOptional")}
           />
-          <button className="primary-button">An Disposition senden</button>
+          <button className="primary-button">{t("sendDispatcher")}</button>
         </form>
       </Card>
-      <Card title="Meine gesendeten Anliegen">
+      <Card title={t("sentConcerns")} subtitle={t("today")}>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Datum</th>
-                <th>LKW</th>
-                <th>Anliegen</th>
-                <th>Status</th>
+                <th>{t("date")}</th>
+                <th>{t("truck")}</th>
+                <th>{t("concern")}</th>
+                <th>{t("status")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1709,29 +1853,166 @@ function DriverConcerns({
                 ))
               ) : (
                 <tr>
-                  <td colSpan={4}>Noch keine Anliegen gesendet.</td>
+                  <td colSpan={4}>{t("noConcerns")}</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
       </Card>
+      <Card title={t("voiceHistory")} subtitle={t("today")}>
+        <div className="voice-message-list">
+          {voiceMessages.length ? voiceMessages.map((message) => <article key={message.id} className={`voice-message-card voice-${String(message.status).toLowerCase()}`}>
+            <div><strong>{String(message.created_at).slice(0, 16).replace("T", " ")}</strong><span>{message.license_plate || t("truck")} · {Math.floor(Number(message.duration_seconds || 0) / 60)}:{String(Number(message.duration_seconds || 0) % 60).padStart(2, "0")}</span>{message.note ? <p>{message.note}</p> : null}</div>
+            <audio controls preload="none" src={`/api/voice-messages/${message.id}`} aria-label={t("listen")} />
+            <span className="status-pill">{message.status}</span>
+          </article>) : <div className="empty-state">{t("noVoice")}</div>}
+        </div>
+      </Card>
     </>
   );
+}
+
+function VoiceRecorder({ locale, planning, reload }: { locale: DriverLocale; planning: Row[]; reload: () => Promise<void> }) {
+  const t = (key: string, fallback?: string) => driverText(locale, key, fallback);
+  const [recording, setRecording] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [note, setNote] = useState("");
+  const [plate, setPlate] = useState("");
+  const [notice, setNotice] = useState("");
+  const [sending, setSending] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const plates = useMemo(() => Array.from(new Set(planning.map((row) => String(row.license_plate || "")).filter(Boolean))), [planning]);
+
+  function clearTimer() {
+    if (timerRef.current !== null) window.clearInterval(timerRef.current);
+    timerRef.current = null;
+  }
+  function stopRecording() {
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    clearTimer();
+    setRecording(false);
+  }
+  async function startRecording() {
+    setNotice("");
+    try {
+      if (!navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in window)) throw new Error("unsupported");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      streamRef.current = stream;
+      const supported = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, supported ? { mimeType: supported } : undefined);
+      recorderRef.current = recorder;
+      chunksRef.current = [];
+      recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setRecordedBlob(blob);
+        setSelectedFile(null);
+        setPreviewUrl(URL.createObjectURL(blob));
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      };
+      recorder.start(500);
+      setSeconds(0);
+      setRecording(true);
+      timerRef.current = window.setInterval(() => setSeconds((value) => {
+        const next = value + 1;
+        if (next >= 180) window.setTimeout(stopRecording, 0);
+        return Math.min(180, next);
+      }), 1000);
+    } catch {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setNotice(t("microphoneDenied"));
+    }
+  }
+  useEffect(() => () => {
+    clearTimer();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+  async function sendRecording() {
+    const file = selectedFile || (recordedBlob ? new File([recordedBlob], `voice-${Date.now()}.${recordedBlob.type.includes("mp4") ? "m4a" : "webm"}`, { type: recordedBlob.type }) : null);
+    if (!file) return setNotice(t("voiceMissing"));
+    setSending(true);
+    const form = new FormData();
+    form.set("file", file);
+    form.set("durationSeconds", String(seconds));
+    form.set("note", note);
+    form.set("licensePlate", plate);
+    const response = await fetch("/api/voice-messages", { method: "POST", body: form });
+    const result = await response.json() as { error?: string };
+    setSending(false);
+    if (!response.ok) return setNotice(result.error || t("voiceUploadError"));
+    setNotice(t("voiceSent"));
+    setRecordedBlob(null); setSelectedFile(null); setNote(""); setSeconds(0);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl("");
+    await reload();
+  }
+  function selectAudio(file: File | undefined) {
+    if (!file) return;
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setSelectedFile(file); setRecordedBlob(null); setPreviewUrl(URL.createObjectURL(file)); setSeconds(0);
+  }
+  return <Card title={t("voiceTitle")} subtitle={t("voiceHelp")}>
+    <div className="voice-recorder">
+      <div className={`voice-record-control ${recording ? "is-recording" : ""}`}>
+        <button type="button" className="voice-record-button" onClick={recording ? stopRecording : startRecording}><span>{recording ? "■" : "●"}</span>{recording ? t("stopRecording") : t("startRecording")}</button>
+        <time>{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</time>
+      </div>
+      {previewUrl ? <audio className="voice-preview" controls src={previewUrl} aria-label={t("playRecording")} /> : null}
+      <div className="voice-recorder-fields">
+        {plates.length ? <select value={plate} onChange={(event) => setPlate(event.target.value)}><option value="">{t("truck")}</option>{plates.map((item) => <option key={item}>{item}</option>)}</select> : null}
+        <input value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder={t("voiceNote")} />
+        <label className="voice-file-label">{t("voiceFile")}<input type="file" accept="audio/*" capture onChange={(event) => selectAudio(event.target.files?.[0])} /></label>
+      </div>
+      <button type="button" className="primary-button voice-send-button" disabled={sending || (!recordedBlob && !selectedFile)} onClick={sendRecording}>{sending ? "…" : t("sendRecording")}</button>
+      {notice ? <div className="inline-notice">{notice}</div> : null}
+    </div>
+  </Card>;
+}
+
+function VoiceMessagesCenter({ rows, action }: { rows: Row[]; action: (payload: Record<string, unknown>) => Promise<void> }) {
+  return <Card title="Sprachnachrichten der Fahrer">
+    <div className="voice-dispatch-list">
+      {rows.length ? rows.map((message) => <article key={message.id} className={`voice-dispatch-card ${message.status === "Neu" ? "voice-new" : ""}`}>
+        <div className="voice-dispatch-meta"><strong>{message.full_name}</strong><span>{message.license_plate || "Ohne Kennzeichen"} · {String(message.created_at).slice(0, 16).replace("T", " ")}</span>{message.note ? <p>{message.note}</p> : null}</div>
+        <audio controls preload="none" src={`/api/voice-messages/${message.id}`} />
+        <span className="status-pill">{message.status}</span>
+        <div className="row-buttons"><button className="edit-action" onClick={() => action({ action: "updateVoiceMessageStatus", id: message.id, status: "Abgehört" })}>Abgehört</button><button className="row-action" onClick={() => action({ action: "updateVoiceMessageStatus", id: message.id, status: "Erledigt" })}>Erledigt</button></div>
+      </article>) : <div className="empty-state">Keine Sprachnachrichten</div>}
+    </div>
+  </Card>;
 }
 function Documents({
   rows,
   staff,
   driver,
+  locale,
   canUpload,
   reload,
 }: {
   rows: Row[];
   staff: Row[];
   driver: boolean;
+  locale: DriverLocale;
   canUpload: boolean;
   reload: () => Promise<void>;
 }) {
+  const c = {
+    de: { title: "Meine Lohnabrechnungen", secure: "Geschützter Dokumentenbereich", info: "Nur Sie können Ihre persönlichen Lohnabrechnungen öffnen.", employee: "Mitarbeiter", period: "Zeitraum", file: "Datei", size: "Größe", date: "Datum", empty: "Noch keine Dokumente hochgeladen." },
+    pl: { title: "Moje paski wynagrodzeń", secure: "Chroniony obszar dokumentów", info: "Tylko Ty możesz otwierać swoje dokumenty płacowe.", employee: "Pracownik", period: "Okres", file: "Plik", size: "Rozmiar", date: "Data", empty: "Brak dokumentów." },
+    uk: { title: "Мої розрахункові листи", secure: "Захищені документи", info: "Лише ви можете відкривати власні документи про зарплату.", employee: "Працівник", period: "Період", file: "Файл", size: "Розмір", date: "Дата", empty: "Документів ще немає." },
+    ru: { title: "Мои расчётные листы", secure: "Защищённые документы", info: "Только вы можете открывать свои документы о зарплате.", employee: "Сотрудник", period: "Период", file: "Файл", size: "Размер", date: "Дата", empty: "Документов пока нет." },
+  }[locale];
   async function upload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const r = await fetch("/api/documents", {
@@ -1744,13 +2025,10 @@ function Documents({
     } else alert((await r.json()).error);
   }
   return (
-    <Card title={driver ? "Meine Lohnabrechnungen" : "Lohnabrechnungen"}>
+    <Card title={driver ? c.title : "Lohnabrechnungen"} subtitle={driver ? driverText(locale, "today") : undefined}>
       <div className="document-note">
-        <b>Sicherer Dokumentenbereich</b>
-        <span>
-          PDF-Lohnabrechnungen werden personenbezogen gespeichert. Fahrer sehen
-          ausschließlich ihre eigenen Dokumente.
-        </span>
+        <b>{driver ? c.secure : "Sicherer Dokumentenbereich"}</b>
+        <span>{driver ? c.info : "PDF-Lohnabrechnungen werden personenbezogen gespeichert. Fahrer sehen ausschließlich ihre eigenen Dokumente."}</span>
       </div>
       {canUpload ? (
         <form className="upload-form" onSubmit={upload}>
@@ -1771,11 +2049,11 @@ function Documents({
         <table>
           <thead>
             <tr>
-              <th>Mitarbeiter</th>
-              <th>Zeitraum</th>
-              <th>Datei</th>
-              <th>Größe</th>
-              <th>Datum</th>
+              <th>{driver ? c.employee : "Mitarbeiter"}</th>
+              <th>{driver ? c.period : "Zeitraum"}</th>
+              <th>{driver ? c.file : "Datei"}</th>
+              <th>{driver ? c.size : "Größe"}</th>
+              <th>{driver ? c.date : "Datum"}</th>
             </tr>
           </thead>
           <tbody>
@@ -1795,7 +2073,7 @@ function Documents({
               ))
             ) : (
               <tr>
-                <td colSpan={5}>Noch keine Dokumente hochgeladen.</td>
+                <td colSpan={5}>{driver ? c.empty : "Noch keine Dokumente hochgeladen."}</td>
               </tr>
             )}
           </tbody>

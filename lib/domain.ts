@@ -90,6 +90,15 @@ export async function ensureDomainDatabase() {
       `CREATE INDEX IF NOT EXISTS idx_concerns_period_status ON driver_concerns(period, completion_status)`,
     ),
     env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS voice_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, user_id INTEGER NOT NULL, license_plate TEXT, duration_seconds INTEGER NOT NULL DEFAULT 0, file_name TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, note TEXT, status TEXT NOT NULL DEFAULT 'Neu', listened_by INTEGER, listened_at TEXT, created_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_voice_messages_status_created ON voice_messages(status, created_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_voice_messages_staff_created ON voice_messages(staff_id, created_at)`,
+    ),
+    env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, action TEXT NOT NULL, entity_id TEXT, details TEXT, created_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(

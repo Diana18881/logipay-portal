@@ -156,6 +156,26 @@ export const driverConcerns = sqliteTable("driver_concerns", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const voiceMessages = sqliteTable("voice_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").notNull().references(() => staff.id),
+  userId: integer("user_id").notNull().references(() => users.id),
+  licensePlate: text("license_plate"),
+  durationSeconds: integer("duration_seconds").notNull().default(0),
+  fileName: text("file_name").notNull(),
+  objectKey: text("object_key").notNull().unique(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  note: text("note"),
+  status: text("status").notNull().default("Neu"),
+  listenedBy: integer("listened_by").references(() => users.id),
+  listenedAt: text("listened_at"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  index("idx_voice_messages_status_created").on(table.status, table.createdAt),
+  index("idx_voice_messages_staff_created").on(table.staffId, table.createdAt),
+]);
+
 export const auditLog = sqliteTable("audit_log", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id")

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { DriverLocale } from "./driver-i18n";
 
 type Row = Record<string, string | number | null>;
 type Action = (payload: Record<string, string | number | null>) => Promise<void>;
@@ -8,9 +9,15 @@ type Action = (payload: Record<string, string | number | null>) => Promise<void>
 const euro = (value: unknown) => new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(Number(value || 0));
 const dateText = (value: unknown) => value ? new Date(String(value)).toLocaleDateString("de-DE") : "—";
 
-export function EmployeeDocuments({ rows, staff, driver, reload }: { rows: Row[]; staff: Row[]; driver: boolean; reload: () => Promise<void> }) {
+export function EmployeeDocuments({ rows, staff, driver, locale, reload }: { rows: Row[]; staff: Row[]; driver: boolean; locale: DriverLocale; reload: () => Promise<void> }) {
   const [notice, setNotice] = useState("");
   const [renderedAt] = useState(() => new Date().getTime());
+  const c = {
+    de: { title: "Meine geschützten Dokumente", help: "Führerschein, Fahrerkarte, Aufenthaltstitel und Krankmeldung", type: "Dokumentart", expiry: "Ablaufdatum (optional)", upload: "Sicher hochladen", document: "Dokument", file: "Datei", validTo: "Gültig bis", status: "Status", valid: "Gültig", empty: "Noch keine Dokumente" },
+    pl: { title: "Moje chronione dokumenty", help: "Prawo jazdy, karta kierowcy, pobyt i zwolnienia", type: "Rodzaj dokumentu", expiry: "Data ważności (opcjonalnie)", upload: "Wyślij bezpiecznie", document: "Dokument", file: "Plik", validTo: "Ważny do", status: "Status", valid: "Ważny", empty: "Brak dokumentów" },
+    uk: { title: "Мої захищені документи", help: "Посвідчення, картка водія, дозвіл на проживання та лікарняні", type: "Тип документа", expiry: "Дійсний до (необов’язково)", upload: "Безпечно завантажити", document: "Документ", file: "Файл", validTo: "Дійсний до", status: "Статус", valid: "Дійсний", empty: "Документів ще немає" },
+    ru: { title: "Мои защищённые документы", help: "Права, карта водителя, ВНЖ и больничные", type: "Тип документа", expiry: "Действителен до (необязательно)", upload: "Безопасно загрузить", document: "Документ", file: "Файл", validTo: "Действителен до", status: "Статус", valid: "Действителен", empty: "Документов пока нет" },
+  }[locale];
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -26,22 +33,28 @@ export function EmployeeDocuments({ rows, staff, driver, reload }: { rows: Row[]
   };
   return <section className="advanced-stack">
     <div className="panel">
-      <div className="panel-title"><div><h2>{driver ? "Meine geschützten Dokumente" : "Digitale Personalakte"}</h2><p>Arbeitsvertrag, Führerschein, Fahrerkarte, Aufenthaltstitel und Krankmeldung</p></div></div>
+      <div className="panel-title"><div><h2>{driver ? c.title : "Digitale Personalakte"}</h2><p>{driver ? c.help : "Arbeitsvertrag, Führerschein, Fahrerkarte, Aufenthaltstitel und Krankmeldung"}</p></div></div>
       <form className="advanced-form" onSubmit={upload}>
         {!driver ? <select name="staffId" required defaultValue=""><option value="">Mitarbeiter wählen</option>{staff.map((person) => <option key={person.id} value={String(person.id)}>{person.full_name}</option>)}</select> : null}
-        <select name="category" required defaultValue=""><option value="">Dokumentart</option>{(driver ? ["Führerschein", "Fahrerkarte", "Aufenthaltstitel", "Krankmeldung"] : ["Arbeitsvertrag", "Führerschein", "Fahrerkarte", "Aufenthaltstitel", "Krankmeldung", "Lohnabrechnung", "Sonstiges"]).map((category) => <option key={category}>{category}</option>)}</select>
-        <label>Ablaufdatum (optional)<input name="expiresAt" type="date" /></label>
+        <select name="category" required defaultValue=""><option value="">{driver ? c.type : "Dokumentart"}</option>{(driver ? ["Führerschein", "Fahrerkarte", "Aufenthaltstitel", "Krankmeldung"] : ["Arbeitsvertrag", "Führerschein", "Fahrerkarte", "Aufenthaltstitel", "Krankmeldung", "Lohnabrechnung", "Sonstiges"]).map((category) => <option key={category}>{category}</option>)}</select>
+        <label>{driver ? c.expiry : "Ablaufdatum (optional)"}<input name="expiresAt" type="date" /></label>
         <input name="file" type="file" accept="application/pdf,image/*" required />
-        <button className="primary-button">Sicher hochladen</button>
+        <button className="primary-button">{driver ? c.upload : "Sicher hochladen"}</button>
       </form>
       {notice ? <div className="inline-notice">{notice}</div> : null}
-      <div className="table-wrap"><table><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>Dokument</th><th>Datei</th><th>Gültig bis</th><th>Status</th><th>Upload</th></tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td><strong>{row.category}</strong></td><td><a href={`/api/employee-documents/${row.id}`} target="_blank" rel="noreferrer">{row.file_name}</a></td><td>{dateText(row.expires_at)}</td><td>{expiry(row.expires_at) ? <span className="danger-chip">{expiry(row.expires_at)}</span> : <span className="ok-chip">Gültig</span>}</td><td>{dateText(row.created_at)}</td></tr>) : <tr><td colSpan={6}>Noch keine Dokumente</td></tr>}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>{driver ? c.document : "Dokument"}</th><th>{driver ? c.file : "Datei"}</th><th>{driver ? c.validTo : "Gültig bis"}</th><th>{driver ? c.status : "Status"}</th><th>Upload</th></tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td><strong>{row.category}</strong></td><td><a href={`/api/employee-documents/${row.id}`} target="_blank" rel="noreferrer">{row.file_name}</a></td><td>{dateText(row.expires_at)}</td><td>{expiry(row.expires_at) ? <span className="danger-chip">{expiry(row.expires_at)}</span> : <span className="ok-chip">{driver ? c.valid : "Gültig"}</span>}</td><td>{dateText(row.created_at)}</td></tr>) : <tr><td colSpan={6}>{driver ? c.empty : "Noch keine Dokumente"}</td></tr>}</tbody></table></div>
     </div>
   </section>;
 }
 
-export function PayrollCenter({ rows, staff, driver, action }: { rows: Row[]; staff: Row[]; driver: boolean; action: Action }) {
+export function PayrollCenter({ rows, staff, driver, locale, action }: { rows: Row[]; staff: Row[]; driver: boolean; locale: DriverLocale; action: Action }) {
   const [selected, setSelected] = useState<Row | null>(null);
+  const c = {
+    de: { title: "Meine Abrechnung", help: "Monatliche Lohnwerte, Zahlungsstatus und PDF", month: "Monat", base: "Grundgehalt", tours: "Touren", bonuses: "Zuschläge", expenses: "Spesen", deductions: "Abzüge", net: "Netto", status: "Status", empty: "Noch keine Monatsabrechnung" },
+    pl: { title: "Moje rozliczenie", help: "Miesięczne wynagrodzenie, status płatności i PDF", month: "Miesiąc", base: "Podstawa", tours: "Trasy", bonuses: "Dodatki", expenses: "Diety", deductions: "Potrącenia", net: "Netto", status: "Status", empty: "Brak rozliczenia" },
+    uk: { title: "Мій розрахунок", help: "Місячна зарплата, статус виплати та PDF", month: "Місяць", base: "Основна зарплата", tours: "Рейси", bonuses: "Доплати", expenses: "Добові", deductions: "Відрахування", net: "Нетто", status: "Статус", empty: "Розрахунку ще немає" },
+    ru: { title: "Мой расчёт", help: "Месячная зарплата, статус выплаты и PDF", month: "Месяц", base: "Основная зарплата", tours: "Рейсы", bonuses: "Доплаты", expenses: "Суточные", deductions: "Удержания", net: "Нетто", status: "Статус", empty: "Расчёта пока нет" },
+  }[locale];
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
@@ -60,7 +73,7 @@ export function PayrollCenter({ rows, staff, driver, action }: { rows: Row[]; st
       <label>Zahlungsstatus<select name="paymentStatus" defaultValue={String(selected?.payment_status || "draft")}><option value="draft">Entwurf</option><option value="review">Prüfung</option><option value="approved">Freigegeben</option><option value="paid">Bezahlt</option></select></label>
       <button className="primary-button">Abrechnung speichern</button>{selected ? <button type="button" onClick={() => setSelected(null)}>Abbrechen</button> : null}
     </form></div> : null}
-    <div className="panel"><div className="panel-title"><div><h2>{driver ? "Meine Abrechnung" : "Lohnjournal"}</h2><p>Monatliche Lohnwerte, Zahlungsstatus und automatisch erzeugtes PDF</p></div></div><div className="table-wrap"><table><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>Monat</th><th>Grundgehalt</th><th>Touren</th><th>Zuschläge</th><th>Spesen</th><th>Abzüge</th><th>Netto</th><th>Status</th><th>PDF</th>{!driver ? <th /> : null}</tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td>{row.period}</td><td>{euro(row.base_salary)}</td><td>{row.tour_count}</td><td>{euro(row.bonuses)}</td><td>{euro(row.expenses)}</td><td>{euro(row.deductions)}</td><td><strong>{euro(row.net_amount)}</strong></td><td><span className="status-pill">{row.payment_status}</span></td><td><a href={`/api/payroll/${row.id}/pdf`} target="_blank">PDF ↓</a></td>{!driver ? <td><button className="edit-action" onClick={() => setSelected(row)}>Bearbeiten</button></td> : null}</tr>) : <tr><td colSpan={11}>Noch keine Monatsabrechnung</td></tr>}</tbody></table></div></div>
+    <div className="panel"><div className="panel-title"><div><h2>{driver ? c.title : "Lohnjournal"}</h2><p>{driver ? c.help : "Monatliche Lohnwerte, Zahlungsstatus und automatisch erzeugtes PDF"}</p></div></div><div className="table-wrap"><table><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>{driver ? c.month : "Monat"}</th><th>{driver ? c.base : "Grundgehalt"}</th><th>{driver ? c.tours : "Touren"}</th><th>{driver ? c.bonuses : "Zuschläge"}</th><th>{driver ? c.expenses : "Spesen"}</th><th>{driver ? c.deductions : "Abzüge"}</th><th>{driver ? c.net : "Netto"}</th><th>{driver ? c.status : "Status"}</th><th>PDF</th>{!driver ? <th /> : null}</tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td>{row.period}</td><td>{euro(row.base_salary)}</td><td>{row.tour_count}</td><td>{euro(row.bonuses)}</td><td>{euro(row.expenses)}</td><td>{euro(row.deductions)}</td><td><strong>{euro(row.net_amount)}</strong></td><td><span className="status-pill">{row.payment_status}</span></td><td><a href={`/api/payroll/${row.id}/pdf`} target="_blank">PDF ↓</a></td>{!driver ? <td><button className="edit-action" onClick={() => setSelected(row)}>Bearbeiten</button></td> : null}</tr>) : <tr><td colSpan={11}>{driver ? c.empty : "Noch keine Monatsabrechnung"}</td></tr>}</tbody></table></div></div>
   </div>;
 }
 
@@ -132,10 +145,17 @@ function trackerStatus(row: Row, clock: number) {
   return { label: "Steht", tone: "online" };
 }
 
-export function TruckTracking({ rows, vehicles, canManage, action }: { rows: Row[]; vehicles: Row[]; canManage: boolean; action: Action }) {
+export function TruckTracking({ rows, vehicles, canManage, locale, action }: { rows: Row[]; vehicles: Row[]; canManage: boolean; locale: DriverLocale; action: Action }) {
   const [selectedPlate, setSelectedPlate] = useState("");
   const [history, setHistory] = useState<Row[]>([]);
   const [clock, setClock] = useState(() => new Date().getTime());
+  const driverView = !canManage;
+  const c = {
+    de: { moving: "In Fahrt", alarms: "Alarme", fleet: "Mein Fahrzeug", refresh: "Aktualisierung alle 15 Sek.", unknown: "Position unbekannt", noTracker: "Noch kein Fahrzeug-Tracker verbunden.", noSignal: "kein Signal", lastSignal: "letztes Signal vor", minutes: "Min.", noPosition: "Noch keine GPS-Position vorhanden.", speed: "Geschwindigkeit", ignition: "Zündung", on: "Ein", off: "Aus", odometer: "Kilometerstand", coordinates: "Koordinaten", source: "Datenquelle", history: "Positionsverlauf", historyHelp: "Die letzten Meldungen des Fahrzeugs" },
+    pl: { moving: "W trasie", alarms: "Alarmy", fleet: "Mój pojazd", refresh: "Odświeżanie co 15 sek.", unknown: "Pozycja nieznana", noTracker: "Brak połączonego trackera.", noSignal: "brak sygnału", lastSignal: "ostatni sygnał", minutes: "min temu", noPosition: "Brak pozycji GPS.", speed: "Prędkość", ignition: "Zapłon", on: "Wł.", off: "Wył.", odometer: "Przebieg", coordinates: "Współrzędne", source: "Źródło danych", history: "Historia pozycji", historyHelp: "Ostatnie pozycje pojazdu" },
+    uk: { moving: "У русі", alarms: "Тривоги", fleet: "Моє авто", refresh: "Оновлення кожні 15 сек.", unknown: "Місце невідоме", noTracker: "Трекер авто ще не підключено.", noSignal: "немає сигналу", lastSignal: "останній сигнал", minutes: "хв. тому", noPosition: "GPS-позиції ще немає.", speed: "Швидкість", ignition: "Запалювання", on: "Увімк.", off: "Вимк.", odometer: "Пробіг", coordinates: "Координати", source: "Джерело даних", history: "Історія позицій", historyHelp: "Останні позиції авто" },
+    ru: { moving: "В движении", alarms: "Тревоги", fleet: "Моя машина", refresh: "Обновление каждые 15 сек.", unknown: "Местоположение неизвестно", noTracker: "Трекер машины пока не подключён.", noSignal: "нет сигнала", lastSignal: "последний сигнал", minutes: "мин. назад", noPosition: "GPS-позиции пока нет.", speed: "Скорость", ignition: "Зажигание", on: "Вкл.", off: "Выкл.", odometer: "Пробег", coordinates: "Координаты", source: "Источник данных", history: "История позиций", historyHelp: "Последние позиции машины" },
+  }[locale];
   const activePlate = selectedPlate || String(rows[0]?.license_plate || "");
   const selected = rows.find((row) => String(row.license_plate) === activePlate) || rows[0];
   const selectedRecordedAt = selected?.recorded_at;
@@ -200,47 +220,47 @@ export function TruckTracking({ rows, vehicles, canManage, action }: { rows: Row
     <div className="tracking-summary">
       <div><span>Tracker</span><strong>{summary.total}</strong></div>
       <div><span>Online</span><strong>{summary.online}</strong></div>
-      <div><span>In Fahrt</span><strong>{summary.moving}</strong></div>
+      <div><span>{driverView ? c.moving : "In Fahrt"}</span><strong>{summary.moving}</strong></div>
       <div className={summary.offline ? "tracking-warning" : ""}><span>Offline</span><strong>{summary.offline}</strong></div>
-      <div className={summary.alerts ? "tracking-danger" : ""}><span>Alarme</span><strong>{summary.alerts}</strong></div>
+      <div className={summary.alerts ? "tracking-danger" : ""}><span>{driverView ? c.alarms : "Alarme"}</span><strong>{summary.alerts}</strong></div>
     </div>
 
     <div className="tracking-layout">
       <aside className="tracker-list" aria-label="Fahrzeuge mit Tracker">
-        <div className="tracker-list-title"><strong>Fahrzeugflotte</strong><small>Aktualisierung alle 15 Sek.</small></div>
+        <div className="tracker-list-title"><strong>{driverView ? c.fleet : "Fahrzeugflotte"}</strong><small>{driverView ? c.refresh : "Aktualisierung alle 15 Sek."}</small></div>
         {rows.length ? rows.map((row) => {
           const itemStatus = trackerStatus(row, clock);
           return <button key={row.id} className={`tracker-card ${String(row.license_plate) === activePlate ? "tracker-card-active" : ""}`} onClick={() => setSelectedPlate(String(row.license_plate))}>
             <span className={`tracker-dot tracker-${itemStatus.tone}`} />
-            <span><strong>{row.license_plate}</strong><small>{row.address || row.provider || "Position unbekannt"}</small></span>
+            <span><strong>{row.license_plate}</strong><small>{row.address || row.provider || (driverView ? c.unknown : "Position unbekannt")}</small></span>
             <span className="tracker-card-state"><b>{Math.round(Number(row.speed_kph || 0))} km/h</b><small>{itemStatus.label}</small></span>
           </button>;
-        }) : <div className="empty-state">Noch kein Fahrzeug-Tracker verbunden.</div>}
+        }) : <div className="empty-state">{driverView ? c.noTracker : "Noch kein Fahrzeug-Tracker verbunden."}</div>}
       </aside>
 
       <section className="tracker-map-panel">
         <div className="tracker-map-heading">
-          <div><span className={`tracker-dot tracker-${status.tone}`} /><div><h2>{selected?.license_plate || "Live-Tracking"}</h2><p>{status.label} · {signalAge == null ? "kein Signal" : `letztes Signal vor ${signalAge} Min.`}</p></div></div>
+          <div><span className={`tracker-dot tracker-${status.tone}`} /><div><h2>{selected?.license_plate || "Live-Tracking"}</h2><p>{status.label} · {signalAge == null ? (driverView ? c.noSignal : "kein Signal") : `${driverView ? c.lastSignal : "letztes Signal vor"} ${signalAge} ${driverView ? c.minutes : "Min."}`}</p></div></div>
         </div>
         <div className="tracker-private-map">
           <div className="tracker-grid-lines" />
-          {hasPosition ? <div className={`truck-marker tracker-${status.tone}`}><span>▰</span><strong>{selected?.license_plate}</strong></div> : <div className="empty-state">Noch keine GPS-Position vorhanden.</div>}
+          {hasPosition ? <div className={`truck-marker tracker-${status.tone}`}><span>▰</span><strong>{selected?.license_plate}</strong></div> : <div className="empty-state">{driverView ? c.noPosition : "Noch keine GPS-Position vorhanden."}</div>}
           <div className="tracker-location-label"><strong>{selected?.address || "GPS-Position"}</strong><span>{hasPosition ? `${latitude!.toFixed(5)}, ${longitude!.toFixed(5)}` : "—"}</span></div>
         </div>
         {selected ? <div className="tracking-detail-grid">
-          <div><span>Geschwindigkeit</span><strong>{Math.round(Number(selected.speed_kph || 0))} km/h</strong></div>
-          <div><span>Zündung</span><strong>{Number(selected.ignition) ? "Ein" : "Aus"}</strong></div>
-          <div><span>Kilometerstand</span><strong>{selected.odometer_km == null ? "—" : `${Number(selected.odometer_km).toLocaleString("de-DE")} km`}</strong></div>
+          <div><span>{driverView ? c.speed : "Geschwindigkeit"}</span><strong>{Math.round(Number(selected.speed_kph || 0))} km/h</strong></div>
+          <div><span>{driverView ? c.ignition : "Zündung"}</span><strong>{Number(selected.ignition) ? (driverView ? c.on : "Ein") : (driverView ? c.off : "Aus")}</strong></div>
+          <div><span>{driverView ? c.odometer : "Kilometerstand"}</span><strong>{selected.odometer_km == null ? "—" : `${Number(selected.odometer_km).toLocaleString("de-DE")} km`}</strong></div>
           <div><span>Tracker</span><strong>{selected.provider} · {selected.device_id}</strong></div>
-          <div><span>Koordinaten</span><strong>{hasPosition ? `${latitude!.toFixed(5)}, ${longitude!.toFixed(5)}` : "—"}</strong></div>
-          <div><span>Datenquelle</span><strong>{selected.source === "demo" ? "Demo (nicht live)" : selected.source === "manual" ? "Manuell" : "GPS-Tracker"}</strong></div>
+          <div><span>{driverView ? c.coordinates : "Koordinaten"}</span><strong>{hasPosition ? `${latitude!.toFixed(5)}, ${longitude!.toFixed(5)}` : "—"}</strong></div>
+          <div><span>{driverView ? c.source : "Datenquelle"}</span><strong>{selected.source === "demo" ? "Demo (nicht live)" : selected.source === "manual" ? "Manuell" : "GPS-Tracker"}</strong></div>
         </div> : null}
         {selected?.source === "demo" ? <div className="tracking-demo-note">Demo-Koordinaten: Für echte Live-Daten bitte den eingebauten Tracker oder Telematik-Anbieter verbinden.</div> : null}
       </section>
     </div>
 
     <div className="panel">
-      <div className="panel-title"><div><h2>Positionsverlauf</h2><p>Die letzten 100 Meldungen des ausgewählten Fahrzeugs</p></div></div>
+      <div className="panel-title"><div><h2>{driverView ? c.history : "Positionsverlauf"}</h2><p>{driverView ? c.historyHelp : "Die letzten 100 Meldungen des ausgewählten Fahrzeugs"}</p></div></div>
       <div className="table-wrap"><table><thead><tr><th>Zeit</th><th>Ort</th><th>Geschwindigkeit</th><th>Zündung</th><th>Koordinaten</th><th>Quelle</th></tr></thead><tbody>{history.length ? history.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td>{String(row.recorded_at).slice(0, 16).replace("T", " ")}</td><td>{row.address || "—"}</td><td>{Math.round(Number(row.speed_kph || 0))} km/h</td><td>{Number(row.ignition) ? "Ein" : "Aus"}</td><td>{Number(row.latitude).toFixed(5)}, {Number(row.longitude).toFixed(5)}</td><td>{row.source === "demo" ? "Demo" : row.source === "manual" ? "Manuell" : "Tracker"}</td></tr>) : <tr><td colSpan={6}>Noch keine Positionshistorie</td></tr>}</tbody></table></div>
     </div>
 
