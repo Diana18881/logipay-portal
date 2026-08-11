@@ -259,6 +259,98 @@ export const truckPositions = sqliteTable("truck_positions", {
   index("idx_truck_positions_plate_recorded").on(table.licensePlate, table.recordedAt),
   index("idx_truck_positions_tracker_recorded").on(table.trackerId, table.recordedAt),
 ]);
+
+export const tachographRecords = sqliteTable("tachograph_records", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").notNull().references(() => staff.id),
+  licensePlate: text("license_plate").notNull(),
+  recordDate: text("record_date").notNull(),
+  drivingMinutes: integer("driving_minutes").notNull().default(0),
+  restMinutes: integer("rest_minutes").notNull().default(0),
+  remainingMinutes: integer("remaining_minutes").notNull().default(540),
+  infringement: text("infringement"),
+  source: text("source").notNull().default("manual"),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [index("idx_tachograph_staff_date").on(table.staffId, table.recordDate)]);
+
+export const tripOperations = sqliteTable("trip_operations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  planningId: integer("planning_id").notNull().references(() => weeklyPlanning.id),
+  status: text("status").notNull().default("Geplant"),
+  pickupAddress: text("pickup_address"),
+  deliveryAddress: text("delivery_address"),
+  eta: text("eta"),
+  delayReason: text("delay_reason"),
+  recipientName: text("recipient_name"),
+  signatureName: text("signature_name"),
+  startedAt: text("started_at"),
+  loadedAt: text("loaded_at"),
+  deliveredAt: text("delivered_at"),
+  updatedBy: integer("updated_by").notNull().references(() => users.id),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("trip_operations_planning_unique").on(table.planningId), index("idx_trip_operations_status_eta").on(table.status, table.eta)]);
+
+export const tripDocuments = sqliteTable("trip_documents", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  tripOperationId: integer("trip_operation_id").notNull().references(() => tripOperations.id),
+  staffId: integer("staff_id").references(() => staff.id),
+  category: text("category").notNull(),
+  fileName: text("file_name").notNull(),
+  objectKey: text("object_key").notNull().unique(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_trip_documents_trip").on(table.tripOperationId, table.category)]);
+
+export const expenses = sqliteTable("expenses", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").notNull().references(() => staff.id),
+  licensePlate: text("license_plate").notNull(),
+  expenseDate: text("expense_date").notNull(),
+  category: text("category").notNull(),
+  merchant: text("merchant"),
+  grossAmount: real("gross_amount").notNull().default(0),
+  vatAmount: real("vat_amount").notNull().default(0),
+  liters: real("liters"),
+  odometerKm: real("odometer_km"),
+  status: text("status").notNull().default("Eingereicht"),
+  receiptFileName: text("receipt_file_name"),
+  receiptObjectKey: text("receipt_object_key").unique(),
+  receiptContentType: text("receipt_content_type"),
+  recognitionStatus: text("recognition_status").notNull().default("Prüfen"),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [index("idx_expenses_date_status").on(table.expenseDate, table.status), index("idx_expenses_staff_date").on(table.staffId, table.expenseDate)]);
+
+export const notifications = sqliteTable("notifications", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").references(() => users.id),
+  roleScope: text("role_scope"),
+  category: text("category").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  entityType: text("entity_type"),
+  entityId: text("entity_id"),
+  severity: text("severity").notNull().default("info"),
+  readAt: text("read_at"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_notifications_scope_read").on(table.roleScope, table.readAt), index("idx_notifications_user_read").on(table.userId, table.readAt)]);
+
+export const vehicleChecklists = sqliteTable("vehicle_checklists", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").notNull().references(() => staff.id),
+  planningId: integer("planning_id").references(() => weeklyPlanning.id),
+  licensePlate: text("license_plate").notNull(),
+  phase: text("phase").notNull(),
+  checksJson: text("checks_json").notNull(),
+  damageNotes: text("damage_notes"),
+  status: text("status").notNull().default("OK"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_vehicle_checklists_plate_created").on(table.licensePlate, table.createdAt)]);
 export const vehicleFiles = sqliteTable("vehicle_files", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   staffId: integer("staff_id").references(() => staff.id),

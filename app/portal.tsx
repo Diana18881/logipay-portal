@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { PortalUser } from "../lib/auth";
 import { EmployeeDocuments, ExcelImporter, MaintenanceCenter, PasswordChange, PayrollCenter, SecurityCenter, TruckTracking } from "./advanced-panels";
+import { AnalyticsCenter, ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
 
 type Section =
   | "overview"
@@ -10,6 +11,13 @@ type Section =
   | "vehicles"
   | "tracking"
   | "planning"
+  | "operations"
+  | "tachograph"
+  | "expenses"
+  | "checklists"
+  | "notifications"
+  | "users"
+  | "analytics"
   | "concerns"
   | "documents"
   | "personnel"
@@ -31,6 +39,13 @@ type Data = {
   loginAudit: Row[];
   resetRequests: Row[];
   audit: Row[];
+  portalUsers: Row[];
+  tachograph: Row[];
+  tripOperations: Row[];
+  tripDocuments: Row[];
+  expenses: Row[];
+  notifications: Row[];
+  checklists: Row[];
   year: number;
   kw: number;
 };
@@ -61,6 +76,10 @@ const nav: { id: Section; label: string; roles: string[] }[] = [
     label: "KW-Planung",
     roles: ["management", "dispatcher", "driver"],
   },
+  { id: "operations", label: "Touren & Zustellung", roles: ["management", "dispatcher", "driver"] },
+  { id: "tachograph", label: "Tachograph", roles: ["management", "dispatcher", "driver"] },
+  { id: "expenses", label: "Belege & Kraftstoff", roles: ["management", "accountant", "driver"] },
+  { id: "checklists", label: "Fahrzeug-Check", roles: ["management", "dispatcher", "driver"] },
   {
     id: "concerns",
     label: "Fahreranliegen",
@@ -72,6 +91,9 @@ const nav: { id: Section; label: string; roles: string[] }[] = [
     roles: ["management", "accountant", "driver"],
   },
   { id: "personnel", label: "Personalakte", roles: ["management", "accountant", "driver"] },
+  { id: "notifications", label: "Benachrichtigungen", roles: ["management", "accountant", "dispatcher", "driver"] },
+  { id: "analytics", label: "Unternehmensanalyse", roles: ["management", "accountant", "dispatcher"] },
+  { id: "users", label: "Benutzerverwaltung", roles: ["management"] },
   { id: "import", label: "Excel-Import", roles: ["management", "dispatcher"] },
   { id: "security", label: "Sicherheit & Audit", roles: ["management"] },
   {
@@ -104,6 +126,13 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     loginAudit: [],
     resetRequests: [],
     audit: [],
+    portalUsers: [],
+    tachograph: [],
+    tripOperations: [],
+    tripDocuments: [],
+    expenses: [],
+    notifications: [],
+    checklists: [],
     year: 2026,
     kw: 32,
   });
@@ -117,6 +146,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
   const [notice, setNotice] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
   const [renderedAt] = useState(() => new Date().getTime());
   const load = useCallback(
     async (background = false) => {
@@ -147,12 +177,37 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     const refresh = window.setInterval(() => load(true), 15000);
     return () => { window.clearTimeout(initial); window.clearInterval(refresh); };
   }, [load]);
+  useEffect(() => {
+    async function flushOfflineQueue() {
+      const queue = JSON.parse(localStorage.getItem("logipay_offline_queue") || "[]") as Record<string, unknown>[];
+      if (!queue.length) return;
+      const remaining: Record<string, unknown>[] = [];
+      for (const payload of queue) {
+        try {
+          const response = await fetch("/api/portal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          if (!response.ok && response.status >= 500) remaining.push(payload);
+        } catch { remaining.push(payload); }
+      }
+      localStorage.setItem("logipay_offline_queue", JSON.stringify(remaining));
+      if (!remaining.length) { setNotice("Offline-Eingaben wurden synchronisiert"); await load(true); }
+    }
+    const handleOnline = () => { setOnline(true); void flushOfflineQueue(); };
+    const handleOffline = () => setOnline(false);
+    window.addEventListener("online", handleOnline); window.addEventListener("offline", handleOffline);
+    if (navigator.onLine) void flushOfflineQueue();
+    return () => { window.removeEventListener("online", handleOnline); window.removeEventListener("offline", handleOffline); };
+  }, [load]);
   async function action(payload: Record<string, unknown>) {
-    const r = await fetch("/api/portal", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    let r: Response;
+    try {
+      r = await fetch("/api/portal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    } catch {
+      const offlineSafe = new Set(["saveTripOperation", "saveChecklist", "driverConcern"]);
+      if (!offlineSafe.has(String(payload.action || ""))) { setNotice("Keine Verbindung. Diese sensible Aktion wird nicht offline gespeichert."); return; }
+      const queue = JSON.parse(localStorage.getItem("logipay_offline_queue") || "[]") as Record<string, unknown>[];
+      queue.push(payload); localStorage.setItem("logipay_offline_queue", JSON.stringify(queue.slice(-50)));
+      setNotice("Offline gespeichert — wird bei Verbindung automatisch gesendet"); return;
+    }
     if (!r.ok) {
       const e = await r.json().catch(() => ({ error: "Aktion nicht erlaubt" }));
       setNotice(e.error || "Aktion nicht erlaubt");
@@ -189,6 +244,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     const age = renderedAt - new Date(String(item.recorded_at)).getTime();
     return age > 30 * 60_000 || Number(item.speed_kph || 0) > 90;
   }).length;
+  const unreadNotificationCount = data.notifications.filter((item) => !item.read_at).length;
   const title = nav.find((n) => n.id === section)?.label;
   return (
     <main className={`app-shell role-${currentUser.role}`}>
@@ -231,9 +287,16 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                         vehicles: "▣",
                         tracking: "⌖",
                         planning: "▦",
+                        operations: "➜",
+                        tachograph: "◴",
+                        expenses: "◈",
+                        checklists: "✓",
                         concerns: "!",
                         documents: "€",
                         personnel: "▤",
+                        notifications: "●",
+                        analytics: "▥",
+                        users: "◎",
                         import: "⇧",
                         security: "⌾",
                         reports: "▥",
@@ -249,6 +312,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 ) : null}
                 {n.id === "tracking" && trackingAlertCount ? (
                   <span className="nav-counter">{trackingAlertCount}</span>
+                ) : null}
+                {n.id === "notifications" && unreadNotificationCount ? (
+                  <span className="nav-counter">{unreadNotificationCount}</span>
                 ) : null}
               </button>
             ))}
@@ -311,8 +377,8 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 ↓ Planning Report PDF
               </button>
             ) : null}
-            <div className="status-chip">
-              <span /> Datenbank verbunden
+            <div className={`status-chip ${online ? "" : "status-offline"}`}>
+              <span /> {online ? "Datenbank verbunden" : "Offline-Modus"}
             </div>
           </div>
         </header>
@@ -556,6 +622,10 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   />
                 </Card>
               )}
+              {section === "operations" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} driver={currentUser.role === "driver"} action={action} reload={load} />}
+              {section === "tachograph" && <TachographCenter rows={data.tachograph} staff={active} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} action={action} />}
+              {section === "expenses" && <ExpenseCenter rows={data.expenses} staff={active} vehicles={data.vehicles} driver={currentUser.role === "driver"} canApprove={["management", "accountant"].includes(currentUser.role)} action={action} reload={load} />}
+              {section === "checklists" && <ChecklistCenter rows={data.checklists} staff={active} vehicles={data.vehicles} planning={data.planning} driver={currentUser.role === "driver"} action={action} />}
               {section === "concerns" &&
                 (currentUser.role === "driver" ? (
                   <DriverConcerns
@@ -579,6 +649,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 </div>
               )}
               {section === "personnel" && <EmployeeDocuments rows={data.employeeDocuments} staff={data.staff} driver={currentUser.role === "driver"} reload={load} />}
+              {section === "notifications" && <NotificationsCenter rows={data.notifications} action={action} />}
+              {section === "analytics" && <AnalyticsCenter staff={data.staff} vehicles={data.vehicles} operations={data.tripOperations} expenses={data.expenses} tachograph={data.tachograph} concerns={data.concerns} checklists={data.checklists} />}
+              {section === "users" && <UserManagement rows={data.portalUsers} staff={data.staff} resetRequests={data.resetRequests} action={action} />}
               {section === "import" && <ExcelImporter staff={data.staff} vehicles={data.vehicles} planning={data.planning} year={year} kw={kw} reload={load} />}
               {section === "security" && <SecurityCenter loginAudit={data.loginAudit} resetRequests={data.resetRequests} audit={data.audit} action={action} />}
               {section === "reports" && (

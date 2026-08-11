@@ -134,6 +134,48 @@ export async function ensureDomainDatabase() {
     env.DB.prepare(
       `CREATE INDEX IF NOT EXISTS idx_truck_positions_tracker_recorded ON truck_positions(tracker_id, recorded_at)`,
     ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tachograph_records (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, license_plate TEXT NOT NULL, record_date TEXT NOT NULL, driving_minutes INTEGER NOT NULL DEFAULT 0, rest_minutes INTEGER NOT NULL DEFAULT 0, remaining_minutes INTEGER NOT NULL DEFAULT 540, infringement TEXT, source TEXT NOT NULL DEFAULT 'manual', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_tachograph_staff_date ON tachograph_records(staff_id, record_date)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS trip_operations (id INTEGER PRIMARY KEY AUTOINCREMENT, planning_id INTEGER NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'Geplant', pickup_address TEXT, delivery_address TEXT, eta TEXT, delay_reason TEXT, recipient_name TEXT, signature_name TEXT, started_at TEXT, loaded_at TEXT, delivered_at TEXT, updated_by INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_trip_operations_status_eta ON trip_operations(status, eta)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS trip_documents (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_operation_id INTEGER NOT NULL, staff_id INTEGER, category TEXT NOT NULL, file_name TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_trip_documents_trip ON trip_documents(trip_operation_id, category)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, license_plate TEXT NOT NULL, expense_date TEXT NOT NULL, category TEXT NOT NULL, merchant TEXT, gross_amount REAL NOT NULL DEFAULT 0, vat_amount REAL NOT NULL DEFAULT 0, liters REAL, odometer_km REAL, status TEXT NOT NULL DEFAULT 'Eingereicht', receipt_file_name TEXT, receipt_object_key TEXT UNIQUE, receipt_content_type TEXT, recognition_status TEXT NOT NULL DEFAULT 'Prüfen', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_expenses_date_status ON expenses(expense_date, status)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_expenses_staff_date ON expenses(staff_id, expense_date)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, role_scope TEXT, category TEXT NOT NULL, title TEXT NOT NULL, message TEXT NOT NULL, entity_type TEXT, entity_id TEXT, severity TEXT NOT NULL DEFAULT 'info', read_at TEXT, created_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_notifications_scope_read ON notifications(role_scope, read_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS vehicle_checklists (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, planning_id INTEGER, license_plate TEXT NOT NULL, phase TEXT NOT NULL, checks_json TEXT NOT NULL, damage_notes TEXT, status TEXT NOT NULL DEFAULT 'OK', created_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_vehicle_checklists_plate_created ON vehicle_checklists(license_plate, created_at)`,
+    ),
   ]);
   const planningColumns = await env.DB.prepare(
     "PRAGMA table_info(weekly_planning)",
@@ -393,5 +435,79 @@ export async function ensureDomainDatabase() {
       }
     }
   }
+  const operationsCount = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM trip_operations",
+  ).first<{ count: number }>();
+  if (!operationsCount?.count) {
+    const now = new Date().toISOString();
+    const manager = await env.DB.prepare("SELECT id FROM users WHERE role='management' ORDER BY id LIMIT 1").first<{ id: number }>();
+    const samplePlans = await env.DB.prepare("SELECT id, staff_id, driver_name, license_plate FROM weekly_planning ORDER BY id LIMIT 3").all<{ id: number; staff_id: number | null; driver_name: string | null; license_plate: string | null }>();
+    for (const [index, plan] of samplePlans.results.entries()) {
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO trip_operations (planning_id, status, pickup_address, delivery_address, eta, delay_reason, recipient_name, signature_name, started_at, loaded_at, delivered_at, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).bind(
+        plan.id,
+        index === 0 ? "Unterwegs" : index === 1 ? "Beladen" : "Geplant",
+        index === 0 ? "Amazon BER8, Berlin" : "Logistikzentrum",
+        index === 0 ? "Amazon LEJ1, Leipzig" : "Kundenadresse",
+        new Date(Date.now() + (index + 2) * 3_600_000).toISOString(),
+        "",
+        "",
+        "",
+        index < 2 ? now : null,
+        index === 1 ? now : null,
+        null,
+        manager?.id || 1,
+        now,
+        now,
+      ).run();
+    }
+    const activeStaff = await env.DB.prepare("SELECT id, full_name FROM staff WHERE status='active' ORDER BY id LIMIT 2").all<{ id: number; full_name: string }>();
+    for (const [index, person] of activeStaff.results.entries()) {
+      await env.DB.prepare(
+        "INSERT INTO tachograph_records (staff_id, license_plate, record_date, driving_minutes, rest_minutes, remaining_minutes, infringement, source, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'demo', ?, ?, ?)",
+      ).bind(person.id, index ? "KR-QG 237" : "B-CY 3603", now.slice(0, 10), index ? 455 : 310, index ? 35 : 55, index ? 85 : 230, index ? "Pause in 25 Min. erforderlich" : "", "Demo-Datensatz", now, now).run();
+    }
+    if (activeStaff.results[0]) {
+      await env.DB.prepare(
+        "INSERT INTO expenses (staff_id, license_plate, expense_date, category, merchant, gross_amount, vat_amount, liters, odometer_km, status, recognition_status, notes, created_at, updated_at) VALUES (?, 'B-CY 3603', ?, 'Kraftstoff', 'Shell Berlin', 186.40, 29.76, 102.3, 412568, 'Eingereicht', 'Prüfen', 'Demo-Beleg', ?, ?)",
+      ).bind(activeStaff.results[0].id, now.slice(0, 10), now, now).run();
+      await env.DB.prepare(
+        "INSERT INTO vehicle_checklists (staff_id, planning_id, license_plate, phase, checks_json, damage_notes, status, created_at) VALUES (?, ?, 'B-CY 3603', 'Vor Fahrt', ?, '', 'OK', ?)",
+      ).bind(activeStaff.results[0].id, samplePlans.results[0]?.id || null, JSON.stringify({ feuerloescher: true, ersteHilfe: true, warnweste: true, reifen: true, licht: true, dokumente: true }), now).run();
+    }
+    await env.DB.prepare(
+      "INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('dispatcher', 'operations', 'Demo: Fahrzeug unterwegs', 'B-CY 3603 ist auf dem Weg nach Leipzig.', 'vehicle', 'B-CY 3603', 'info', ?)",
+    ).bind(now).run();
+  }
+  const syncNow = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO trip_operations (planning_id, status, pickup_address, delivery_address, eta, delay_reason, recipient_name, signature_name, updated_by, created_at, updated_at)
+     SELECT p.id, 'Geplant', COALESCE(p.location, ''), '', NULL, '', '', '', COALESCE((SELECT id FROM users WHERE role='management' ORDER BY id LIMIT 1), 1), ?, ?
+     FROM weekly_planning p`,
+  ).bind(syncNow, syncNow).run();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at)
+       SELECT 'management', 'document', 'Dokument läuft ab', s.full_name || ': ' || d.category || ' bis ' || d.expires_at, 'employee_document', CAST(d.id AS TEXT), 'warning', ?
+       FROM employee_documents d JOIN staff s ON s.id=d.staff_id
+       WHERE d.expires_at IS NOT NULL AND d.expires_at!='' AND date(d.expires_at)<=date('now','+60 days')
+       AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.category='document' AND n.entity_type='employee_document' AND n.entity_id=CAST(d.id AS TEXT))`,
+    ).bind(syncNow),
+    env.DB.prepare(
+      `INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at)
+       SELECT 'dispatcher', 'tracking', 'Tracker ohne aktuelles Signal', t.license_plate || ': letztes Signal ' || COALESCE(t.last_connected_at, 'unbekannt'), 'tracker', CAST(t.id AS TEXT), 'warning', ?
+       FROM truck_trackers t
+       WHERE t.enabled=1 AND (t.last_connected_at IS NULL OR datetime(t.last_connected_at)<datetime('now','-30 minutes'))
+       AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.category='tracking' AND n.entity_type='tracker' AND n.entity_id=CAST(t.id AS TEXT))`,
+    ).bind(syncNow),
+    env.DB.prepare(
+      `INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at)
+       SELECT 'dispatcher', 'concern', 'Offenes Fahreranliegen', COALESCE(s.full_name,c.notes,'Fahrer') || ': ' || c.item_name, 'concern', CAST(c.id AS TEXT), 'urgent', ?
+       FROM driver_concerns c LEFT JOIN staff s ON s.id=c.staff_id
+       WHERE c.completion_status NOT IN ('Erledigt','Delivered')
+       AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.category='concern' AND n.entity_type='concern' AND n.entity_id=CAST(c.id AS TEXT))`,
+    ).bind(syncNow),
+  ]);
   await env.DB.prepare("PRAGMA optimize").run();
 }

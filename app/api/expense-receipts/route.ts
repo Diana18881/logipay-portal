@@ -1,0 +1,47 @@
+import { env } from "cloudflare:workers";
+import { requirePortalUser } from "../../../lib/auth";
+import { ensureDomainDatabase } from "../../../lib/domain";
+
+const categories = new Set(["Kraftstoff", "AdBlue", "Maut", "Parken", "Waschanlage", "Reparatur", "Hotel", "Sonstiges"]);
+
+export async function POST(request: Request) {
+  const user = await requirePortalUser(["management", "accountant", "driver"]);
+  await ensureDomainDatabase();
+  const form = await request.formData();
+  const file = form.get("file");
+  let staffId = Number(form.get("staffId") || 0);
+  const licensePlate = String(form.get("licensePlate") || "").trim();
+  const category = String(form.get("category") || "");
+  if (user.role === "driver") {
+    const own = await env.DB.prepare("SELECT id FROM staff WHERE user_id=? AND status='active'").bind(user.id).first<{ id: number }>();
+    staffId = own?.id || 0;
+    const assigned = await env.DB.prepare("SELECT 1 FROM weekly_planning WHERE staff_id=? AND license_plate=? LIMIT 1").bind(staffId, licensePlate).first();
+    if (!assigned) return Response.json({ error: "Fahrzeug ist Ihnen nicht zugeteilt" }, { status: 403 });
+  }
+  if (!(file instanceof File) || !staffId || !licensePlate || !categories.has(category))
+    return Response.json({ error: "Fahrer, Kennzeichen, Kategorie und Beleg sind erforderlich" }, { status: 400 });
+  if (!file.type.startsWith("image/") && file.type !== "application/pdf")
+    return Response.json({ error: "Nur Foto oder PDF" }, { status: 400 });
+  if (file.size > 15 * 1024 * 1024)
+    return Response.json({ error: "Maximal 15 MB" }, { status: 400 });
+
+  const fileDate = file.name.match(/(20\d{2})[-_.](\d{2})[-_.](\d{2})/);
+  const fileAmount = file.name.match(/(\d{1,5}[,.]\d{2})(?:\s?EUR|\s?EURO|\s?€)/i);
+  const expenseDate = String(form.get("expenseDate") || "") || (fileDate ? `${fileDate[1]}-${fileDate[2]}-${fileDate[3]}` : new Date().toISOString().slice(0, 10));
+  const grossAmount = Number(String(form.get("grossAmount") || fileAmount?.[1] || "0").replace(",", "."));
+  const vatAmount = Number(String(form.get("vatAmount") || "0").replace(",", "."));
+  if (!Number.isFinite(grossAmount) || grossAmount < 0 || !Number.isFinite(vatAmount) || vatAmount < 0)
+    return Response.json({ error: "Betrag oder MwSt. ist ungültig" }, { status: 400 });
+  const key = `belege/${staffId}/${expenseDate}/${crypto.randomUUID()}`;
+  await env.DOCUMENTS.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type }, customMetadata: { originalName: file.name } });
+  const now = new Date().toISOString();
+  const recognitionStatus = fileDate || fileAmount ? "Automatisch vorerfasst" : "Prüfen";
+  const result = await env.DB.prepare(
+    "INSERT INTO expenses (staff_id, license_plate, expense_date, category, merchant, gross_amount, vat_amount, liters, odometer_km, status, receipt_file_name, receipt_object_key, receipt_content_type, recognition_status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Eingereicht', ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(staffId, licensePlate, expenseDate, category, String(form.get("merchant") || ""), grossAmount, vatAmount, form.get("liters") ? Number(form.get("liters")) : null, form.get("odometerKm") ? Number(form.get("odometerKm")) : null, file.name, key, file.type, recognitionStatus, String(form.get("notes") || ""), now, now).run();
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('accountant', 'expense', 'Neuer Beleg eingereicht', ?, 'expense', ?, 'info', ?)").bind(`${licensePlate}: ${grossAmount.toFixed(2)} € · ${category}`, String(result.meta.last_row_id), now),
+    env.DB.prepare("INSERT INTO audit_log (user_id, action, entity_id, details, created_at) VALUES (?, 'uploadExpenseReceipt', ?, ?, ?)").bind(user.id, String(result.meta.last_row_id), JSON.stringify({ staffId, licensePlate, expenseDate, category, grossAmount, recognitionStatus }), now),
+  ]);
+  return Response.json({ ok: true, id: result.meta.last_row_id, recognitionStatus });
+}

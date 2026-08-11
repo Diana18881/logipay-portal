@@ -65,6 +65,7 @@ button {
   display: flex;
   flex-direction: column;
 }
+.sidebar nav { min-height: 0; overflow-y: auto; padding-right: 3px; }
 .brand {
   display: flex;
   align-items: center;
@@ -344,6 +345,8 @@ nav button em {
   box-shadow: 0 0 0 4px #e4f7f3;
   margin-right: 6px;
 }
+.status-chip.status-offline { color: #aa5d2d; }
+.status-chip.status-offline span { background: #e5963c; box-shadow: 0 0 0 4px #fff1de; }
 .menu-toggle {
   display: none;
   background: transparent;
@@ -1321,12 +1324,78 @@ details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padd
 .tracking-api-note code { color: #17364c; font-weight: 700; }
 .tracking-check { display: flex !important; grid-auto-flow: column; justify-content: start; align-items: center; align-self: center; }
 .tracking-check input { width: 16px !important; min-height: 16px !important; }
+.admin-feature-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.admin-feature-grid > div { min-height: 120px; padding: 18px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 11px; background: linear-gradient(145deg,#fff,#f5faf9); }
+.admin-feature-grid strong { color: var(--navy); font-size: 12px; }
+.admin-feature-grid span { margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.55; }
+.user-admin-form { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.reset-password-panel { border-color: #f0d7a8; }
+.notification-list { display: grid; gap: 8px; padding: 16px 20px 22px; }
+.notification-card { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 13px 14px; border: 1px solid var(--line); border-left: 4px solid #3c96c5; border-radius: 9px; background: #fff; }
+.notification-card.severity-warning { border-left-color: #e1a43b; background: #fffcf5; }
+.notification-card.severity-urgent { border-left-color: #d65a45; background: #fff8f6; }
+.notification-read { opacity: .65; }
+.notification-symbol { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 50%; background: #e9f3f7; color: #277da8; font-weight: 800; }
+.notification-card strong, .notification-card small { display: block; }
+.notification-card strong { color: var(--navy); font-size: 10px; }
+.notification-card p { margin: 5px 0; color: #586b79; font-size: 9px; }
+.notification-card small { color: #95a0a9; font-size: 8px; }
+.notification-card button { padding: 7px 9px; border-radius: 6px; background: #eef7f5; color: #167d70; font-size: 8px; }
+.tachograph-summary, .expense-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.expense-summary { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.tachograph-summary > div, .expense-summary > div { min-height: 90px; padding: 17px; display: flex; flex-direction: column; justify-content: space-between; border-radius: 11px; border: 1px solid var(--line); background: #fff; box-shadow: 0 7px 20px #102a430d; }
+.tachograph-summary span, .expense-summary span { color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .6px; }
+.tachograph-summary strong, .expense-summary strong { color: var(--navy); font-size: 20px; }
+.trip-board { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.trip-operation { padding: 16px; border: 1px solid var(--line); border-top: 4px solid #9aa8b2; border-radius: 11px; background: #fff; box-shadow: 0 8px 24px #102a4310; }
+.trip-operation.trip-status-gestartet, .trip-operation.trip-status-beladen, .trip-operation.trip-status-unterwegs { border-top-color: #2799c9; }
+.trip-operation.trip-status-zugestellt { border-top-color: #2baa92; }
+.trip-operation.trip-status-problem { border-top-color: #d95b45; }
+.trip-operation header { display: flex; align-items: start; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.trip-operation header strong, .trip-operation header span { display: block; }
+.trip-operation header strong { color: var(--navy); font-size: 13px; }
+.trip-operation header span { margin-top: 4px; color: var(--muted); font-size: 8px; }
+.trip-operation header b { padding: 5px 8px; border-radius: 12px; background: #eef4f6; color: #526a78; font-size: 8px; }
+.trip-operation p { display: grid; grid-template-columns: 48px 1fr; gap: 8px; margin: 7px 0; color: #394f5e; font-size: 9px; }
+.trip-operation p span { color: var(--muted); }
+.trip-operation .edit-action { margin-top: 12px; }
+.trip-problem { margin-top: 10px; padding: 8px 10px; border-radius: 7px; background: #fff0ed; color: #b94936; font-size: 8px; }
+.trip-operation-form { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.trip-upload-form { border-top: 1px dashed var(--line); border-bottom: 0; }
+.expense-form { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.ocr-note { margin: 0 20px 18px; padding: 13px; display: flex; gap: 15px; border-radius: 8px; background: #eef7fb; color: #547180; font-size: 9px; line-height: 1.5; }
+.ocr-note strong { color: #247da5; white-space: nowrap; }
+.checklist-form { padding: 18px 20px; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.checklist-form select, .checklist-form textarea { width: 100%; padding: 10px 11px; border: 1px solid #dfe6eb; border-radius: 7px; background: #fff; color: #334252; font-size: 10px; }
+.checklist-form fieldset { grid-column: 1 / -1; padding: 14px; border: 1px solid var(--line); border-radius: 9px; }
+.checklist-form legend { padding: 0 6px; color: #526777; font-size: 9px; font-weight: 700; }
+.checklist-form fieldset > div { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
+.checklist-form fieldset label { padding: 10px; display: flex; align-items: center; gap: 8px; border-radius: 7px; background: #f5f8f9; color: #425766; font-size: 9px; }
+.checklist-form textarea { grid-column: span 3; min-height: 70px; resize: vertical; }
+.analytics-kpis { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 10px; }
+.analytics-kpis > div { min-height: 100px; padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(150deg,#fff,#f2f8f7); }
+.analytics-kpis span, .analytics-kpis strong { display: block; }
+.analytics-kpis span { color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .5px; }
+.analytics-kpis strong { margin-top: 18px; color: var(--navy); font-size: 18px; }
+.analytics-grid { display: grid; grid-template-columns: 1.4fr .8fr; gap: 16px; }
+.company-bars { display: grid; gap: 14px; padding: 18px 20px 24px; }
+.company-bars > div { display: grid; grid-template-columns: 110px 1fr 130px; align-items: center; gap: 12px; color: #516574; font-size: 9px; }
+.company-bars > div > div { height: 9px; border-radius: 6px; background: #edf2f4; overflow: hidden; }
+.company-bars i { height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg,#1ea895,#4ac4b4); }
+.company-bars strong { font-size: 8px; text-align: right; }
+.quality-list { padding: 8px 20px 20px; }
+.quality-list p { margin: 0; padding: 13px 0; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
+.quality-list strong { width: 35px; color: var(--mint); font-size: 20px; }
+.quality-list span { color: #617483; font-size: 9px; }
 
 @media (max-width: 1100px) {
   .payroll-form { grid-template-columns: repeat(3,minmax(130px,1fr)); }
   .security-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .tracking-summary { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .tracking-layout { grid-template-columns: 260px minmax(0,1fr); }
+  .admin-feature-grid, .analytics-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .trip-board { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .expense-form, .trip-operation-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 720px) {
   .payroll-form, .advanced-form, .import-toolbar { grid-template-columns: 1fr; }
@@ -1339,6 +1408,15 @@ details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padd
   .tracking-detail-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .tracking-detail-grid > div:nth-child(3n) { border-right: 1px solid var(--line); }
   .tracking-detail-grid > div:nth-child(2n) { border-right: 0; }
+  .admin-feature-grid, .tachograph-summary, .expense-summary, .analytics-kpis, .trip-board, .analytics-grid { grid-template-columns: 1fr; }
+  .user-admin-form, .expense-form, .trip-operation-form, .checklist-form { grid-template-columns: 1fr; }
+  .checklist-form fieldset > div { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .checklist-form textarea { grid-column: 1; }
+  .company-bars > div { grid-template-columns: 90px 1fr; }
+  .company-bars strong { grid-column: 2; text-align: left; }
+  .notification-card { grid-template-columns: 28px minmax(0,1fr); }
+  .notification-card > button, .notification-card > .ok-chip { grid-column: 2; justify-self: start; }
+  .ocr-note { display: grid; }
 }
 .backdrop {
   display: none;

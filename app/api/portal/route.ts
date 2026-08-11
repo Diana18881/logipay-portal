@@ -138,6 +138,39 @@ export async function GET(request: Request) {
   const audit = ["management", "accountant"].includes(user.role)
     ? await env.DB.prepare("SELECT a.*, u.full_name AS user_name FROM audit_log a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 150").all()
     : { results: [] };
+  const portalUsers = user.role === "management"
+    ? await env.DB.prepare("SELECT u.id, u.email, u.full_name, u.role, u.must_change_password, u.active, u.failed_attempts, u.locked_until, u.two_factor_enabled, s.id AS staff_id FROM users u LEFT JOIN staff s ON s.user_id=u.id ORDER BY u.active DESC, u.role, u.full_name").all()
+    : { results: [] };
+  const tachograph = user.role === "accountant"
+    ? { results: [] }
+    : user.role === "driver"
+      ? await env.DB.prepare("SELECT t.*, s.full_name FROM tachograph_records t JOIN staff s ON s.id=t.staff_id WHERE t.staff_id=? ORDER BY t.record_date DESC, t.id DESC LIMIT 120").bind(driverStaffId || -1).all()
+      : await env.DB.prepare("SELECT t.*, s.full_name FROM tachograph_records t JOIN staff s ON s.id=t.staff_id ORDER BY t.record_date DESC, t.id DESC LIMIT 300").all();
+  const tripOperationsSql = `SELECT o.*, p.planning_year, p.calendar_week, p.company, p.staff_id, p.driver_name, p.location, p.license_plate, p.block_id, p.start_time
+    FROM trip_operations o JOIN weekly_planning p ON p.id=o.planning_id`;
+  const tripOperations = user.role === "accountant"
+    ? { results: [] }
+    : user.role === "driver"
+      ? await env.DB.prepare(`${tripOperationsSql} WHERE p.planning_year=? AND p.calendar_week=? AND (p.staff_id=? OR p.driver_name=?) ORDER BY p.start_time, p.company`).bind(year, kw, driverStaffId || -1, user.fullName).all()
+      : await env.DB.prepare(`${tripOperationsSql} WHERE p.planning_year=? AND p.calendar_week=? ORDER BY p.start_time, p.company`).bind(year, kw).all();
+  const tripDocuments = user.role === "accountant"
+    ? { results: [] }
+    : user.role === "driver"
+      ? await env.DB.prepare("SELECT d.* FROM trip_documents d JOIN trip_operations o ON o.id=d.trip_operation_id JOIN weekly_planning p ON p.id=o.planning_id WHERE p.staff_id=? OR p.driver_name=? ORDER BY d.created_at DESC").bind(driverStaffId || -1, user.fullName).all()
+      : await env.DB.prepare("SELECT d.*, p.license_plate, p.driver_name FROM trip_documents d JOIN trip_operations o ON o.id=d.trip_operation_id JOIN weekly_planning p ON p.id=o.planning_id ORDER BY d.created_at DESC LIMIT 300").all();
+  const expenses = user.role === "driver"
+    ? await env.DB.prepare("SELECT e.*, s.full_name FROM expenses e JOIN staff s ON s.id=e.staff_id WHERE e.staff_id=? ORDER BY e.expense_date DESC, e.id DESC").bind(driverStaffId || -1).all()
+    : await env.DB.prepare("SELECT e.*, s.full_name FROM expenses e JOIN staff s ON s.id=e.staff_id ORDER BY e.expense_date DESC, e.id DESC LIMIT 500").all();
+  const notifications = user.role === "management"
+    ? await env.DB.prepare("SELECT * FROM notifications ORDER BY read_at IS NOT NULL, created_at DESC LIMIT 250").all()
+    : await env.DB.prepare(
+        "SELECT * FROM notifications WHERE user_id=? OR role_scope=? OR role_scope='all' ORDER BY read_at IS NOT NULL, created_at DESC LIMIT 150",
+      ).bind(user.id, user.role).all();
+  const checklists = user.role === "accountant"
+    ? { results: [] }
+    : user.role === "driver"
+      ? await env.DB.prepare("SELECT c.*, s.full_name FROM vehicle_checklists c JOIN staff s ON s.id=c.staff_id WHERE c.staff_id=? ORDER BY c.created_at DESC LIMIT 120").bind(driverStaffId || -1).all()
+      : await env.DB.prepare("SELECT c.*, s.full_name FROM vehicle_checklists c JOIN staff s ON s.id=c.staff_id ORDER BY c.created_at DESC LIMIT 300").all();
   return json({
     user,
     year,
@@ -155,6 +188,13 @@ export async function GET(request: Request) {
     loginAudit: loginAudit.results,
     resetRequests: resetRequests.results,
     audit: audit.results,
+    portalUsers: portalUsers.results,
+    tachograph: tachograph.results,
+    tripOperations: tripOperations.results,
+    tripDocuments: tripDocuments.results,
+    expenses: expenses.results,
+    notifications: notifications.results,
+    checklists: checklists.results,
   });
 }
 
@@ -165,7 +205,120 @@ export async function POST(request: Request) {
   const action = String(body.action || "");
   const now = new Date().toISOString();
   let auditDetails: Record<string, unknown> = {};
-  if (action === "addStaff" && user.role === "management") {
+  if (action === "addPortalUser" && user.role === "management") {
+    const email = String(body.email || "").trim().toLowerCase();
+    const fullName = String(body.fullName || "").trim();
+    const role = String(body.role || "");
+    const password = String(body.password || "");
+    if (!email || !fullName || !["management", "accountant", "dispatcher", "driver"].includes(role))
+      return json({ error: "Name, E-Mail und gültige Rolle sind erforderlich" }, 400);
+    if (password.length < 10 || !/[A-ZА-Я]/.test(password) || !/[0-9]/.test(password))
+      return json({ error: "Startpasswort: mindestens 10 Zeichen, Großbuchstabe und Zahl" }, 400);
+    const exists = await env.DB.prepare("SELECT id FROM users WHERE email=?").bind(email).first();
+    if (exists) return json({ error: "Diese E-Mail ist bereits registriert" }, 409);
+    const created = await env.DB.prepare(
+      "INSERT INTO users (email, full_name, role, password_hash, must_change_password, active, failed_attempts) VALUES (?, ?, ?, ?, 1, 1, 0)",
+    ).bind(email, fullName, role, await hashPassword(password)).run();
+    const createdId = Number(created.meta.last_row_id);
+    if (role === "driver" && Number(body.staffId || 0))
+      await env.DB.prepare("UPDATE staff SET user_id=?, updated_at=? WHERE id=? AND status='active'").bind(createdId, now, Number(body.staffId)).run();
+    auditDetails = { oldValue: null, newValue: { id: createdId, email, fullName, role, staffId: body.staffId || null } };
+  } else if (action === "updatePortalUser" && user.role === "management") {
+    const targetId = Number(body.id);
+    if (!targetId) return json({ error: "Benutzer fehlt" }, 400);
+    if (targetId === user.id && Number(body.active) === 0)
+      return json({ error: "Der eigene Management-Zugang kann nicht deaktiviert werden" }, 409);
+    const oldValue = await env.DB.prepare("SELECT id, email, full_name, role, active FROM users WHERE id=?").bind(targetId).first();
+    if (!oldValue) return json({ error: "Benutzer nicht gefunden" }, 404);
+    const role = String(body.role || "");
+    if (!["management", "accountant", "dispatcher", "driver"].includes(role))
+      return json({ error: "Ungültige Rolle" }, 400);
+    await env.DB.prepare("UPDATE users SET email=?, full_name=?, role=?, active=? WHERE id=?")
+      .bind(String(body.email || "").trim().toLowerCase(), String(body.fullName || "").trim(), role, Number(body.active) ? 1 : 0, targetId).run();
+    if (role === "driver" && Number(body.staffId || 0))
+      await env.DB.prepare("UPDATE staff SET user_id=?, updated_at=? WHERE id=? AND status='active'").bind(targetId, now, Number(body.staffId)).run();
+    auditDetails = { oldValue, newValue: { email: body.email, fullName: body.fullName, role, active: Number(body.active) ? 1 : 0, staffId: body.staffId || null } };
+  } else if (action === "adminResetPassword" && user.role === "management") {
+    const targetId = Number(body.id);
+    const password = String(body.password || "");
+    if (!targetId || password.length < 10 || !/[A-ZА-Я]/.test(password) || !/[0-9]/.test(password))
+      return json({ error: "Neues Startpasswort: mindestens 10 Zeichen, Großbuchstabe und Zahl" }, 400);
+    await env.DB.prepare("UPDATE users SET password_hash=?, must_change_password=1, failed_attempts=0, locked_until=NULL, active=1 WHERE id=?")
+      .bind(await hashPassword(password), targetId).run();
+    await env.DB.prepare("UPDATE password_reset_requests SET status='resolved', resolved_at=? WHERE email=(SELECT email FROM users WHERE id=?) AND status='open'").bind(now, targetId).run();
+    auditDetails = { oldValue: "password-hidden", newValue: { targetId, mustChangePassword: true, unlocked: true } };
+  } else if (action === "saveTachograph" && ["management", "dispatcher"].includes(user.role)) {
+    const staffId = Number(body.staffId);
+    const drivingMinutes = Math.max(0, Number(body.drivingMinutes || 0));
+    const restMinutes = Math.max(0, Number(body.restMinutes || 0));
+    const remainingMinutes = Math.max(0, Number(body.remainingMinutes || 0));
+    if (!staffId || !body.licensePlate || !body.recordDate)
+      return json({ error: "Fahrer, Kennzeichen und Datum sind erforderlich" }, 400);
+    await env.DB.prepare("INSERT INTO tachograph_records (staff_id, license_plate, record_date, driving_minutes, rest_minutes, remaining_minutes, infringement, source, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(staffId, body.licensePlate, body.recordDate, drivingMinutes, restMinutes, remainingMinutes, body.infringement || "", body.source || "manual", body.notes || "", now, now).run();
+    if (remainingMinutes <= 90 || body.infringement)
+      await env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('dispatcher', 'tachograph', 'Tachograph-Warnung', ?, 'staff', ?, 'warning', ?)")
+        .bind(`${body.licensePlate}: ${body.infringement || `nur noch ${remainingMinutes} Minuten Fahrzeit`}`, String(staffId), now).run();
+    auditDetails = { oldValue: null, newValue: { staffId, licensePlate: body.licensePlate, recordDate: body.recordDate, drivingMinutes, restMinutes, remainingMinutes, infringement: body.infringement } };
+  } else if (action === "saveTripOperation" && ["management", "dispatcher", "driver"].includes(user.role)) {
+    const planningId = Number(body.planningId);
+    const status = String(body.status || "Geplant");
+    const allowedStatuses = ["Geplant", "Gestartet", "Beladen", "Unterwegs", "Zugestellt", "Problem"];
+    if (!planningId || !allowedStatuses.includes(status)) return json({ error: "Ungültiger Einsatzstatus" }, 400);
+    const plan = await env.DB.prepare("SELECT p.*, s.user_id FROM weekly_planning p LEFT JOIN staff s ON s.id=p.staff_id WHERE p.id=?").bind(planningId).first<Record<string, string | number | null>>();
+    if (!plan) return json({ error: "Planung nicht gefunden" }, 404);
+    if (user.role === "driver" && Number(plan.user_id) !== user.id && String(plan.driver_name) !== user.fullName)
+      return json({ error: "Dieser Einsatz ist Ihnen nicht zugeteilt" }, 403);
+    const startedAt = ["Gestartet", "Beladen", "Unterwegs", "Zugestellt", "Problem"].includes(status) ? now : null;
+    const loadedAt = ["Beladen", "Unterwegs", "Zugestellt"].includes(status) ? now : null;
+    const deliveredAt = status === "Zugestellt" ? now : null;
+    const oldValue = await env.DB.prepare("SELECT * FROM trip_operations WHERE planning_id=?").bind(planningId).first();
+    await env.DB.prepare(`INSERT INTO trip_operations (planning_id, status, pickup_address, delivery_address, eta, delay_reason, recipient_name, signature_name, started_at, loaded_at, delivered_at, updated_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(planning_id) DO UPDATE SET status=excluded.status, pickup_address=excluded.pickup_address, delivery_address=excluded.delivery_address, eta=excluded.eta, delay_reason=excluded.delay_reason, recipient_name=excluded.recipient_name, signature_name=excluded.signature_name, started_at=COALESCE(trip_operations.started_at, excluded.started_at), loaded_at=COALESCE(trip_operations.loaded_at, excluded.loaded_at), delivered_at=COALESCE(trip_operations.delivered_at, excluded.delivered_at), updated_by=excluded.updated_by, updated_at=excluded.updated_at`)
+      .bind(planningId, status, body.pickupAddress || "", body.deliveryAddress || "", body.eta || null, body.delayReason || "", body.recipientName || "", body.signatureName || "", startedAt, loadedAt, deliveredAt, user.id, now, now).run();
+    if (status === "Problem" || body.delayReason)
+      await env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('dispatcher', 'trip', 'Einsatz benötigt Aufmerksamkeit', ?, 'planning', ?, 'urgent', ?)")
+        .bind(`${plan.license_plate || "Ohne Kennzeichen"}: ${body.delayReason || "Problem gemeldet"}`, String(planningId), now).run();
+    auditDetails = { oldValue, newValue: { planningId, status, pickupAddress: body.pickupAddress, deliveryAddress: body.deliveryAddress, eta: body.eta, delayReason: body.delayReason, recipientName: body.recipientName } };
+  } else if (action === "updateExpenseStatus" && ["management", "accountant"].includes(user.role)) {
+    const status = String(body.status || "");
+    if (!["Eingereicht", "Prüfung", "Freigegeben", "Abgelehnt", "Exportiert"].includes(status))
+      return json({ error: "Ungültiger Belegstatus" }, 400);
+    const oldValue = await env.DB.prepare("SELECT * FROM expenses WHERE id=?").bind(body.id).first();
+    await env.DB.prepare("UPDATE expenses SET status=?, recognition_status=?, updated_at=? WHERE id=?")
+      .bind(status, body.recognitionStatus || "Geprüft", now, body.id).run();
+    auditDetails = { oldValue, newValue: { status, recognitionStatus: body.recognitionStatus || "Geprüft" } };
+  } else if (action === "saveChecklist" && ["management", "dispatcher", "driver"].includes(user.role)) {
+    let staffId = Number(body.staffId || 0);
+    if (user.role === "driver") {
+      const own = await env.DB.prepare("SELECT id FROM staff WHERE user_id=? AND status='active'").bind(user.id).first<{ id: number }>();
+      staffId = own?.id || 0;
+    }
+    const licensePlate = String(body.licensePlate || "");
+    if (!staffId || !licensePlate || !["Vor Fahrt", "Nach Fahrt"].includes(String(body.phase)))
+      return json({ error: "Fahrer, Kennzeichen und Phase sind erforderlich" }, 400);
+    if (user.role === "driver") {
+      const assigned = await env.DB.prepare("SELECT 1 FROM weekly_planning WHERE staff_id=? AND license_plate=? LIMIT 1").bind(staffId, licensePlate).first();
+      if (!assigned) return json({ error: "Fahrzeug ist Ihnen nicht zugeteilt" }, 403);
+    }
+    let checks: Record<string, boolean> = {};
+    try { checks = JSON.parse(String(body.checksJson || "{}")) as Record<string, boolean>; } catch { return json({ error: "Checkliste ist ungültig" }, 400); }
+    const status = Object.values(checks).every(Boolean) && !String(body.damageNotes || "").trim() ? "OK" : "Mangel";
+    const result = await env.DB.prepare("INSERT INTO vehicle_checklists (staff_id, planning_id, license_plate, phase, checks_json, damage_notes, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(staffId, body.planningId || null, licensePlate, body.phase, JSON.stringify(checks), body.damageNotes || "", status, now).run();
+    if (status === "Mangel")
+      await env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('dispatcher', 'checklist', 'Fahrzeugmangel gemeldet', ?, 'checklist', ?, 'urgent', ?)")
+        .bind(`${licensePlate}: ${body.damageNotes || "Checkliste nicht vollständig"}`, String(result.meta.last_row_id), now).run();
+    auditDetails = { oldValue: null, newValue: { staffId, licensePlate, phase: body.phase, status, checks, damageNotes: body.damageNotes } };
+  } else if (action === "markNotificationRead") {
+    if (user.role === "management")
+      await env.DB.prepare("UPDATE notifications SET read_at=? WHERE id=?").bind(now, body.id).run();
+    else
+      await env.DB.prepare("UPDATE notifications SET read_at=? WHERE id=? AND (user_id=? OR role_scope=? OR role_scope='all')")
+        .bind(now, body.id, user.id, user.role).run();
+    auditDetails = { oldValue: null, newValue: { notificationId: body.id, readAt: now } };
+  } else if (action === "addStaff" && user.role === "management") {
     let userId: number | null = null;
     if (body.loginEmail && body.loginPassword) {
       const created = await env.DB.prepare(
@@ -369,7 +522,7 @@ export async function POST(request: Request) {
         },
         409,
       );
-    await env.DB.prepare(
+    const createdPlan = await env.DB.prepare(
       "INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, work_days, start_time, block_id, status, comments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
       .bind(
@@ -389,6 +542,8 @@ export async function POST(request: Request) {
         now,
       )
       .run();
+    await env.DB.prepare("INSERT INTO trip_operations (planning_id, status, pickup_address, delivery_address, eta, delay_reason, recipient_name, signature_name, updated_by, created_at, updated_at) VALUES (?, 'Geplant', ?, '', NULL, '', '', '', ?, ?, ?)")
+      .bind(Number(createdPlan.meta.last_row_id), body.location || "", user.id, now, now).run();
   } else if (
     action === "updatePlanning" &&
     ["management", "dispatcher"].includes(user.role)
@@ -481,6 +636,12 @@ export async function POST(request: Request) {
     )
       .bind(body.id)
       .first();
+    const operation = await env.DB.prepare("SELECT id FROM trip_operations WHERE planning_id=?").bind(body.id).first<{ id: number }>();
+    if (operation) {
+      const documents = await env.DB.prepare("SELECT COUNT(*) AS count FROM trip_documents WHERE trip_operation_id=?").bind(operation.id).first<{ count: number }>();
+      if (documents?.count) return json({ error: "Einsatz hat CMR/Fotos und kann nur archiviert werden" }, 409);
+      await env.DB.prepare("DELETE FROM trip_operations WHERE id=?").bind(operation.id).run();
+    }
     await env.DB.prepare("DELETE FROM weekly_planning WHERE id=?")
       .bind(body.id)
       .run();
@@ -506,6 +667,9 @@ export async function POST(request: Request) {
     )
       .bind(targetYear, targetWeek, now, now, sourceYear, sourceWeek)
       .run();
+    const copiedPlans = await env.DB.prepare("SELECT id, location FROM weekly_planning WHERE planning_year=? AND calendar_week=?").bind(targetYear, targetWeek).all<{ id: number; location: string | null }>();
+    if (copiedPlans.results.length)
+      await env.DB.batch(copiedPlans.results.map((plan) => env.DB.prepare("INSERT OR IGNORE INTO trip_operations (planning_id, status, pickup_address, delivery_address, eta, delay_reason, recipient_name, signature_name, updated_by, created_at, updated_at) VALUES (?, 'Geplant', ?, '', NULL, '', '', '', ?, ?, ?)").bind(plan.id, plan.location || "", user.id, now, now)));
   } else if (action === "driverConcern" && user.role === "driver") {
     const person = await env.DB.prepare(
       "SELECT id, full_name, company, location FROM staff WHERE user_id=? AND status='active'",
@@ -523,7 +687,7 @@ export async function POST(request: Request) {
     )
       .bind(body.planningYear, body.calendarWeek, person.id, person.full_name)
       .first<{ license_plate: string }>();
-    await env.DB.prepare(
+    const concern = await env.DB.prepare(
       "INSERT INTO driver_concerns (staff_id, period, company, base, truck_number, item_name, purchase_status, completion_status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'Angefragt', 'Neu', ?, ?, ?)",
     )
       .bind(
@@ -538,6 +702,8 @@ export async function POST(request: Request) {
         now,
       )
       .run();
+    await env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('dispatcher', 'concern', 'Neues Fahreranliegen', ?, 'concern', ?, 'urgent', ?)")
+      .bind(`${person.full_name} · ${assignment?.license_plate || body.truckNumber || "ohne Kennzeichen"}: ${body.itemName}`, String(concern.meta.last_row_id), now).run();
   } else if (
     action === "addConcern" &&
     ["management", "dispatcher"].includes(user.role)
