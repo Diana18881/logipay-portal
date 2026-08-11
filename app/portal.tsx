@@ -78,7 +78,7 @@ const nav: { id: Section; label: string; roles: string[] }[] = [
   },
   { id: "operations", label: "Touren & Zustellung", roles: ["management", "dispatcher", "driver"] },
   { id: "tachograph", label: "Tachograph", roles: ["management", "dispatcher", "driver"] },
-  { id: "expenses", label: "Belege & Kraftstoff", roles: ["management", "accountant", "driver"] },
+  { id: "expenses", label: "Auslagen & Erstattungen", roles: ["management", "accountant", "driver"] },
   { id: "checklists", label: "Fahrzeug-Check", roles: ["management", "dispatcher", "driver"] },
   {
     id: "concerns",

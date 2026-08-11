@@ -283,12 +283,39 @@ export async function POST(request: Request) {
     auditDetails = { oldValue, newValue: { planningId, status, pickupAddress: body.pickupAddress, deliveryAddress: body.deliveryAddress, eta: body.eta, delayReason: body.delayReason, recipientName: body.recipientName } };
   } else if (action === "updateExpenseStatus" && ["management", "accountant"].includes(user.role)) {
     const status = String(body.status || "");
-    if (!["Eingereicht", "Prüfung", "Freigegeben", "Abgelehnt", "Exportiert"].includes(status))
+    if (!["Eingereicht", "In Prüfung", "Freigegeben", "Zur Zahlung", "Erstattet", "Abgelehnt", "Exportiert"].includes(status))
       return json({ error: "Ungültiger Belegstatus" }, 400);
-    const oldValue = await env.DB.prepare("SELECT * FROM expenses WHERE id=?").bind(body.id).first();
-    await env.DB.prepare("UPDATE expenses SET status=?, recognition_status=?, updated_at=? WHERE id=?")
-      .bind(status, body.recognitionStatus || "Geprüft", now, body.id).run();
-    auditDetails = { oldValue, newValue: { status, recognitionStatus: body.recognitionStatus || "Geprüft" } };
+    const oldValue = await env.DB.prepare("SELECT * FROM expenses WHERE id=?").bind(body.id).first<Record<string, string | number | null>>();
+    if (!oldValue) return json({ error: "Ausgabe nicht gefunden" }, 404);
+    const grossAmount = Number(body.grossAmount ?? oldValue.gross_amount ?? 0);
+    const vatAmount = Number(body.vatAmount ?? oldValue.vat_amount ?? 0);
+    const reimbursable = String(body.reimbursable ?? oldValue.reimbursable ?? "0") === "1";
+    const reimbursementAmount = reimbursable ? Number(body.reimbursementAmount ?? oldValue.reimbursement_amount ?? grossAmount) : 0;
+    if (!Number.isFinite(grossAmount) || grossAmount <= 0 || !Number.isFinite(vatAmount) || vatAmount < 0 || vatAmount > grossAmount)
+      return json({ error: "Brutto oder MwSt. ist ungültig" }, 400);
+    if (!Number.isFinite(reimbursementAmount) || reimbursementAmount < 0 || reimbursementAmount > grossAmount)
+      return json({ error: "Erstattungsbetrag muss zwischen 0 und Brutto liegen" }, 400);
+    const reviewedAt = status === "Eingereicht" ? null : now;
+    const paidAt = status === "Erstattet"
+      ? String(body.paidAt || oldValue.paid_at || now)
+      : status === "Exportiert"
+        ? oldValue.paid_at
+        : null;
+    const recognitionStatus = status === "Eingereicht" ? String(body.recognitionStatus || oldValue.recognition_status || "Prüfen") : "Geprüft";
+    await env.DB.prepare(`UPDATE expenses SET merchant=?, gross_amount=?, vat_amount=?, payment_method=?, reimbursable=?, reimbursement_amount=?, amazon_site=?, block_id=?, tour_reference=?, cost_center=?, receipt_number=?, status=?, recognition_status=?, payment_reference=?, reviewed_by=?, reviewed_at=?, paid_at=?, rejection_reason=?, notes=?, updated_at=? WHERE id=?`)
+      .bind(body.merchant ?? oldValue.merchant ?? "", grossAmount, vatAmount, body.paymentMethod ?? oldValue.payment_method ?? "Privatauslage", reimbursable ? 1 : 0, reimbursementAmount, body.amazonSite ?? oldValue.amazon_site ?? "", body.blockId ?? oldValue.block_id ?? "", body.tourReference ?? oldValue.tour_reference ?? "", body.costCenter ?? oldValue.cost_center ?? "", body.receiptNumber ?? oldValue.receipt_number ?? "", status, recognitionStatus, body.paymentReference ?? oldValue.payment_reference ?? "", user.id, reviewedAt, paidAt, body.rejectionReason ?? oldValue.rejection_reason ?? "", body.notes ?? oldValue.notes ?? "", now, body.id).run();
+    const staffUser = await env.DB.prepare("SELECT user_id FROM staff WHERE id=?").bind(oldValue.staff_id).first<{ user_id: number | null }>();
+    if (staffUser?.user_id && ["Freigegeben", "Zur Zahlung", "Erstattet", "Abgelehnt"].includes(status)) {
+      const messages: Record<string, string> = {
+        Freigegeben: `Ihre Ausgabe über ${reimbursementAmount.toFixed(2)} € wurde freigegeben.`,
+        "Zur Zahlung": `Ihre Erstattung über ${reimbursementAmount.toFixed(2)} € wurde zur Zahlung eingeplant.`,
+        Erstattet: `Ihre Erstattung über ${reimbursementAmount.toFixed(2)} € wurde als bezahlt markiert.`,
+        Abgelehnt: `Ihre Ausgabe wurde abgelehnt${body.rejectionReason ? `: ${body.rejectionReason}` : "."}`,
+      };
+      await env.DB.prepare("INSERT INTO notifications (user_id, category, title, message, entity_type, entity_id, severity, created_at) VALUES (?, 'expense', 'Status Ihrer Auslage', ?, 'expense', ?, ?, ?)")
+        .bind(staffUser.user_id, messages[status], String(body.id), status === "Abgelehnt" ? "warning" : "info", now).run();
+    }
+    auditDetails = { oldValue, newValue: { status, grossAmount, vatAmount, reimbursable, reimbursementAmount, paymentReference: body.paymentReference, paidAt, rejectionReason: body.rejectionReason, amazonSite: body.amazonSite, blockId: body.blockId, costCenter: body.costCenter } };
   } else if (action === "saveChecklist" && ["management", "dispatcher", "driver"].includes(user.role)) {
     let staffId = Number(body.staffId || 0);
     if (user.role === "driver") {

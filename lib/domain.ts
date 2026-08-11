@@ -153,7 +153,7 @@ export async function ensureDomainDatabase() {
       `CREATE INDEX IF NOT EXISTS idx_trip_documents_trip ON trip_documents(trip_operation_id, category)`,
     ),
     env.DB.prepare(
-      `CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, license_plate TEXT NOT NULL, expense_date TEXT NOT NULL, category TEXT NOT NULL, merchant TEXT, gross_amount REAL NOT NULL DEFAULT 0, vat_amount REAL NOT NULL DEFAULT 0, liters REAL, odometer_km REAL, status TEXT NOT NULL DEFAULT 'Eingereicht', receipt_file_name TEXT, receipt_object_key TEXT UNIQUE, receipt_content_type TEXT, recognition_status TEXT NOT NULL DEFAULT 'Prüfen', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, license_plate TEXT NOT NULL, expense_date TEXT NOT NULL, category TEXT NOT NULL, merchant TEXT, gross_amount REAL NOT NULL DEFAULT 0, vat_amount REAL NOT NULL DEFAULT 0, liters REAL, odometer_km REAL, payment_method TEXT NOT NULL DEFAULT 'Privatauslage', reimbursable INTEGER NOT NULL DEFAULT 1, reimbursement_amount REAL NOT NULL DEFAULT 0, amazon_site TEXT, block_id TEXT, tour_reference TEXT, cost_center TEXT, receipt_number TEXT, status TEXT NOT NULL DEFAULT 'Eingereicht', receipt_file_name TEXT, receipt_object_key TEXT UNIQUE, receipt_content_type TEXT, recognition_status TEXT NOT NULL DEFAULT 'Prüfen', payment_reference TEXT, reviewed_by INTEGER, reviewed_at TEXT, paid_at TEXT, rejection_reason TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
       `CREATE INDEX IF NOT EXISTS idx_expenses_date_status ON expenses(expense_date, status)`,
@@ -177,6 +177,34 @@ export async function ensureDomainDatabase() {
       `CREATE INDEX IF NOT EXISTS idx_vehicle_checklists_plate_created ON vehicle_checklists(license_plate, created_at)`,
     ),
   ]);
+  const expenseColumns = await env.DB.prepare(
+    "PRAGMA table_info(expenses)",
+  ).all<{ name: string }>();
+  const expenseColumnNames = new Set(expenseColumns.results.map((column) => column.name));
+  const missingExpenseColumns: Array<[string, string]> = [
+    ["payment_method", "ALTER TABLE expenses ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'Privatauslage'"],
+    ["reimbursable", "ALTER TABLE expenses ADD COLUMN reimbursable INTEGER NOT NULL DEFAULT 1"],
+    ["reimbursement_amount", "ALTER TABLE expenses ADD COLUMN reimbursement_amount REAL NOT NULL DEFAULT 0"],
+    ["amazon_site", "ALTER TABLE expenses ADD COLUMN amazon_site TEXT"],
+    ["block_id", "ALTER TABLE expenses ADD COLUMN block_id TEXT"],
+    ["tour_reference", "ALTER TABLE expenses ADD COLUMN tour_reference TEXT"],
+    ["cost_center", "ALTER TABLE expenses ADD COLUMN cost_center TEXT"],
+    ["receipt_number", "ALTER TABLE expenses ADD COLUMN receipt_number TEXT"],
+    ["payment_reference", "ALTER TABLE expenses ADD COLUMN payment_reference TEXT"],
+    ["reviewed_by", "ALTER TABLE expenses ADD COLUMN reviewed_by INTEGER"],
+    ["reviewed_at", "ALTER TABLE expenses ADD COLUMN reviewed_at TEXT"],
+    ["paid_at", "ALTER TABLE expenses ADD COLUMN paid_at TEXT"],
+    ["rejection_reason", "ALTER TABLE expenses ADD COLUMN rejection_reason TEXT"],
+  ];
+  for (const [name, sql] of missingExpenseColumns) {
+    if (!expenseColumnNames.has(name)) await env.DB.prepare(sql).run();
+  }
+  await env.DB.prepare(
+    "UPDATE expenses SET reimbursement_amount=gross_amount WHERE reimbursable=1 AND reimbursement_amount=0 AND payment_method='Privatauslage'",
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_expenses_reimbursement_status ON expenses(reimbursable, status, paid_at)",
+  ).run();
   const planningColumns = await env.DB.prepare(
     "PRAGMA table_info(weekly_planning)",
   ).all<{ name: string }>();

@@ -1342,7 +1342,7 @@ details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padd
 .notification-card small { color: #95a0a9; font-size: 8px; }
 .notification-card button { padding: 7px 9px; border-radius: 6px; background: #eef7f5; color: #167d70; font-size: 8px; }
 .tachograph-summary, .expense-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
-.expense-summary { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.expense-summary { grid-template-columns: repeat(5,minmax(0,1fr)); }
 .tachograph-summary > div, .expense-summary > div { min-height: 90px; padding: 17px; display: flex; flex-direction: column; justify-content: space-between; border-radius: 11px; border: 1px solid var(--line); background: #fff; box-shadow: 0 7px 20px #102a430d; }
 .tachograph-summary span, .expense-summary span { color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .6px; }
 .tachograph-summary strong, .expense-summary strong { color: var(--navy); font-size: 20px; }
@@ -1363,6 +1363,17 @@ details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padd
 .trip-operation-form { grid-template-columns: repeat(4,minmax(0,1fr)); }
 .trip-upload-form { border-top: 1px dashed var(--line); border-bottom: 0; }
 .expense-form { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.expense-filter-bar { padding: 16px 20px 20px; display: grid; grid-template-columns: 150px 150px 160px minmax(220px,1fr); gap: 10px; align-items: end; }
+.expense-filter-bar label { display: grid; gap: 5px; color: var(--muted); font-size: 8px; font-weight: 700; }
+.expense-filter-bar input, .expense-filter-bar select, .expense-review-form input, .expense-review-form select { width: 100%; min-height: 38px; padding: 9px 10px; border: 1px solid #dfe6eb; border-radius: 7px; background: #fff; color: #334252; font-size: 9px; }
+.expense-report-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.expense-report-actions a { padding: 9px 12px; border-radius: 7px; background: #e9f6f3; color: #167d70; font-size: 8px; font-weight: 800; text-decoration: none; }
+.expense-report-actions a:nth-child(n+3) { background: #eaf2f8; color: #277da8; }
+.expense-review-panel { border-color: #b9ddd7; box-shadow: 0 12px 30px #102a4314; }
+.expense-review-form { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.expense-ledger { min-width: 1160px; }
+.expense-ledger td small { display: block; margin-top: 4px; color: #8b99a4; font-size: 7px; line-height: 1.35; }
+.expense-ledger td strong { color: var(--navy); }
 .ocr-note { margin: 0 20px 18px; padding: 13px; display: flex; gap: 15px; border-radius: 8px; background: #eef7fb; color: #547180; font-size: 9px; line-height: 1.5; }
 .ocr-note strong { color: #247da5; white-space: nowrap; }
 .checklist-form { padding: 18px 20px; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
@@ -1395,7 +1406,8 @@ details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padd
   .tracking-layout { grid-template-columns: 260px minmax(0,1fr); }
   .admin-feature-grid, .analytics-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .trip-board { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .expense-form, .trip-operation-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .expense-form, .expense-review-form, .trip-operation-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .expense-filter-bar { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 720px) {
   .payroll-form, .advanced-form, .import-toolbar { grid-template-columns: 1fr; }
@@ -1409,7 +1421,7 @@ details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padd
   .tracking-detail-grid > div:nth-child(3n) { border-right: 1px solid var(--line); }
   .tracking-detail-grid > div:nth-child(2n) { border-right: 0; }
   .admin-feature-grid, .tachograph-summary, .expense-summary, .analytics-kpis, .trip-board, .analytics-grid { grid-template-columns: 1fr; }
-  .user-admin-form, .expense-form, .trip-operation-form, .checklist-form { grid-template-columns: 1fr; }
+  .user-admin-form, .expense-form, .expense-review-form, .trip-operation-form, .checklist-form, .expense-filter-bar { grid-template-columns: 1fr; }
   .checklist-form fieldset > div { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .checklist-form textarea { grid-column: 1; }
   .company-bars > div { grid-template-columns: 90px 1fr; }
