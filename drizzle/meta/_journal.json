@@ -120,6 +120,20 @@
       "when": 1786454423256,
       "tag": "0016_daily_stingray",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1786478191475,
+      "tag": "0017_fine_roland_deschain",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1786479771519,
+      "tag": "0018_lucky_wonder_man",
+      "breakpoints": true
     }
   ]
 }

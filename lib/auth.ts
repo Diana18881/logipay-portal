@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 
 export type PortalRole = "management" | "accountant" | "dispatcher" | "driver";
 

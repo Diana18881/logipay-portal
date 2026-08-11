@@ -5,9 +5,13 @@ import type { PortalUser } from "../lib/auth";
 import { EmployeeDocuments, ExcelImporter, MaintenanceCenter, PasswordChange, PayrollCenter, SecurityCenter, TruckTracking } from "./advanced-panels";
 import { AnalyticsCenter, ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
 import { driverLanguages, driverText, type DriverLocale } from "./driver-i18n";
+import { countOfflineUploads, flushOfflineUploads, loadPortalSnapshot, queueOfflineUpload, savePortalSnapshot } from "../lib/offline-client";
+import { buildDepartureShifts, departureShiftForPlanning, type DepartureShift } from "../lib/departure-confirmations";
 
 type Section =
   | "overview"
+  | "tasks"
+  | "driverFlow"
   | "staff"
   | "vehicles"
   | "tracking"
@@ -28,6 +32,9 @@ type Section =
   | "reports";
 type Row = Record<string, string | number | null>;
 type SearchResult = { id: string; kind: string; title: string; meta: string; section: Section; row?: Row };
+type ThemeMode = "light" | "dark" | "system";
+type DensityMode = "compact" | "comfortable" | "large";
+type PortalTask = { id: string; title: string; detail: string; priority: "urgent" | "warning" | "normal"; section: Section; owner: string; due?: string };
 type Data = {
   staff: Row[];
   vehicles: Row[];
@@ -36,6 +43,10 @@ type Data = {
   voiceMessages: Row[];
   documents: Row[];
   files: Row[];
+  vehicleComments: Row[];
+  fuelCodes: Row[];
+  fuelStops: Row[];
+  driverPerformance: Row[];
   employeeDocuments: Row[];
   payroll: Row[];
   maintenance: Row[];
@@ -46,6 +57,7 @@ type Data = {
   portalUsers: Row[];
   tachograph: Row[];
   tripOperations: Row[];
+  departureConfirmations: Row[];
   tripDocuments: Row[];
   tripMessages: Row[];
   expenses: Row[];
@@ -62,6 +74,8 @@ const nav: { id: Section; label: string; roles: string[] }[] = [
     label: "Übersicht",
     roles: ["management", "accountant", "dispatcher", "driver"],
   },
+  { id: "tasks", label: "Aufgabenzentrale", roles: ["management", "accountant", "dispatcher"] },
+  { id: "driverFlow", label: "Mein Arbeitstag", roles: ["driver"] },
   {
     id: "staff",
     label: "Mitarbeiter",
@@ -119,6 +133,8 @@ const labels: Record<string, string> = {
 
 const sectionDescriptions: Partial<Record<Section, string>> = {
   overview: "Heute im Blick: Fahrer, Fahrzeuge, Touren und offene Aufgaben",
+  tasks: "Alle prüfungs- und entscheidungsrelevanten Vorgänge in einer Warteschlange",
+  driverFlow: "Ein klarer Ablauf von der Tour bis zum vollständigen Nachweis",
   staff: "Personal, Zugänge und Beschäftigungsstatus zentral verwalten",
   vehicles: "Fahrzeugdaten, Dokumente, Prüfungen und Werkstattstatus",
   tracking: "Aktuelle Fahrzeugpositionen und operative Warnungen",
@@ -145,6 +161,10 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     voiceMessages: [],
     documents: [],
     files: [],
+    vehicleComments: [],
+    fuelCodes: [],
+    fuelStops: [],
+    driverPerformance: [],
     employeeDocuments: [],
     payroll: [],
     maintenance: [],
@@ -155,6 +175,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     portalUsers: [],
     tachograph: [],
     tripOperations: [],
+    departureConfirmations: [],
     tripDocuments: [],
     tripMessages: [],
     expenses: [],
@@ -179,6 +200,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const globalSearchRef = useRef<HTMLInputElement | null>(null);
   const [locale, setLocale] = useState<DriverLocale>("de");
   const [pushState, setPushState] = useState<"default" | "granted" | "denied" | "unsupported">("default");
+  const [theme, setTheme] = useState<ThemeMode>("system");
+  const [density, setDensity] = useState<DensityMode>("large");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pinnedSections, setPinnedSections] = useState<Section[]>([]);
+  const [offlineUploadCount, setOfflineUploadCount] = useState(0);
   // Keep the first server and browser render identical; the real connection
   // state is applied after hydration in the effect below.
   const [online, setOnline] = useState(true);
@@ -200,14 +226,18 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           if (!background) setLoading(false);
           return;
         }
-        setData(JSON.parse(body));
+        const parsed = JSON.parse(body) as Data;
+        setData(parsed);
+        void savePortalSnapshot(`portal-${currentUser.id}-${year}-${kw}`, parsed);
       } catch {
-        setNotice(isDriver ? t("loadError") : "Daten konnten nicht geladen werden. Bitte Seite neu laden.");
+        const cached = await loadPortalSnapshot<Data>(`portal-${currentUser.id}-${year}-${kw}`);
+        if (cached) { setData(cached); setNotice(isDriver ? "Офлайн: показаны последние сохранённые данные." : "Offline: letzter gespeicherter Datenstand wird angezeigt."); }
+        else setNotice(isDriver ? t("loadError") : "Daten konnten nicht geladen werden. Bitte Seite neu laden.");
       } finally {
         if (!background) setLoading(false);
       }
     },
-    [year, kw, isDriver, t],
+    [year, kw, isDriver, t, currentUser.id],
   );
   useEffect(() => {
     const initial = window.setTimeout(() => load(), 0);
@@ -215,18 +245,35 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     return () => { window.clearTimeout(initial); window.clearInterval(refresh); };
   }, [load]);
   useEffect(() => {
-    if (!isDriver) return;
     const savedLocale = localStorage.getItem("logipay_driver_locale") as DriverLocale | null;
     const requestedSection = new URLSearchParams(window.location.search).get("section") as Section | null;
     const supported = "serviceWorker" in navigator && "Notification" in window;
     const syncPreferences = window.setTimeout(() => {
-      if (savedLocale && driverLanguages.some((item) => item.code === savedLocale)) setLocale(savedLocale);
-      if (requestedSection && nav.some((item) => item.id === requestedSection && item.roles.includes("driver"))) setSection(requestedSection);
-      setPushState(supported ? Notification.permission : "unsupported");
+      if (isDriver && savedLocale && driverLanguages.some((item) => item.code === savedLocale)) setLocale(savedLocale);
+      if (requestedSection && nav.some((item) => item.id === requestedSection && item.roles.includes(currentUser.role))) setSection(requestedSection);
+      if (isDriver) setPushState(supported ? Notification.permission : "unsupported");
     }, 0);
-    if (supported) void navigator.serviceWorker.register("/sw.js");
+    if (isDriver && supported) void navigator.serviceWorker.register("/sw.js");
     return () => window.clearTimeout(syncPreferences);
-  }, [isDriver]);
+  }, [currentUser.role, isDriver]);
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("logipay_theme") as ThemeMode | null;
+    const savedDensity = localStorage.getItem("logipay_density") as DensityMode | null;
+    const savedPinned = JSON.parse(localStorage.getItem(`logipay_pinned_${currentUser.role}`) || "[]") as Section[];
+    const hydratePreferences = window.setTimeout(() => {
+      if (savedTheme && ["light", "dark", "system"].includes(savedTheme)) setTheme(savedTheme);
+      if (savedDensity && ["compact", "comfortable", "large"].includes(savedDensity)) setDensity(savedDensity);
+      setPinnedSections(savedPinned.filter((id) => nav.some((item) => item.id === id && item.roles.includes(currentUser.role))));
+      void countOfflineUploads().then(setOfflineUploadCount);
+    }, 0);
+    return () => window.clearTimeout(hydratePreferences);
+  }, [currentUser.role]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("logipay_theme", theme);
+    localStorage.setItem("logipay_density", density);
+    localStorage.setItem(`logipay_pinned_${currentUser.role}`, JSON.stringify(pinnedSections));
+  }, [theme, density, pinnedSections, currentUser.role]);
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -276,7 +323,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
         } catch { remaining.push(payload); }
       }
       localStorage.setItem("logipay_offline_queue", JSON.stringify(remaining));
-      if (!remaining.length) { setNotice(isDriver ? t("synced") : "Offline-Eingaben wurden synchronisiert"); await load(true); }
+      const fileResult = await flushOfflineUploads();
+      setOfflineUploadCount(fileResult.remaining);
+      if (!remaining.length && !fileResult.remaining) { setNotice(isDriver ? t("synced") : "Offline-Eingaben und Dateien wurden synchronisiert"); await load(true); }
     }
     const handleOnline = () => { setOnline(true); void flushOfflineQueue(); };
     const handleOffline = () => setOnline(false);
@@ -311,7 +360,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     try {
       r = await fetch("/api/portal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     } catch {
-      const offlineSafe = new Set(["saveTripOperation", "saveChecklist", "driverConcern"]);
+      const offlineSafe = new Set(["saveTripOperation", "saveChecklist", "driverConcern", "confirmDeparture"]);
       if (!offlineSafe.has(String(payload.action || ""))) { setNotice(isDriver ? t("offlineBlocked") : "Keine Verbindung. Diese sensible Aktion wird nicht offline gespeichert."); return; }
       const queue = JSON.parse(localStorage.getItem("logipay_offline_queue") || "[]") as Record<string, unknown>[];
       queue.push(payload); localStorage.setItem("logipay_offline_queue", JSON.stringify(queue.slice(-50)));
@@ -334,6 +383,16 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     setEditing(row || null);
     setModal(kind);
   }
+  function openVehicleProfile(licensePlate: unknown) {
+    const plate = String(licensePlate || "").trim();
+    if (!plate) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", "vehicles");
+    url.searchParams.set("vehicle", plate);
+    url.searchParams.set("vehicleTab", "overview");
+    window.history.pushState({}, "", url);
+    setSection("vehicles");
+  }
   function downloadPlanningReport() {
     window.location.href = `/api/reports/planning?year=${year}&kw=${kw}`;
   }
@@ -344,6 +403,31 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const active = data.staff.filter((x) => x.status === "active");
   const workshop = data.vehicles.filter((x) => x.status === "workshop");
   const expiringDocuments = data.employeeDocuments.filter((item) => item.expires_at && new Date(String(item.expires_at)).getTime() <= renderedAt + 60 * 86400000);
+  const expiringDocuments30 = data.employeeDocuments.filter((item) => item.expires_at && new Date(String(item.expires_at)).getTime() <= renderedAt + 30 * 86400000);
+  const expiringTuv30 = data.vehicles.filter((vehicle) => {
+    if (!vehicle.inspection_due) return false;
+    const due = new Date(String(vehicle.inspection_due));
+    due.setHours(0, 0, 0, 0);
+    const daysLeft = Math.ceil((due.getTime() - renderedAt) / 86400000);
+    return daysLeft <= 30;
+  });
+  const tachographViolations = data.tachograph.filter((row) => row.infringement || Number(row.remaining_minutes) <= 90);
+  const driverRatingMap = useMemo(
+    () => buildDriverRatingByName(data.staff, data.driverPerformance),
+    [data.staff, data.driverPerformance],
+  );
+  const departureShifts = useMemo(
+    () => buildDepartureShifts({
+      planning: data.planning,
+      year,
+      kw,
+      confirmations: data.departureConfirmations,
+      now: renderedAt,
+    }),
+    [data.planning, data.departureConfirmations, year, kw, renderedAt],
+  );
+  const overdueDepartures = departureShifts.filter((shift) => shift.status === "overdue");
+  const pendingDepartures = departureShifts.filter((shift) => shift.status === "pending");
   const openConcernCount = data.concerns.filter(
     (item) =>
       !["Erledigt", "Delivered"].includes(String(item.completion_status)),
@@ -359,6 +443,20 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const pendingExpenses = data.expenses.filter((item) => ["Eingereicht", "In Prüfung"].includes(String(item.status)));
   const unreadNotificationCount = data.notifications.filter((item) => !item.read_at).length;
   const unreadChatCount = data.tripMessages.filter((item) => !Number(item.read_by_me) && Number(item.sender_user_id) !== currentUser.id).length;
+  const unifiedTasks: PortalTask[] = [
+    ...(["management", "dispatcher"].includes(currentUser.role) && delayedTrips.length ? [{ id: "delays", title: `${delayedTrips.length} verspätete oder problematische Touren`, detail: "ETA prüfen, Fahrer kontaktieren oder Ersatzfahrzeug einplanen", priority: "urgent" as const, section: "operations" as const, owner: "Disposition" }] : []),
+    ...(["management", "dispatcher"].includes(currentUser.role) && unreadChatCount ? [{ id: "messages", title: `${unreadChatCount} Nachrichten beantworten`, detail: "Ungelesene Tour-Chats von Fahrern", priority: "urgent" as const, section: "messages" as const, owner: "Disposition" }] : []),
+    ...(["management", "accountant"].includes(currentUser.role) && pendingExpenses.length ? [{ id: "expenses", title: `${pendingExpenses.length} Belege prüfen`, detail: `${pendingExpenses.reduce((sum, item) => sum + Number(item.gross_amount || 0), 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })} warten auf Freigabe`, priority: "warning" as const, section: "expenses" as const, owner: "Buchhaltung" }] : []),
+    ...(["management", "dispatcher"].includes(currentUser.role) && workshop.length ? [{ id: "workshop", title: `${workshop.length} Fahrzeuge in Werkstatt`, detail: "Verfügbarkeit prüfen und Touren gegebenenfalls neu zuordnen", priority: "warning" as const, section: "vehicles" as const, owner: "Fuhrpark" }] : []),
+    ...(["management", "accountant"].includes(currentUser.role) && expiringDocuments.length ? [{ id: "documents", title: `${expiringDocuments.length} Dokumente verlängern`, detail: "Ablauf innerhalb der nächsten 60 Tage", priority: "warning" as const, section: "personnel" as const, owner: "Personal" }] : []),
+    ...(["management", "dispatcher"].includes(currentUser.role) && expiringDocuments30.length ? [{ id: "documents-30", title: `${expiringDocuments30.length} Dokumente laufen bald ab`, detail: "Führerschein, Fahrerkarte oder Aufenthaltstitel innerhalb 30 Tagen", priority: "urgent" as const, section: "personnel" as const, owner: "Personal" }] : []),
+    ...(["management", "dispatcher"].includes(currentUser.role) && expiringTuv30.length ? [{ id: "tuv-30", title: `${expiringTuv30.length} TÜV/HU/SP-Termine in 30 Tagen`, detail: "Prüftermine prüfen und Werkstatt einplanen", priority: "urgent" as const, section: "vehicles" as const, owner: "Fuhrpark" }] : []),
+    ...(["management", "dispatcher"].includes(currentUser.role) && tachographViolations.length ? [{ id: "tachograph", title: `${tachographViolations.length} Tachograph-Warnungen`, detail: "Verstöße oder kritische Restlenkzeit", priority: "urgent" as const, section: "tachograph" as const, owner: "Disposition" }] : []),
+    ...(["management", "dispatcher"].includes(currentUser.role) && overdueDepartures.length ? [{ id: "departure-overdue", title: `${overdueDepartures.length} Abfahrten ohne Bestätigung`, detail: "Ersatzfahrer suchen — Frist 12 Stunden vor Abfahrt überschritten", priority: "urgent" as const, section: "planning" as const, owner: "Disposition" }] : []),
+    ...(["management", "dispatcher"].includes(currentUser.role) && pendingDepartures.length ? [{ id: "departure-pending", title: `${pendingDepartures.length} Abfahrten warten auf Bestätigung`, detail: "Fahrer muss Abfahrt bis 12 Stunden vor Start bestätigen", priority: "warning" as const, section: "planning" as const, owner: "Disposition" }] : []),
+    ...(["management", "accountant"].includes(currentUser.role) && !data.payrollPeriods.some((row) => row.period === new Date().toISOString().slice(0, 7) && row.status === "closed") ? [{ id: "payroll", title: "Lohnmonat noch offen", detail: "Berechnung prüfen und Monat nach Freigabe schließen", priority: "normal" as const, section: "documents" as const, owner: "Buchhaltung" }] : []),
+    ...(openConcernCount && currentUser.role !== "accountant" ? [{ id: "concerns", title: `${openConcernCount} Fahreranliegen bearbeiten`, detail: "Neue Anliegen, Bestellungen und Rückfragen", priority: "normal" as const, section: "concerns" as const, owner: "Disposition" }] : []),
+  ];
   const globalResults = useMemo<SearchResult[]>(() => {
     const query = globalSearch.trim().toLowerCase();
     if (query.length < 2) return [];
@@ -382,7 +480,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   }
   const title = isDriver ? t(section, nav.find((n) => n.id === section)?.label) : nav.find((n) => n.id === section)?.label;
   return (
-    <main className={`app-shell role-${currentUser.role} ${isDriver ? "driver-mobile-shell" : ""}`}>
+    <main className={`app-shell role-${currentUser.role} theme-${theme} density-${density} ${isDriver ? "driver-mobile-shell" : ""}`}>
       {mobileMenu ? <button className="backdrop" aria-label={isDriver ? t("menuClose") : "Menü schließen"} onClick={() => setMobileMenu(false)} /> : null}
       <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
         <div className="brand">
@@ -407,6 +505,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           <p>{isDriver ? t("workArea") : "ARBEITSBEREICH"}</p>
           {nav
             .filter((n) => n.roles.includes(currentUser.role))
+            .sort((left, right) => Number(pinnedSections.includes(right.id)) - Number(pinnedSections.includes(left.id)))
             .map((n) => (
               <button
                 key={n.id}
@@ -418,6 +517,8 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     (
                       {
                         overview: "⌂",
+                        tasks: "◆",
+                        driverFlow: "▶",
                         staff: "◉",
                         vehicles: "▣",
                         tracking: "⌖",
@@ -441,6 +542,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   }
                 </span>
                 {isDriver ? t(n.id, n.label) : n.label}
+                {pinnedSections.includes(n.id) ? <span className="nav-pin">★</span> : null}
                 {n.id === "concerns" &&
                 ["management", "dispatcher"].includes(currentUser.role) &&
                 openConcernCount ? (
@@ -526,6 +628,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
             {driverLanguages.map((item) => <button key={item.code} type="button" className={locale === item.code ? "language-active" : ""} title={item.label} aria-label={item.label} onClick={() => changeLocale(item.code)}>{item.short}</button>)}
           </div> : null}
           <div className="top-actions">
+            <button className="interface-settings-button" type="button" onClick={() => setSettingsOpen(true)} aria-label="Oberfläche anpassen">⚙ <b>Ansicht</b></button>
             {["management", "dispatcher", "driver"].includes(currentUser.role) ? (
               <button className="top-chat-button" type="button" onClick={() => setSection("messages")} aria-label={isDriver ? t("messages") : "Nachrichten"}>
                 <span>✉</span>
@@ -542,7 +645,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
               {pushState === "granted" ? t("notificationsOn") : pushState === "denied" ? t("notificationsDenied") : pushState === "unsupported" ? t("notificationsUnsupported") : t("notificationsEnable")}
             </button> : null}
             <div className={`status-chip ${online ? "" : "status-offline"}`}>
-              <span /> {online ? (isDriver ? t("connected") : "Datenbank verbunden") : (isDriver ? t("offline") : "Offline-Modus")}
+              <span /> {online ? (isDriver ? t("connected") : "Datenbank verbunden") : (isDriver ? t("offline") : "Offline-Modus")}{offlineUploadCount ? ` · ${offlineUploadCount} offen` : ""}
             </div>
           </div>
         </header>
@@ -614,6 +717,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                         <button type="button" onClick={() => setSection("messages")}><span>✉</span><b>Nachrichten</b><small>{unreadChatCount ? `${unreadChatCount} neu` : "Alles gelesen"}</small></button>
                         <button type="button" onClick={() => setSection("planning")}><span>▦</span><b>Wochenplanung</b><small>KW {kw}</small></button>
                         <button type="button" onClick={() => setSection("concerns")}><span>!</span><b>Fahreranliegen</b><small>{openConcernCount} offen</small></button>
+                        {currentUser.role === "management" ? <a href={`/api/reports/daily?date=${new Date().toISOString().slice(0, 10)}`}><span>▥</span><b>Tagesbericht</b><small>PDF für heute</small></a> : null}
                       </div>
                     </div>
                     <div className="smart-status-grid">
@@ -621,35 +725,45 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                       <button type="button" className={delayedTrips.length ? "smart-alert" : ""} onClick={() => setSection("operations")}><span className="smart-icon icon-delay">◷</span><small>Verspätungen</small><b>{delayedTrips.length}</b><em>{delayedTrips.length ? "Sofort prüfen" : "Keine Probleme"}</em></button>
                       <button type="button" className={unreadChatCount ? "smart-alert" : ""} onClick={() => setSection("messages")}><span className="smart-icon icon-chat">✉</span><small>Neue Nachrichten</small><b>{unreadChatCount}</b><em>{unreadChatCount ? "Antwort erforderlich" : "Alles gelesen"}</em></button>
                       <button type="button" className={workshop.length ? "smart-warning" : ""} onClick={() => setSection("vehicles")}><span className="smart-icon icon-truck">▣</span><small>In der Werkstatt</small><b>{workshop.length}</b><em>{data.vehicles.length} Fahrzeuge gesamt</em></button>
-                      <button type="button" className={expiringDocuments.length ? "smart-warning" : ""} onClick={() => setSection("personnel")}><span className="smart-icon icon-doc">▤</span><small>Dokumente laufen ab</small><b>{expiringDocuments.length}</b><em>Innerhalb 60 Tagen</em></button>
+                      <button type="button" className={expiringDocuments30.length ? "smart-alert" : expiringDocuments.length ? "smart-warning" : ""} onClick={() => setSection("personnel")}><span className="smart-icon icon-doc">▤</span><small>Dokumente laufen ab</small><b>{expiringDocuments30.length || expiringDocuments.length}</b><em>{expiringDocuments30.length ? "Innerhalb 30 Tagen" : "Innerhalb 60 Tagen"}</em></button>
+                      <button type="button" className={expiringTuv30.length ? "smart-alert" : ""} onClick={() => setSection("vehicles")}><span className="smart-icon icon-truck">◎</span><small>TÜV in 30 Tagen</small><b>{expiringTuv30.length}</b><em>{expiringTuv30.length ? "Prüftermine prüfen" : "Keine fällig"}</em></button>
+                      <button type="button" className={tachographViolations.length ? "smart-alert" : ""} onClick={() => setSection("tachograph")}><span className="smart-icon icon-delay">◴</span><small>Tachograph</small><b>{tachographViolations.length}</b><em>{tachographViolations.length ? "Verstöße prüfen" : "Keine Warnungen"}</em></button>
+                      <button type="button" className={overdueDepartures.length ? "smart-alert" : pendingDepartures.length ? "smart-warning" : ""} onClick={() => setSection("planning")}><span className="smart-icon icon-route">✓</span><small>Abfahrt offen</small><b>{overdueDepartures.length || pendingDepartures.length}</b><em>{overdueDepartures.length ? "Ersatzfahrer suchen" : pendingDepartures.length ? "Bestätigung ausstehend" : "Alles bestätigt"}</em></button>
                       <button type="button" className={pendingExpenses.length ? "smart-warning" : ""} onClick={() => setSection("expenses")}><span className="smart-icon icon-money">€</span><small>Ausgaben prüfen</small><b>{pendingExpenses.length}</b><em>{pendingExpenses.reduce((sum, item) => sum + Number(item.gross_amount || 0), 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</em></button>
                     </div>
                     <div className="smart-dashboard-grid">
                       <section className="panel today-routes-panel">
                         <div className="panel-title"><div><h2>Heute im Einsatz</h2><p>{new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "2-digit", month: "long" }).format(new Date())} · KW {kw}</p></div><button type="button" onClick={() => setSection("planning")}>Alle öffnen →</button></div>
-                        <div className="today-route-list">{todayPlanning.length ? todayPlanning.slice(0, 6).map((item) => <button type="button" key={item.id} onClick={() => setSection("planning")}><span className="route-time">{item.start_time || "06:00"}</span><span className="route-driver"><b>{item.driver_name || "Kein Fahrer"}</b><small>{item.company || "—"} · {item.location || "—"}</small></span><span className="route-vehicle">{item.license_plate || "Ohne Fahrzeug"}<small>{item.block_id || "Kein Block"}</small></span><Badge value={String(item.status || "planned")} /></button>) : <div className="empty-state">Für heute sind noch keine Touren geplant.</div>}</div>
+                        <div className="today-route-list">{todayPlanning.length ? todayPlanning.slice(0, 6).map((item) => <button type="button" key={item.id} onClick={() => setSection("planning")}><span className="route-time">{item.start_time || "06:00"}</span><span className="route-driver"><b>{item.driver_name || "Kein Fahrer"}</b> {item.driver_name ? <DriverPlanningRating metrics={lookupDriverRating(driverRatingMap, item.driver_name)} /> : null}<small>{item.company || "—"} · {item.location || "—"}</small></span><span className="route-vehicle">{item.license_plate || "Ohne Fahrzeug"}<small>{item.block_id || "Kein Block"}</small></span><Badge value={String(item.status || "planned")} /></button>) : <div className="empty-state">Für heute sind noch keine Touren geplant.</div>}</div>
                       </section>
                       <section className="panel attention-center-panel">
-                        <div className="panel-title"><div><h2>Aufmerksamkeit erforderlich</h2><p>Priorisiert nach Dringlichkeit</p></div><span className="attention-total">{delayedTrips.length + unreadChatCount + workshop.length + expiringDocuments.length + pendingExpenses.length}</span></div>
+                        <div className="panel-title"><div><h2>Aufmerksamkeit erforderlich</h2><p>Priorisiert nach Dringlichkeit</p></div><button type="button" onClick={() => setSection("tasks")}>Alle {unifiedTasks.length} öffnen →</button></div>
                         <div className="attention-action-list">
                           <button type="button" onClick={() => setSection("operations")}><i className="danger-dot" /><span><b>{delayedTrips.length} Touren mit Problem</b><small>Verspätung, Problemstatus oder überschrittene ETA</small></span><em>Öffnen</em></button>
                           <button type="button" onClick={() => setSection("messages")}><i className="message-dot" /><span><b>{unreadChatCount} ungelesene Nachrichten</b><small>Direkte Tour-Chats von Fahrern</small></span><em>Antworten</em></button>
-                          <button type="button" onClick={() => setSection("personnel")}><i className="warning-dot" /><span><b>{expiringDocuments.length} Dokumente prüfen</b><small>Führerschein, Fahrerkarte oder Aufenthaltstitel</small></span><em>Prüfen</em></button>
+                          <button type="button" onClick={() => setSection("personnel")}><i className="warning-dot" /><span><b>{expiringDocuments30.length || expiringDocuments.length} Dokumente prüfen</b><small>{expiringDocuments30.length ? "Ablauf innerhalb 30 Tagen" : "Führerschein, Fahrerkarte oder Aufenthaltstitel"}</small></span><em>Prüfen</em></button>
+                          <button type="button" onClick={() => setSection("vehicles")}><i className="warning-dot" /><span><b>{expiringTuv30.length} TÜV/HU/SP in 30 Tagen</b><small>Prüftermine und Werkstattplanung</small></span><em>Öffnen</em></button>
+                          <button type="button" onClick={() => setSection("tachograph")}><i className="danger-dot" /><span><b>{tachographViolations.length} Tachograph-Warnungen</b><small>Verstöße oder kritische Restlenkzeit</small></span><em>Prüfen</em></button>
+                          <button type="button" className={overdueDepartures.length ? "attention-danger" : ""} onClick={() => setSection("planning")}><i className="danger-dot" /><span><b>{overdueDepartures.length ? `${overdueDepartures.length} Abfahrten ohne Bestätigung` : `${pendingDepartures.length} Abfahrten warten auf Bestätigung`}</b><small>{overdueDepartures.length ? "12h-Frist überschritten — Ersatzfahrer suchen" : "Fahrer muss Abfahrt bestätigen"}</small></span><em>{overdueDepartures.length ? "Ersatz suchen" : "Planung"}</em></button>
                           <button type="button" onClick={() => setSection("expenses")}><i className="money-dot" /><span><b>{pendingExpenses.length} Belege in Prüfung</b><small>Erstattungen und Firmenausgaben</small></span><em>Freigeben</em></button>
                         </div>
                       </section>
                     </div>
                   </>
                 ))}
+              {section === "tasks" && <TaskCenter tasks={unifiedTasks} open={setSection} />}
+              {section === "driverFlow" && <DriverWorkflow planning={data.planning} operations={data.tripOperations} checklists={data.checklists} files={data.files} documents={data.tripDocuments} departureShifts={departureShifts} locale={locale} open={setSection} action={action} />}
               {section === "staff" && (
-                <Card title="Mitarbeiterstamm">
+                <div className="advanced-stack">
+                  {["management", "dispatcher"].includes(currentUser.role) ? <DriverControlCenter staff={data.staff} events={data.driverPerformance} openDriver={setSelectedStaff} action={action} /> : null}
+                  <Card title="Mitarbeiterstamm">
                   <div className="table-wrap">
                     <table>
                       <thead>
                         <tr>
                           <th>Name</th>
                           <th>Systemart</th>
-                          <th>Vergütung</th>
+                          {currentUser.role !== "dispatcher" ? <th>Vergütung</th> : null}
                           <th>Standort</th>
                           <th>Firma</th>
                           <th>Status</th>
@@ -669,7 +783,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                               </button>
                             </td>
                             <td>{s.system_type || "—"}</td>
-                            <td>{s.compensation || "—"}</td>
+                            {currentUser.role !== "dispatcher" ? <td>{s.compensation || "—"}</td> : null}
                             <td>{s.location || "—"}</td>
                             <td>{s.company || "—"}</td>
                             <td>
@@ -722,11 +836,12 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                       </tbody>
                     </table>
                   </div>
-                </Card>
+                  </Card>
+                </div>
               )}
               {section === "vehicles" && (
                 <div className="advanced-stack">
-                  <VehicleFiles vehicles={data.vehicles} files={data.files} planning={data.planning} driver={currentUser.role === "driver"} locale={locale} reload={load} />
+                  <VehicleFiles vehicles={data.vehicles} files={data.files} planning={data.planning} maintenance={data.maintenance} tracking={data.tracking} comments={data.vehicleComments} fuelCodes={data.fuelCodes} fuelStops={data.fuelStops} role={currentUser.role} locale={locale} reload={load} action={action} />
                   <MaintenanceCenter rows={data.maintenance} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} action={action} />
                 </div>
               )}
@@ -734,6 +849,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 <TruckTracking
                   rows={data.tracking}
                   vehicles={data.vehicles}
+                  operations={data.tripOperations}
                   canManage={["management", "dispatcher"].includes(currentUser.role)}
                   locale={locale}
                   action={action}
@@ -760,12 +876,15 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                       </button>
                     </div>
                   ) : null}
-                  {currentUser.role !== "driver" ? <PlanningAlerts rows={data.planning} staff={data.staff} vehicles={data.vehicles} /> : null}
+                  {currentUser.role !== "driver" ? <DepartureConfirmPanel shifts={departureShifts} /> : null}
+                  {currentUser.role !== "driver" ? <PlanningAlerts rows={data.planning} staff={data.staff} vehicles={data.vehicles} employeeDocuments={data.employeeDocuments} tachograph={data.tachograph} departureShifts={departureShifts} /> : null}
                   {currentUser.role !== "driver" ? (
                     <DispatchBoard
                       rows={data.planning}
                       staff={data.staff}
                       vehicles={data.vehicles}
+                      driverRatingMap={driverRatingMap}
+                      departureShifts={departureShifts}
                       assign={(row, type, value) =>
                         action({
                           action: "updatePlanning",
@@ -799,19 +918,26 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     staff={active}
                     year={year}
                     kw={kw}
+                    driverRatingMap={driverRatingMap}
+                    departureShifts={departureShifts}
                     locale={isDriver ? locale : undefined}
                     showAvailability={currentUser.role !== "driver"}
                     canEdit={currentUser.role !== "driver"}
                     edit={(row) => openModal("planning", row)}
                     remove={(id) => action({ action: "deletePlanning", id })}
                     move={(row, day) => action({ action: "updatePlanning", id: row.id, planningYear: year, calendarWeek: kw, company: row.company, driverName: row.driver_name, location: row.location, licensePlate: row.license_plate, workDays: String(day), startTime: row.start_time || "06:00", blockId: row.block_id, status: row.status, comments: row.comments })}
+                    openDriver={(row) => {
+                      const person = data.staff.find((item) => String(item.id) === String(row.staff_id) || item.full_name === row.driver_name);
+                      if (person) setSelectedStaff(person);
+                    }}
+                    openVehicle={openVehicleProfile}
                   />
                 </Card>
               )}
-              {section === "operations" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} locale={locale} action={action} reload={load} />}
-              {section === "messages" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} locale={locale} action={action} reload={load} view="chat" />}
+              {section === "operations" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} chatModerator={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} reload={load} />}
+              {section === "messages" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} chatModerator={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} reload={load} view="chat" />}
               {section === "tachograph" && <TachographCenter rows={data.tachograph} staff={active} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} />}
-              {section === "expenses" && <ExpenseCenter rows={data.expenses} staff={active} vehicles={data.vehicles} driver={currentUser.role === "driver"} canApprove={["management", "accountant"].includes(currentUser.role)} locale={locale} action={action} reload={load} />}
+              {section === "expenses" && <ExpenseCenter rows={data.expenses} staff={active} vehicles={data.vehicles} audit={data.audit} driver={currentUser.role === "driver"} canApprove={["management", "accountant"].includes(currentUser.role)} locale={locale} action={action} reload={load} />}
               {section === "checklists" && <ChecklistCenter rows={data.checklists} staff={active} vehicles={data.vehicles} planning={data.planning} driver={currentUser.role === "driver"} locale={locale} action={action} />}
               {section === "concerns" &&
                 (currentUser.role === "driver" ? (
@@ -837,7 +963,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   <Documents rows={data.documents} staff={active} driver={currentUser.role === "driver"} locale={locale} canUpload={["management", "accountant"].includes(currentUser.role)} reload={load} />
                 </div>
               )}
-              {section === "personnel" && <EmployeeDocuments rows={data.employeeDocuments} staff={data.staff} driver={currentUser.role === "driver"} locale={locale} reload={load} />}
+              {section === "personnel" && <EmployeeDocuments rows={data.employeeDocuments} staff={data.staff} audit={data.audit} driver={currentUser.role === "driver"} locale={locale} action={action} reload={load} />}
               {section === "notifications" && <NotificationsCenter rows={data.notifications} driver={currentUser.role === "driver"} locale={locale} action={action} />}
               {section === "analytics" && <AnalyticsCenter staff={data.staff} vehicles={data.vehicles} operations={data.tripOperations} expenses={data.expenses} tachograph={data.tachograph} concerns={data.concerns} checklists={data.checklists} />}
               {section === "users" && <UserManagement rows={data.portalUsers} staff={data.staff} resetRequests={data.resetRequests} action={action} />}
@@ -879,13 +1005,14 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
       </section>
       {isDriver ? <nav className="driver-bottom-nav" aria-label={t("workArea")}>
         {([
-          ["overview", "⌂", "home"],
+          ["driverFlow", "▶", "home"],
           ["operations", "➜", "operations"],
           ["messages", "✉", "messages"],
           ["expenses", "◈", "receipts"],
           ["notifications", "!", "alerts"],
         ] as Array<[Section, string, string]>).map(([id, icon, key]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id)}><span>{icon}</span><b>{t(key)}</b>{id === "notifications" && unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}{id === "messages" && unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}</button>)}
       </nav> : null}
+      {settingsOpen ? <InterfaceSettings theme={theme} density={density} pinned={pinnedSections} sections={nav.filter((item) => item.roles.includes(currentUser.role))} setTheme={setTheme} setDensity={setDensity} setPinned={setPinnedSections} close={() => setSettingsOpen(false)} /> : null}
       {modal && (
         <Modal
           title={
@@ -912,6 +1039,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
             kind={modal}
             kw={kw}
             staff={active}
+            driverPerformance={data.driverPerformance}
             editing={editing}
             submit={(payload) => action({ ...payload, planningYear: year })}
           />
@@ -933,6 +1061,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           audit={data.audit}
           concerns={data.concerns}
           checklists={data.checklists}
+          performance={data.driverPerformance}
+          role={currentUser.role}
+          action={action}
+          openSection={(next) => { setSelectedStaff(null); setSection(next); }}
+          openVehicle={(plate) => { setSelectedStaff(null); openVehicleProfile(plate); }}
           close={() => setSelectedStaff(null)}
         />
       )}
@@ -947,132 +1080,592 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   );
 }
 
+function TaskCenter({ tasks, open }: { tasks: PortalTask[]; open: (section: Section) => void }) {
+  const [filter, setFilter] = useState<"all" | PortalTask["priority"]>("all");
+  const visible = filter === "all" ? tasks : tasks.filter((task) => task.priority === filter);
+  return <div className="task-center">
+    <div className="task-center-summary"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}><span>Alle Aufgaben</span><b>{tasks.length}</b></button><button className={filter === "urgent" ? "active" : ""} onClick={() => setFilter("urgent")}><span>Dringend</span><b>{tasks.filter((item) => item.priority === "urgent").length}</b></button><button className={filter === "warning" ? "active" : ""} onClick={() => setFilter("warning")}><span>Diese Woche</span><b>{tasks.filter((item) => item.priority === "warning").length}</b></button><button className={filter === "normal" ? "active" : ""} onClick={() => setFilter("normal")}><span>Geplant</span><b>{tasks.filter((item) => item.priority === "normal").length}</b></button></div>
+    <section className="panel task-inbox"><div className="panel-title"><div><h2>Einheitlicher Arbeitsvorrat</h2><p>Prüfen, antworten, ersetzen, verlängern oder abschließen</p></div><span className="live-label">LIVE</span></div><div className="task-list">{visible.length ? visible.map((task) => <article key={task.id} className={`task-row priority-${task.priority}`}><i /><div><small>{task.owner}</small><h3>{task.title}</h3><p>{task.detail}</p></div><span>{task.due || (task.priority === "urgent" ? "Heute" : "Offen")}</span><button type="button" onClick={() => open(task.section)}>Bearbeiten →</button></article>) : <div className="task-zero"><span>✓</span><b>Keine offenen Aufgaben in diesem Filter</b><p>Alle erforderlichen Vorgänge sind bearbeitet.</p></div>}</div></section>
+  </div>;
+}
+
+function DepartureConfirmBadge({ shift }: { shift?: DepartureShift }) {
+  if (!shift || shift.status === "past") return null;
+  if (shift.status === "confirmed") return <span className="departure-badge departure-confirmed">✓ Bestätigt</span>;
+  if (shift.status === "overdue") return <span className="departure-badge departure-overdue">Ersatzfahrer suchen</span>;
+  return <span className="departure-badge departure-pending">Abfahrt bestätigen</span>;
+}
+
+function DepartureConfirmPanel({ shifts }: { shifts: DepartureShift[] }) {
+  const overdue = shifts.filter((shift) => shift.status === "overdue");
+  if (!overdue.length) return null;
+  return (
+    <section className="departure-confirm-panel">
+      <header>
+        <span>!</span>
+        <div>
+          <b>{overdue.length} Abfahrten ohne Bestätigung</b>
+          <small>Frist 12 Stunden vor Start überschritten — sofort Ersatzfahrer zuordnen</small>
+        </div>
+      </header>
+      <div className="departure-confirm-list">
+        {overdue.map((shift) => (
+          <article key={shift.key}>
+            <b>{shift.driverName}</b>
+            <span>{shift.company || "Tour"} · Block {shift.blockId || "—"}</span>
+            <small>{shift.shiftDate} · {shift.startTime} · {shift.licensePlate || "Ohne Fahrzeug"}</small>
+            <em>Ersatzfahrer</em>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DriverWorkflow({ planning, operations, checklists, files, documents, departureShifts, locale, open, action }: {
+  planning: Row[];
+  operations: Row[];
+  checklists: Row[];
+  files: Row[];
+  documents: Row[];
+  departureShifts: DepartureShift[];
+  locale: DriverLocale;
+  open: (section: Section) => void;
+  action: (payload: Record<string, unknown>) => Promise<void>;
+}) {
+  const copy = {
+    de: { title: "Mein Arbeitstag", help: "Ein Schritt nach dem anderen — auch ohne Internet", confirm: "Abfahrt bestätigen", confirmed: "Abfahrt bestätigt", confirmHelp: "Bitte bis 12 Stunden vor Start bestätigen", trip: "Tour öffnen", check: "Fahrzeug prüfen", before: "Foto vor der Fahrt", nav: "Navigation starten", delivery: "Lieferung bestätigen", after: "Foto nach der Fahrt", docs: "Dokumente senden", next: "Nächster Schritt", done: "Erledigt", open: "Öffnen", none: "Noch keine Tour für diese Woche" },
+    pl: { title: "Mój dzień pracy", help: "Krok po kroku — również bez internetu", confirm: "Potwierdź wyjazd", confirmed: "Wyjazd potwierdzony", confirmHelp: "Potwierdź do 12 godzin przed startem", trip: "Otwórz trasę", check: "Sprawdź pojazd", before: "Zdjęcie przed trasą", nav: "Uruchom nawigację", delivery: "Potwierdź dostawę", after: "Zdjęcie po trasie", docs: "Wyślij dokumenty", next: "Następny krok", done: "Gotowe", open: "Otwórz", none: "Brak trasy na ten tydzień" },
+    uk: { title: "Мій робочий день", help: "Крок за кроком — навіть без інтернету", confirm: "Підтвердити виїзд", confirmed: "Виїзд підтверджено", confirmHelp: "Підтвердьте за 12 годин до старту", trip: "Відкрити рейс", check: "Перевірити авто", before: "Фото до рейсу", nav: "Запустити навігацію", delivery: "Підтвердити доставку", after: "Фото після рейсу", docs: "Надіслати документи", next: "Наступний крок", done: "Готово", open: "Відкрити", none: "На цей тиждень рейсу немає" },
+    ru: { title: "Мой рабочий день", help: "Шаг за шагом — даже без интернета", confirm: "Подтвердить выезд", confirmed: "Выезд подтверждён", confirmHelp: "Подтвердите за 12 часов до старта", trip: "Открыть рейс", check: "Проверить машину", before: "Фото до рейса", nav: "Запустить навигацию", delivery: "Подтвердить доставку", after: "Фото после рейса", docs: "Отправить документы", next: "Следующий шаг", done: "Готово", open: "Открыть", none: "На эту неделю рейса пока нет" },
+  }[locale];
+  const plan = planning[0];
+  const operation = operations.find((row) => String(row.planning_id) === String(plan?.id)) || operations[0];
+  const plate = String(plan?.license_plate || operation?.license_plate || "");
+  const nextShift = plan ? departureShiftForPlanning(departureShifts, plan.id) : undefined;
+  const departureConfirmed = nextShift?.status === "confirmed";
+  const steps = [
+    { key: "confirm", label: departureConfirmed ? copy.confirmed : copy.confirm, done: departureConfirmed, section: "driverFlow" as Section, action: nextShift && !departureConfirmed ? () => void action({ action: "confirmDeparture", planningId: nextShift.planningId, shiftDate: nextShift.shiftDate }) : undefined },
+    { key: "trip", label: copy.trip, done: Boolean(plan), section: "operations" as Section },
+    { key: "check", label: copy.check, done: checklists.some((row) => String(row.license_plate) === plate && row.phase === "Vor Fahrt"), section: "checklists" as Section },
+    { key: "before", label: copy.before, done: files.some((row) => String(row.license_plate) === plate && row.category === "before"), section: "vehicles" as Section },
+    { key: "nav", label: copy.nav, done: ["Unterwegs", "Zugestellt"].includes(String(operation?.status)), section: "operations" as Section },
+    { key: "delivery", label: copy.delivery, done: operation?.status === "Zugestellt", section: "operations" as Section },
+    { key: "after", label: copy.after, done: files.some((row) => String(row.license_plate) === plate && row.category === "after"), section: "vehicles" as Section },
+    { key: "docs", label: copy.docs, done: documents.some((row) => String(row.trip_operation_id) === String(operation?.id)), section: "operations" as Section },
+  ];
+  const nextIndex = Math.max(0, steps.findIndex((step) => !step.done));
+  return <div className="driver-flow"><section className="driver-flow-hero"><small>{copy.help}</small><h2>{copy.title}</h2>{plan ? <div><b>{plan.start_time || "06:00"}</b><span>{plan.company || "Tour"} · {plate || "—"}</span><em>{plan.block_id || "Block —"}</em>{nextShift ? <DepartureConfirmBadge shift={nextShift} /> : null}</div> : <p>{copy.none}</p>}{nextShift && !departureConfirmed ? <p className="driver-flow-confirm-note">{copy.confirmHelp}</p> : null}</section><div className="driver-flow-progress"><i style={{ width: `${(steps.filter((step) => step.done).length / steps.length) * 100}%` }} /></div><ol className="driver-flow-steps">{steps.map((step, index) => <li key={step.key} className={`${step.done ? "flow-done" : ""} ${index === nextIndex ? "flow-current" : ""} ${step.key === "confirm" && nextShift?.status === "overdue" ? "flow-overdue" : ""}`}><span>{step.done ? "✓" : index + 1}</span><div><small>{index === nextIndex && !step.done ? copy.next : step.done ? copy.done : ""}</small><b>{step.label}</b></div>{step.action ? <button type="button" className="primary-button driver-flow-confirm-button" onClick={step.action}>{copy.confirm} →</button> : step.key === "nav" && operation?.delivery_address ? <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(String(operation.delivery_address))}`} target="_blank" rel="noreferrer">{copy.open} ↗</a> : <button type="button" onClick={() => open(step.section)}>{copy.open} →</button>}</li>)}</ol><div className="offline-workflow-note"><span>⌁</span><div><b>Offline bereit</b><p>Checklisten, Fotos, Abfahrtsbestätigung und Nachrichten werden lokal gespeichert und automatisch gesendet, sobald die Verbindung wieder da ist.</p></div></div></div>;
+}
+
+function InterfaceSettings({ theme, density, pinned, sections, setTheme, setDensity, setPinned, close }: { theme: ThemeMode; density: DensityMode; pinned: Section[]; sections: typeof nav; setTheme: (value: ThemeMode) => void; setDensity: (value: DensityMode) => void; setPinned: (value: Section[]) => void; close: () => void }) {
+  return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><aside className="interface-settings"><header><div><small>PERSÖNLICHE ANSICHT</small><h2>Interface anpassen</h2></div><button type="button" onClick={close}>×</button></header><section><h3>Farbschema</h3><div className="setting-options">{(["light", "dark", "system"] as ThemeMode[]).map((value) => <button key={value} className={theme === value ? "active" : ""} onClick={() => setTheme(value)}><span>{value === "light" ? "☀" : value === "dark" ? "●" : "◐"}</span>{value === "light" ? "Hell" : value === "dark" ? "Dunkel" : "System"}</button>)}</div></section><section><h3>Darstellungsgröße</h3><div className="setting-options density-options">{(["compact", "comfortable", "large"] as DensityMode[]).map((value) => <button key={value} className={density === value ? "active" : ""} onClick={() => setDensity(value)}>{value === "compact" ? "Kompakt" : value === "large" ? "Groß (empfohlen)" : "Komfortabel"}</button>)}</div></section><section><h3>Favoriten in der Navigation</h3><p>Wichtige Bereiche werden oben angeheftet.</p><div className="pinned-settings">{sections.map((item) => <label key={item.id}><input type="checkbox" checked={pinned.includes(item.id)} onChange={() => setPinned(pinned.includes(item.id) ? pinned.filter((id) => id !== item.id) : [...pinned, item.id])} /><span>★</span>{item.label}</label>)}</div></section><button className="primary-button" type="button" onClick={close}>Ansicht speichern</button></aside></div>;
+}
+
+const code39Patterns: Record<string, string> = {
+  "0": "nnnwwnwnn", "1": "wnnwnnnnw", "2": "nnwwnnnnw", "3": "wnwwnnnnn", "4": "nnnwwnnnw",
+  "5": "wnnwwnnnn", "6": "nnwwwnnnn", "7": "nnnwnnwnw", "8": "wnnwnnwnn", "9": "nnwwnnwnn",
+  A: "wnnnnwnnw", B: "nnwnnwnnw", C: "wnwnnwnnn", D: "nnnnwwnnw", E: "wnnnwwnnn", F: "nnwnwwnnn",
+  G: "nnnnnwwnw", H: "wnnnnwwnn", I: "nnwnnwwnn", J: "nnnnwwwnn", K: "wnnnnnnww", L: "nnwnnnnww",
+  M: "wnwnnnnwn", N: "nnnnwnnww", O: "wnnnwnnwn", P: "nnwnwnnwn", Q: "nnnnnnwww", R: "wnnnnnwwn",
+  S: "nnwnnnwwn", T: "nnnnwnwwn", U: "wwnnnnnnw", V: "nwwnnnnnw", W: "wwwnnnnnn", X: "nwnnwnnnw",
+  Y: "wwnnwnnnn", Z: "nwwnwnnnn", "-": "nwnnnnwnw", "*": "nwnnwnwnn",
+};
+
+function FuelBarcode({ value }: { value: string }) {
+  const normalized = value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+  const sequence = `*${normalized}*`;
+  return <div className="fuel-barcode" role="img" aria-label={`Kassencode ${normalized}`}>
+    {Array.from(sequence).flatMap((character, characterIndex) => {
+      const pattern = code39Patterns[character] || code39Patterns["-"];
+      return [...pattern].map((width, index) => <i key={`${characterIndex}-${index}`} className={index % 2 === 0 ? "bar" : "gap"} style={{ width: width === "w" ? 5 : 2 }} />)
+        .concat(<i key={`${characterIndex}-separator`} className="gap" style={{ width: 2 }} />);
+    })}
+  </div>;
+}
+
+function FuelProofImage({ src, alt }: { src: string; alt: string }) {
+  return <>
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    <img src={src} alt={alt} loading="lazy" />
+  </>;
+}
+
 function VehicleFiles({
   vehicles,
   files,
   planning,
-  driver,
+  maintenance,
+  tracking,
+  comments,
+  fuelCodes,
+  fuelStops,
+  role,
   locale,
   reload,
+  action,
 }: {
   vehicles: Row[];
   files: Row[];
   planning: Row[];
-  driver: boolean;
+  maintenance: Row[];
+  tracking: Row[];
+  comments: Row[];
+  fuelCodes: Row[];
+  fuelStops: Row[];
+  role: PortalUser["role"];
   locale: DriverLocale;
   reload: () => Promise<void>;
+  action: (payload: Record<string, unknown>) => Promise<void>;
 }) {
+  type VehicleTab = "overview" | "before" | "after" | "week" | "damage" | "tuev" | "driver" | "repairs" | "fuel" | "comments";
+  const driver = role === "driver";
+  const canManage = role === "management" || role === "dispatcher";
+  const [selectedPlate, setSelectedPlate] = useState("");
+  const [activeTab, setActiveTab] = useState<VehicleTab>("overview");
+  const [search, setSearch] = useState("");
+  const [showUpload, setShowUpload] = useState(false);
+  const [showFuelForm, setShowFuelForm] = useState(false);
+  const [revealedCodes, setRevealedCodes] = useState<Record<string, boolean>>({});
+  const [renderedAt] = useState(() => Date.now());
   const c = {
-    de: { title: "Mein Fahrzeug · Fotos und Dokumente", plate: "Kennzeichen wählen", before: "Vor Fahrt", after: "Nach Fahrt", damage: "Schaden", docs: "Fahrzeugdokument", note: "Notiz", upload: "Hochladen", date: "Datum", category: "Kategorie", file: "Datei", empty: "Noch keine Fotos oder Dokumente." },
-    pl: { title: "Mój pojazd · zdjęcia i dokumenty", plate: "Wybierz pojazd", before: "Przed trasą", after: "Po trasie", damage: "Uszkodzenie", docs: "Dokument pojazdu", note: "Notatka", upload: "Wyślij", date: "Data", category: "Kategoria", file: "Plik", empty: "Brak zdjęć i dokumentów." },
-    uk: { title: "Моя вантажівка · фото та документи", plate: "Виберіть авто", before: "Перед рейсом", after: "Після рейсу", damage: "Пошкодження", docs: "Документ авто", note: "Примітка", upload: "Завантажити", date: "Дата", category: "Категорія", file: "Файл", empty: "Фото та документів ще немає." },
-    ru: { title: "Мой грузовик · фото и документы", plate: "Выберите машину", before: "До рейса", after: "После рейса", damage: "Повреждение", docs: "Документ машины", note: "Заметка", upload: "Загрузить", date: "Дата", category: "Категория", file: "Файл", empty: "Фото и документов пока нет." },
+    de: { title: "Mein Fahrzeug · Fotos und Dokumente", plate: "Kennzeichen wählen", before: "Vor Fahrt", after: "Nach Fahrt", damage: "Schäden", docs: "Fahrzeugdokument", note: "Notiz", upload: "Hochladen", empty: "Noch keine Fotos oder Dokumente.", fleet: "Gesamter Fuhrpark", search: "Kennzeichen, Firma oder Standort suchen", overview: "Übersicht", tuev: "TÜV / HU / SP", assigned: "Fahrer", repairs: "Reparaturen" },
+    pl: { title: "Mój pojazd · zdjęcia i dokumenty", plate: "Wybierz pojazd", before: "Przed trasą", after: "Po trasie", damage: "Uszkodzenia", docs: "Dokument pojazdu", note: "Notatka", upload: "Wyślij", empty: "Brak zdjęć i dokumentów.", fleet: "Cała flota", search: "Szukaj numeru, firmy lub lokalizacji", overview: "Przegląd", tuev: "TÜV / HU / SP", assigned: "Kierowca", repairs: "Naprawy" },
+    uk: { title: "Моя вантажівка · фото та документи", plate: "Виберіть авто", before: "Перед рейсом", after: "Після рейсу", damage: "Пошкодження", docs: "Документ авто", note: "Примітка", upload: "Завантажити", empty: "Фото та документів ще немає.", fleet: "Увесь автопарк", search: "Пошук номера, компанії або бази", overview: "Огляд", tuev: "TÜV / HU / SP", assigned: "Водій", repairs: "Ремонти" },
+    ru: { title: "Мой грузовик · фото и документы", plate: "Выберите машину", before: "До рейса", after: "После рейса", damage: "Повреждения", docs: "Документ машины", note: "Заметка", upload: "Загрузить", empty: "Фото и документов пока нет.", fleet: "Весь автопарк", search: "Поиск номера, компании или базы", overview: "Обзор", tuev: "TÜV / HU / SP", assigned: "Водитель", repairs: "Ремонты" },
   }[locale];
-  const plates = Array.from(
+  const plates = useMemo(() => Array.from(
     new Set([
       ...vehicles.map((v) => String(v.license_plate)),
       ...planning.map((p) => String(p.license_plate || "")).filter(Boolean),
     ]),
-  );
+  ), [planning, vehicles]);
+  const fleetRows = vehicles.length ? vehicles : plates.map((licensePlate, index) => ({ id: `planned-${index}`, license_plate: licensePlate, status: "active" }));
+  const effectivePlate = selectedPlate || String(fleetRows[0]?.license_plate || "");
+  const selectedVehicle = fleetRows.find((vehicle) => String(vehicle.license_plate) === effectivePlate);
+  const selectedFiles = files.filter((file) => String(file.license_plate) === effectivePlate);
+  const selectedMaintenance = maintenance.filter((entry) => String(entry.license_plate) === effectivePlate);
+  const selectedTracking = tracking.find((entry) => String(entry.license_plate) === effectivePlate);
+  const selectedComments = comments.filter((entry) => String(entry.license_plate) === effectivePlate);
+  const selectedFuelCodes = fuelCodes.filter((entry) => String(entry.license_plate) === effectivePlate && Number(entry.active ?? 1));
+  const selectedFuelStops = fuelStops.filter((entry) => String(entry.license_plate) === effectivePlate);
+  const assignments = planning.filter((plan) => String(plan.license_plate || "") === effectivePlate);
+  const activeAssignment = assignments.find((plan) => plan.driver_name) || assignments[0];
+  const filteredFleet = fleetRows.filter((vehicle) => {
+    const assignment = planning.find((plan) => String(plan.license_plate || "") === String(vehicle.license_plate));
+    const text = [vehicle.license_plate, vehicle.company, vehicle.location, vehicle.status, assignment?.driver_name].join(" ").toLowerCase();
+    return text.includes(search.trim().toLowerCase());
+  });
+  const fileCount = (plate: unknown, category?: string) => files.filter((file) => String(file.license_plate) === String(plate) && (!category || file.category === category)).length;
+  const categoryLabel = (category: unknown) => ({ before: c.before, after: c.after, week_start: "Wochenbeginn", week_end: "Wochenende", odometer: "Kilometerstand", damage: c.damage, accident: "Unfall", tuev: c.tuev, document: c.docs }[String(category)] || String(category));
+  const formatDate = (value: unknown) => value ? new Date(String(value)).toLocaleDateString("de-DE") : "—";
+  const daysUntilInspection = selectedVehicle?.inspection_due ? Math.ceil((new Date(String(selectedVehicle.inspection_due)).getTime() - renderedAt) / 86400000) : null;
+  const statusLabel = (value: unknown) => ({ active: "Aktiv", workshop: "Werkstatt", reserve: "Reserve" }[String(value)] || String(value || "—"));
+  const latestFuelStop = selectedFuelStops[0];
+  const odometer = selectedTracking?.odometer_km || latestFuelStop?.odometer_km || null;
+  const odometerSource = selectedTracking?.odometer_km ? `${selectedTracking.provider || "GPS"} · ${formatDate(selectedTracking.recorded_at)}` : latestFuelStop?.odometer_km ? `Tanknachweis · ${formatDate(latestFuelStop.refueled_at)}` : "Fleetboard oder Foto fehlt";
+  const plannedMaintenance = [...selectedMaintenance]
+    .filter((entry) => !["Erledigt", "Freigegeben"].includes(String(entry.status)))
+    .sort((left, right) => String(left.due_date || "9999").localeCompare(String(right.due_date || "9999")))[0];
+  const weekStartCount = selectedFiles.filter((file) => file.category === "week_start").length;
+  const weekEndCount = selectedFiles.filter((file) => file.category === "week_end").length;
+  const tabs: Array<{ id: VehicleTab; label: string; count?: number }> = [
+    { id: "overview", label: c.overview },
+    { id: "before", label: c.before, count: selectedFiles.filter((file) => file.category === "before").length },
+    { id: "after", label: c.after, count: selectedFiles.filter((file) => file.category === "after").length },
+    { id: "week", label: "Wochenfotos", count: selectedFiles.filter((file) => ["week_start", "week_end", "odometer"].includes(String(file.category))).length },
+    { id: "damage", label: c.damage, count: selectedFiles.filter((file) => file.category === "damage").length },
+    { id: "tuev", label: c.tuev, count: selectedFiles.filter((file) => file.category === "tuev").length },
+    { id: "fuel", label: "Tankvorgänge", count: selectedFuelStops.length },
+    { id: "driver", label: c.assigned, count: assignments.length },
+    { id: "repairs", label: c.repairs, count: selectedMaintenance.length },
+    { id: "comments", label: "Kommentare", count: selectedComments.length },
+  ];
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedPlate = params.get("vehicle");
+    const requestedTab = params.get("vehicleTab") as VehicleTab | null;
+    const syncDeepLink = window.setTimeout(() => {
+      if (requestedPlate && plates.includes(requestedPlate)) setSelectedPlate(requestedPlate);
+      if (requestedTab && ["overview", "before", "after", "week", "damage", "tuev", "driver", "repairs", "fuel", "comments"].includes(requestedTab)) setActiveTab(requestedTab);
+    }, 0);
+    return () => window.clearTimeout(syncDeepLink);
+  }, [plates]);
+
+  function openVehicle(licensePlate: string) {
+    setSelectedPlate(licensePlate);
+    setActiveTab("overview");
+  }
+
+  function fileGallery(items: Row[], emptyText = c.empty) {
+    return items.length ? <div className="vehicle-photo-gallery">{items.map((file) => {
+      const imageFile = String(file.content_type || "").startsWith("image/");
+      return <a key={file.id} className="vehicle-photo-card" href={`/api/vehicle-files/${file.id}`} target="_blank" rel="noreferrer">
+        <div className="vehicle-photo-preview">{imageFile ? <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={`/api/vehicle-files/${file.id}`} alt={`${categoryLabel(file.category)} · ${file.license_plate}`} loading="lazy" />
+        </> : <span>PDF</span>}<b>{categoryLabel(file.category)}</b></div>
+        <div className="vehicle-photo-meta"><strong>{file.file_name}</strong><span>{formatDate(file.created_at)} · {file.driver_name || "Fahrer"}</span><small>{file.notes || "Keine Notiz"}</small></div>
+      </a>;
+    })}</div> : <div className="vehicle-record-empty"><span>▧</span><strong>{emptyText}</strong><small>Neue Uploads des Fahrers erscheinen hier automatisch.</small></div>;
+  }
+
   async function upload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const r = await fetch("/api/vehicle-files", {
-      method: "POST",
-      body: new FormData(e.currentTarget),
-    });
-    if (r.ok) {
-      e.currentTarget.reset();
-      await reload();
-    } else alert((await r.json()).error);
+    const form = e.currentTarget; const formData = new FormData(form);
+    try {
+      if (!navigator.onLine) throw new Error("offline");
+      const r = await fetch("/api/vehicle-files", { method: "POST", body: formData });
+      if (!r.ok) return alert((await r.json()).error);
+      form.reset(); setShowUpload(false); await reload();
+    } catch {
+      await queueOfflineUpload("/api/vehicle-files", formData); form.reset();
+      alert(driver ? "Фотография сохранена без интернета и отправится автоматически." : "Datei offline gespeichert und wird automatisch synchronisiert.");
+    }
+  }
+  async function uploadFuel(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const response = await fetch("/api/fuel-stops", { method: "POST", body: new FormData(form) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(result.error || "Tankvorgang konnte nicht gespeichert werden");
+    form.reset();
+    setShowFuelForm(false);
+    await reload();
   }
   return (
-    <>
-      <Card
-        title={
-          driver
-            ? c.title
-            : "Digitale Fahrzeugakte"
-        }
-      >
-        {driver ? (
-          <form className="upload-form" onSubmit={upload}>
-            <select name="licensePlate" required>
-              <option value="">{c.plate}</option>
-              {plates.map((p) => (
-                <option key={p}>{p}</option>
-              ))}
-            </select>
-            <select name="category" required>
-              <option value="before">{c.before}</option>
-              <option value="after">{c.after}</option>
-              <option value="damage">{c.damage}</option>
-              <option value="tuev">TÜV / HU / SP</option>
-              <option value="document">{c.docs}</option>
-            </select>
-            <input name="notes" placeholder={c.note} />
-            <input
-              name="file"
-              type="file"
-              accept="image/*,application/pdf"
-              capture="environment"
-              required
-            />
-            <button className="primary-button">{c.upload}</button>
-          </form>
-        ) : (
-          <div className="viewer-note">
-            Die Fahrzeugfotos werden von den Fahrern hochgeladen. Management und
-            Disposition haben hier Lesezugriff.
-          </div>
-        )}
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{driver ? c.date : "Datum"}</th>
-                <th>{driver ? c.plate : "Kennzeichen"}</th>
-                <th>{driver ? c.category : "Kategorie"}</th>
-                {!driver ? <th>Fahrer</th> : null}
-                <th>{driver ? c.file : "Datei"}</th>
-                <th>{driver ? c.note : "Notiz"}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {files.length ? (
-                files.map((f) => (
-                  <tr key={f.id}>
-                    <td>
-                      {String(f.created_at).slice(0, 16).replace("T", " ")}
-                    </td>
-                    <td>
-                      <strong>{f.license_plate}</strong>
-                    </td>
-                    <td>
-                      <Badge value={String(f.category)} />
-                    </td>
-                    {!driver ? <td>{f.driver_name || "—"}</td> : null}
-                    <td>
-                      <a href={`/api/vehicle-files/${f.id}`} target="_blank">
-                        {f.file_name}
-                      </a>
-                    </td>
-                    <td>{f.notes || "—"}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={driver ? 5 : 6}>
-                    {driver ? c.empty : "Noch keine Fotos oder Dokumente."}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+    <div className="vehicle-registry">
+      <section className="vehicle-registry-hero">
+        <div><small>FLOTTENZENTRALE</small><h2>{driver ? c.title : "Digitale Fahrzeugakte"}</h2><p>{driver ? "Fotos, Kontrollen und Dokumente zu meinem Fahrzeug" : "Alle Fahrzeuge, Fahrerzuordnung, Fotos, Prüfungen und Werkstattvorgänge an einem Ort"}</p></div>
+        <div className="vehicle-registry-kpis"><span><b>{fleetRows.length}</b> Fahrzeuge</span><span><b>{fleetRows.filter((vehicle) => vehicle.status === "active").length}</b> einsatzbereit</span><span className={fleetRows.some((vehicle) => vehicle.status === "workshop") ? "has-warning" : ""}><b>{fleetRows.filter((vehicle) => vehicle.status === "workshop").length}</b> Werkstatt</span><span><b>{files.length}</b> Dateien</span></div>
+      </section>
+
+      <section className="vehicle-fleet-panel">
+        <header className="vehicle-fleet-toolbar"><div><h3>{driver ? c.title : c.fleet}</h3><p>{filteredFleet.length} von {fleetRows.length} Fahrzeugen</p></div>{!driver ? <label><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={c.search} /></label> : null}</header>
+        <div className="vehicle-fleet-grid">{filteredFleet.length ? filteredFleet.map((vehicle) => {
+          const plate = String(vehicle.license_plate);
+          const assignment = planning.find((plan) => String(plan.license_plate || "") === plate);
+          const lastFile = files.find((file) => String(file.license_plate) === plate);
+          return <button type="button" key={vehicle.id} className={`vehicle-fleet-card status-${String(vehicle.status || "active")} ${plate === effectivePlate ? "vehicle-fleet-card-active" : ""}`} onClick={() => openVehicle(plate)}>
+            <span className="vehicle-card-symbol">▰</span><div className="vehicle-card-main"><small>{vehicle.company || "Ohne Firma"}</small><strong>{plate}</strong><span>{vehicle.location || "Kein Standort"} · {assignment?.driver_name || "Kein Fahrer"}</span></div><div className="vehicle-card-side"><Badge value={String(vehicle.status || "active")} /><b>{fileCount(plate)} Dateien</b><small>{lastFile ? `Neu ${formatDate(lastFile.created_at)}` : "Keine Uploads"}</small></div>
+          </button>;
+        }) : <div className="vehicle-record-empty"><span>⌕</span><strong>Kein Fahrzeug gefunden</strong><small>Suchbegriff ändern oder ein neues Fahrzeug anlegen.</small></div>}</div>
+      </section>
+
+      {selectedVehicle ? <section className="vehicle-record-panel">
+        <header className="vehicle-record-header"><div className="vehicle-record-title"><span>▰</span><div><small>{selectedVehicle.company || "Fahrzeugakte"}</small><h2>{selectedVehicle.license_plate}</h2><p>{selectedVehicle.location || "Standort nicht hinterlegt"} · {activeAssignment?.driver_name || "Kein Fahrer zugeordnet"}</p></div></div><div className="vehicle-record-status"><Badge value={String(selectedVehicle.status || "active")} /><span>{selectedFiles.length} Dateien</span>{driver ? <button type="button" className="vehicle-add-proof" onClick={() => setShowUpload((value) => !value)}>＋ Foto hinzufügen</button> : null}</div></header>
+
+        {driver && showUpload ? <form className="upload-form vehicle-upload-form" onSubmit={upload}>
+          <select name="licensePlate" required defaultValue={effectivePlate}><option value="">{c.plate}</option>{plates.map((plate) => <option key={plate}>{plate}</option>)}</select>
+          <select name="category" required defaultValue="week_start"><option value="week_start">Wochenbeginn · LKW + Kilometerstand</option><option value="week_end">Wochenende · LKW + Kilometerstand</option><option value="before">{c.before}</option><option value="after">{c.after}</option><option value="odometer">Kilometerstand</option><option value="damage">{c.damage}</option><option value="accident">Unfall</option><option value="tuev">TÜV / HU / SP</option><option value="document">{c.docs}</option></select>
+          <input name="notes" placeholder={c.note} />
+          <input name="file" type="file" accept="image/*,application/pdf" capture="environment" required />
+          <button className="primary-button">{c.upload}</button>
+        </form> : !driver ? <div className="viewer-note vehicle-viewer-note">Die Fahrzeugfotos werden von den Fahrern hochgeladen. Management und Disposition sehen neue Aufnahmen sofort in der passenden Fahrzeugakte.</div> : null}
+
+        <nav className="vehicle-record-tabs" aria-label="Fahrzeugakte Bereiche">{tabs.map((tab) => <button type="button" key={tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>{tab.label}{tab.count !== undefined ? <span>{tab.count}</span> : null}</button>)}</nav>
+
+        <div className="vehicle-record-content">
+          {activeTab === "overview" ? <div className="vehicle-overview">
+            <div className="vehicle-overview-grid"><div><span>Status</span><strong>{statusLabel(selectedVehicle.status)}</strong><small>{selectedVehicle.status === "workshop" ? "Derzeit nicht einplanen" : "Für die Disposition verfügbar"}</small></div><div><span>Aktueller Fahrer</span><strong>{activeAssignment?.driver_name || "Nicht zugeordnet"}</strong><small>{activeAssignment?.block_id ? `Block ${activeAssignment.block_id}` : "Kein aktiver Block"}</small></div><div className={daysUntilInspection !== null && daysUntilInspection <= 60 ? "overview-warning" : ""}><span>TÜV / HU / SP</span><strong>{formatDate(selectedVehicle.inspection_due)}</strong><small>{daysUntilInspection === null ? "Termin fehlt" : daysUntilInspection < 0 ? "Prüfung abgelaufen" : `${daysUntilInspection} Tage verbleibend`}</small></div><div><span>Aktueller Kilometerstand</span><strong>{odometer ? `${Number(odometer).toLocaleString("de-DE")} km` : "—"}</strong><small>{odometerSource}</small></div><div className={!weekStartCount || !weekEndCount ? "overview-warning" : ""}><span>Wochennachweis</span><strong>{weekStartCount} / {weekEndCount}</strong><small>Beginn / Ende der Woche</small></div><div><span>Nächste Wartung</span><strong>{plannedMaintenance ? formatDate(plannedMaintenance.due_date) : "Keine offene"}</strong><small>{plannedMaintenance?.description || "Fahrzeug freigegeben"}</small></div></div>
+            <div className="vehicle-master-data"><div><span>Firma</span><b>{selectedVehicle.company || "—"}</b></div><div><span>Standort</span><b>{selectedVehicle.location || "—"}</b></div><div><span>Planungsbeginn</span><b>{activeAssignment?.start_time || "—"}</b></div><div><span>Manager-Notiz</span><b>{selectedVehicle.notes || "Keine Notiz"}</b></div></div>
+            {canManage ? <form className="vehicle-admin-form" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); void action({ action: "updateVehicle", licensePlate: effectivePlate, company: form.get("company"), location: form.get("location"), status: form.get("status"), inspectionDue: form.get("inspectionDue"), notes: form.get("notes") }); }}><label>Firma<input name="company" defaultValue={String(selectedVehicle.company || "")} /></label><label>Standort<input name="location" defaultValue={String(selectedVehicle.location || "")} /></label><label>Status<select name="status" defaultValue={String(selectedVehicle.status || "active")}><option value="active">Aktiv</option><option value="workshop">Werkstatt</option><option value="reserve">Reserve</option></select></label><label>TÜV / HU / SP<input name="inspectionDue" type="date" defaultValue={String(selectedVehicle.inspection_due || "").slice(0, 10)} /></label><label className="vehicle-admin-note">Aktuelle Fahrzeugnotiz<input name="notes" defaultValue={String(selectedVehicle.notes || "")} placeholder="z. B. Workshop Appointment / TÜV" /></label><button className="primary-button">Fahrzeugdaten speichern</button></form> : null}
+            <div className="vehicle-content-heading"><div><small>LETZTE UPLOADS</small><h3>Aktuelle Fotos und Dokumente</h3></div><span>{selectedFiles.length}</span></div>{fileGallery(selectedFiles.slice(0, 6))}
+          </div> : null}
+
+          {activeTab === "before" ? <><div className="vehicle-content-heading"><div><small>VOR FAHRT</small><h3>Fahrzeugzustand vor dem Einsatz</h3></div><span>{fileCount(effectivePlate, "before")}</span></div>{fileGallery(selectedFiles.filter((file) => file.category === "before"), "Noch keine Fotos vor der Fahrt")}</> : null}
+          {activeTab === "after" ? <><div className="vehicle-content-heading"><div><small>NACH FAHRT</small><h3>Fahrzeugzustand nach dem Einsatz</h3></div><span>{fileCount(effectivePlate, "after")}</span></div>{fileGallery(selectedFiles.filter((file) => file.category === "after"), "Noch keine Fotos nach der Fahrt")}</> : null}
+          {activeTab === "week" ? <><div className="vehicle-content-heading"><div><small>WÖCHENTLICHE KONTROLLE</small><h3>LKW und Kilometerstand am Wochenbeginn und Wochenende</h3></div><span>{weekStartCount} / {weekEndCount}</span></div><div className="weekly-proof-summary"><div className={weekStartCount ? "complete" : "missing"}><span>{weekStartCount ? "✓" : "!"}</span><div><b>Wochenbeginn</b><small>{weekStartCount ? `${weekStartCount} Nachweis(e)` : "Foto des LKW und Kilometerstands fehlt"}</small></div></div><div className={weekEndCount ? "complete" : "missing"}><span>{weekEndCount ? "✓" : "!"}</span><div><b>Wochenende</b><small>{weekEndCount ? `${weekEndCount} Nachweis(e)` : "Foto des LKW und Kilometerstands fehlt"}</small></div></div></div>{fileGallery(selectedFiles.filter((file) => ["week_start", "week_end", "odometer"].includes(String(file.category))), "Noch keine Wochenfotos vorhanden")}</> : null}
+          {activeTab === "damage" ? <><div className="vehicle-content-heading"><div><small>SCHADEN- UND UNFALLAKTE</small><h3>Schäden, Unfälle und Beweisfotos</h3></div><span>{selectedFiles.filter((file) => ["damage", "accident"].includes(String(file.category))).length}</span></div>{fileGallery(selectedFiles.filter((file) => ["damage", "accident"].includes(String(file.category))), "Keine Schaden- oder Unfallfotos vorhanden")}<div className="vehicle-inline-records">{selectedMaintenance.filter((entry) => /schaden|unfall|accident|damage/i.test(String(entry.category))).map((entry) => <article key={entry.id}><div><b>{entry.description}</b><span>{entry.responsible || "Noch nicht zugewiesen"}</span></div><Badge value={String(entry.status)} /></article>)}</div></> : null}
+          {activeTab === "tuev" ? <><div className={`vehicle-inspection-banner ${daysUntilInspection !== null && daysUntilInspection <= 60 ? "inspection-warning" : ""}`}><div><small>NÄCHSTER PRÜFTERMIN</small><strong>{formatDate(selectedVehicle.inspection_due)}</strong></div><span>{daysUntilInspection === null ? "Termin hinterlegen" : daysUntilInspection < 0 ? "Abgelaufen" : `${daysUntilInspection} Tage`}</span></div>{fileGallery(selectedFiles.filter((file) => file.category === "tuev"), "Noch keine TÜV/HU/SP-Dokumente")}<div className="vehicle-inline-records">{selectedMaintenance.filter((entry) => /TÜV|HU|SP/i.test(String(entry.category))).map((entry) => <article key={entry.id}><div><b>{entry.description}</b><span>{formatDate(entry.due_date)} · {entry.responsible || "—"}</span></div><Badge value={String(entry.status)} /></article>)}</div></> : null}
+          {activeTab === "driver" ? <><div className="vehicle-content-heading"><div><small>FAHRERZUORDNUNG</small><h3>Aktuelle Planung für {effectivePlate}</h3></div><span>{assignments.length}</span></div><div className="vehicle-assignment-list">{assignments.length ? assignments.map((assignment) => <article key={assignment.id}><span className="assignment-avatar">{String(assignment.driver_name || "?").split(" ").map((part) => part[0]).slice(0, 2).join("")}</span><div><strong>{assignment.driver_name || "Kein Fahrer"}</strong><p>{assignment.company || "—"} · {assignment.location || "—"}</p></div><div><b>{assignment.start_time || "06:00"}</b><small>{assignment.block_id || "Kein Block"}</small></div><Badge value={String(assignment.status || "planned")} /></article>) : <div className="vehicle-record-empty"><span>○</span><strong>Kein Fahrer zugeordnet</strong><small>Die Zuordnung erfolgt in der KW-Planung.</small></div>}</div></> : null}
+          {activeTab === "repairs" ? <><div className="vehicle-content-heading"><div><small>WERKSTATTHISTORIE</small><h3>Reparaturen, Kosten und Verantwortliche</h3></div><span>{selectedMaintenance.length}</span></div><div className="vehicle-repair-list">{selectedMaintenance.length ? selectedMaintenance.map((entry) => <article key={entry.id}><div className="repair-symbol">⚒</div><div><small>{entry.category} · {formatDate(entry.due_date)}</small><strong>{entry.description}</strong><span>{entry.responsible || "Keine Werkstatt hinterlegt"}</span></div><div><b>{Number(entry.cost || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</b><Badge value={String(entry.status)} /></div></article>) : <div className="vehicle-record-empty"><span>✓</span><strong>Keine Werkstattvorgänge</strong><small>Neue Wartungen können im Formular unterhalb der Fahrzeugakte angelegt werden.</small></div>}</div></> : null}
+          {activeTab === "fuel" ? <div className="fuel-center">
+            <div className="vehicle-content-heading"><div><small>TANKEN & KASSENCODES</small><h3>Vollständiger Tanknachweis für {effectivePlate}</h3></div><span>{selectedFuelStops.length}</span></div>
+            {driver || role === "management" ? <div className="fuel-code-grid">{(["diesel", "adblue"] as const).map((fuelType) => {
+              const code = selectedFuelCodes.find((item) => item.fuel_type === fuelType);
+              const key = `${effectivePlate}-${fuelType}`;
+              const revealed = Boolean(revealedCodes[key]);
+              return <article key={fuelType} className={`fuel-code-card fuel-${fuelType}`}><header><span>{fuelType === "diesel" ? "D" : "A"}</span><div><small>KASSENCODE</small><b>{fuelType === "diesel" ? "Diesel" : "AdBlue"}</b></div></header>{code ? <>{revealed ? <FuelBarcode value={String(code.code_value)} /> : <div className="fuel-code-hidden">•••• •••• ••••</div>}<strong>{revealed ? code.code_value : "Code geschützt"}</strong><div className="fuel-code-actions"><button type="button" onClick={() => setRevealedCodes((current) => ({ ...current, [key]: !revealed }))}>{revealed ? "Verbergen" : "Zum Scannen öffnen"}</button>{revealed ? <button type="button" onClick={() => void navigator.clipboard.writeText(String(code.code_value))}>Kopieren</button> : null}</div></> : <div className="fuel-code-missing">Noch nicht eingerichtet</div>}
+                {role === "management" ? <form onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); void action({ action: "saveFuelCode", licensePlate: effectivePlate, fuelType, codeValue: form.get("codeValue") }); }}><input name="codeValue" defaultValue={String(code?.code_value || "")} placeholder="Kassencode eintragen" required /><button>Speichern</button></form> : null}
+              </article>;
+            })}</div> : null}
+            {driver ? <><button type="button" className="fuel-new-button" onClick={() => setShowFuelForm((value) => !value)}>＋ Neuen Tankvorgang dokumentieren</button>{showFuelForm ? <form className="fuel-stop-form" onSubmit={uploadFuel}><div className="fuel-form-fields"><label>Tankstelle<input name="station" required placeholder="z. B. Shell Berlin" /></label><label>Zeitpunkt<input name="refueledAt" type="datetime-local" required /></label><label>Kilometerstand<input name="odometerKm" type="number" min="1" step="1" inputMode="numeric" required /></label><label>Diesel (Liter)<input name="dieselLiters" type="number" min="0" step="0.01" inputMode="decimal" /></label><label>AdBlue (Liter)<input name="adblueLiters" type="number" min="0" step="0.01" inputMode="decimal" /></label><label>Gesamtbetrag (€)<input name="grossAmount" type="number" min="0" step="0.01" inputMode="decimal" required /></label><label className="fuel-form-note">Notiz<input name="notes" placeholder="Zapfsäule, Besonderheiten ..." /></label></div><input type="hidden" name="licensePlate" value={effectivePlate} /><div className="fuel-photo-requirements"><label><b>1</b><span>LKW an der Tankstelle</span><input name="stationPhoto" type="file" accept="image/*" capture="environment" required /></label><label><b>2</b><span>Diesel-Zapfsäule</span><input name="dieselPhoto" type="file" accept="image/*" capture="environment" required /></label><label><b>3</b><span>AdBlue-Zapfsäule</span><input name="adbluePhoto" type="file" accept="image/*" capture="environment" required /></label><label><b>4</b><span>Kassenbeleg</span><input name="receiptPhoto" type="file" accept="image/*" capture="environment" required /></label></div><button className="primary-button">4 Fotos sicher an Buchhaltung senden</button></form> : null}</> : null}
+            <div className="fuel-stop-list">{selectedFuelStops.length ? selectedFuelStops.map((stop) => <article className="fuel-stop-card" key={stop.id}><header><div><small>{formatDate(stop.refueled_at)} · {stop.driver_name || "Fahrer"}</small><strong>{stop.station}</strong><span>{Number(stop.odometer_km).toLocaleString("de-DE")} km · Diesel {Number(stop.diesel_liters || 0).toLocaleString("de-DE")} l · AdBlue {Number(stop.adblue_liters || 0).toLocaleString("de-DE")} l</span></div><div><b>{Number(stop.gross_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</b><Badge value={String(stop.status)} /></div></header><div className="fuel-proof-grid">{(["station", "diesel", "adblue", "receipt"] as const).map((kind, index) => <a key={kind} href={`/api/fuel-stops/${stop.id}/${kind}`} target="_blank" rel="noreferrer"><FuelProofImage src={`/api/fuel-stops/${stop.id}/${kind}`} alt={`${["LKW an Tankstelle", "Diesel", "AdBlue", "Beleg"][index]} · ${effectivePlate}`} /><span>{["LKW + Tankstelle", "Diesel", "AdBlue", "Beleg"][index]}</span></a>)}</div>{stop.notes ? <p>{stop.notes}</p> : null}</article>) : <div className="vehicle-record-empty"><span>⛽</span><strong>Noch kein Tankvorgang</strong><small>Nach jeder Betankung sind vier Fotos Pflicht.</small></div>}</div>
+          </div> : null}
+          {activeTab === "comments" ? <div className="vehicle-comments"><div className="vehicle-content-heading"><div><small>LICENSE PLATE COMMENTS</small><h3>Manager-Kommentare zu {effectivePlate}</h3></div><span>{selectedComments.length}</span></div>{canManage ? <form onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); void action({ action: "addVehicleComment", licensePlate: effectivePlate, comment: data.get("comment") }).then(() => form.reset()); }}><textarea name="comment" required minLength={2} placeholder="Wichtiger Hinweis für Disposition und Fahrzeugakte ..." /><button className="primary-button">Kommentar speichern</button></form> : null}<div className="vehicle-comment-list">{selectedComments.length ? selectedComments.map((comment) => <article key={comment.id}><span>{String(comment.author_name || "M").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><div><header><b>{comment.author_name}</b><time>{String(comment.created_at || "").slice(0, 16).replace("T", " ")}</time></header><p>{comment.comment}</p></div></article>) : <div className="vehicle-record-empty"><span>◌</span><strong>Noch keine Kommentare</strong><small>Kommentare aus dem Planning Report werden hier zentral gespeichert.</small></div>}</div></div> : null}
         </div>
-      </Card>
-    </>
+      </section> : <div className="vehicle-record-empty"><span>▰</span><strong>Noch kein Fahrzeug angelegt</strong><small>Legen Sie zuerst ein Fahrzeug mit Kennzeichen an.</small></div>}
+    </div>
   );
 }
+
+const performanceLabels: Record<string, string> = {
+  rating: "Bewertung",
+  late: "Verspätung",
+  no_show: "Nicht erschienen",
+  accident: "Unfall",
+  positive: "Lob / Pluspunkt",
+  comment: "Kommentar",
+};
+
+type DriverMetrics = {
+  rating: number;
+  ratingCount: number;
+  lastRating: Row | undefined;
+};
+
+function computeDriverMetrics(staffId: string | number, events: Row[]): DriverMetrics {
+  const ratingEvents = events.filter(
+    (event) => String(event.staff_id) === String(staffId) && event.event_type === "rating" && Number(event.rating),
+  );
+  const ratingCount = ratingEvents.length;
+  const rating = ratingCount ? ratingEvents.reduce((sum, event) => sum + Number(event.rating), 0) / ratingCount : 0;
+  return {
+    rating,
+    ratingCount,
+    lastRating: ratingEvents[0],
+  };
+}
+
+function StarRatingDisplay({ value, count }: { value: number; count?: number }) {
+  if (!value) return <span className="stars-empty">☆☆☆☆☆</span>;
+  const rounded = Math.round(value);
+  return (
+    <span className="stars-filled" title={count ? `${value.toFixed(1)} aus ${count} Bewertungen` : undefined}>
+      {"★".repeat(rounded)}{"☆".repeat(5 - rounded)}
+    </span>
+  );
+}
+
+function buildDriverRatingByName(staff: Row[], events: Row[]) {
+  const map = new Map<string, DriverMetrics>();
+  for (const person of staff) {
+    map.set(String(person.full_name), computeDriverMetrics(person.id, events));
+  }
+  return map;
+}
+
+function lookupDriverRating(map: Map<string, DriverMetrics>, driverName: unknown) {
+  return map.get(String(driverName || "")) || { rating: 0, ratingCount: 0, lastRating: undefined };
+}
+
+function DriverPlanningRating({ metrics }: { metrics: DriverMetrics }) {
+  if (!metrics.ratingCount) return null;
+  return (
+    <span className="planning-driver-rating" title={`${metrics.rating.toFixed(1)} aus ${metrics.ratingCount} Bewertung(en)`}>
+      {metrics.rating.toFixed(1)} ★
+    </span>
+  );
+}
+
+function DriverControlCenter({ staff, events, openDriver, action }: {
+  staff: Row[];
+  events: Row[];
+  openDriver: (row: Row) => void;
+  action: (payload: Record<string, unknown>) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<Row | null>(null);
+  const [ratingValue, setRatingValue] = useState(5);
+  const [showArchived, setShowArchived] = useState(false);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const rows = useMemo(() => staff
+    .map((person) => ({ person, ...computeDriverMetrics(person.id, events) }))
+    .filter((row) => showArchived || row.person.status === "active")
+    .filter((row) => [row.person.full_name, row.person.company, row.person.location, row.lastRating?.notes]
+      .join(" ")
+      .toLowerCase()
+      .includes(query.trim().toLowerCase()))
+    .sort((left, right) =>
+      Number(right.person.status === "active") - Number(left.person.status === "active")
+      || right.rating - left.rating
+      || right.ratingCount - left.ratingCount
+      || String(left.person.full_name).localeCompare(String(right.person.full_name)),
+    ), [staff, events, showArchived, query]);
+
+  const rankedRows = useMemo(() => rows
+    .filter((row) => row.person.status === "active" && row.ratingCount)
+    .sort((left, right) => right.rating - left.rating || right.ratingCount - left.ratingCount), [rows]);
+  const rankByStaff = new Map(rankedRows.map((row, index) => [String(row.person.id), index + 1]));
+  const leaders = rankedRows.slice(0, 3);
+  const ratingEvents = events.filter((event) => event.event_type === "rating");
+
+  return <section className="driver-control-center">
+    <header className="driver-control-hero">
+      <div>
+        <small>DISPOSITION · FAHRERBEWERTUNG</small>
+        <h2>Fahrerbewertung</h2>
+        <p>Dispatcher sendet eine Sternebewertung mit Kommentar — daraus entsteht die Rangliste aller Fahrer.</p>
+      </div>
+      <div className="driver-control-kpis">
+        <span><b>{staff.filter((person) => person.status === "active").length}</b> Fahrer aktiv</span>
+        <span><b>{rankedRows.length}</b> bewertet</span>
+        <span><b>{rows.filter((row) => row.person.status === "active" && !row.ratingCount).length}</b> noch offen</span>
+        <span><b>{ratingEvents.length}</b> Bewertungen gesendet</span>
+      </div>
+    </header>
+
+    <div className={`driver-leaderboard ${leaders.length ? "" : "driver-leaderboard-empty"}`}>
+      {leaders.length ? leaders.map((row, index) => (
+        <button type="button" key={row.person.id} onClick={() => openDriver(row.person)}>
+          <span>{index + 1}</span>
+          <div>
+            <small>RANG {index + 1} · {row.ratingCount} BEWERTUNG(EN)</small>
+            <b>{row.person.full_name}</b>
+            <em>{row.lastRating?.notes || `${row.person.company || "Ohne Firma"} · ${row.person.location || "—"}`}</em>
+          </div>
+          <strong>{row.rating.toFixed(1)}<small>/5 ★</small></strong>
+        </button>
+      )) : (
+        <div>
+          <span>☆</span>
+          <div>
+            <b>Noch kein Fahrer bewertet</b>
+            <small>Die Rangliste entsteht aus gesendeten Bewertungen — klicken Sie bei einem Fahrer auf „Bewertung senden“.</small>
+          </div>
+        </div>
+      )}
+    </div>
+
+    <div className="driver-control-toolbar">
+      <div>
+        <h3>Alle Fahrer</h3>
+        <p>Name, aktuelle Bewertung und Button „Bewertung senden“</p>
+      </div>
+      <div className="driver-toolbar-actions">
+        <button type="button" className={showArchived ? "active" : ""} onClick={() => setShowArchived((value) => !value)}>
+          Archiv {showArchived ? "ausblenden" : `(${staff.filter((person) => person.status === "archived").length})`}
+        </button>
+        <label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Fahrer suchen …" /></label>
+      </div>
+    </div>
+
+    <div className="driver-rating-table table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Rang</th>
+            <th>Fahrer</th>
+            <th>Bewertung</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const rank = rankByStaff.get(String(row.person.id));
+            return (
+              <tr key={row.person.id} className={row.person.status === "archived" ? "roster-archived" : ""}>
+                <td>{rank ? <span className="driver-rank-badge">#{rank}</span> : "—"}</td>
+                <td>
+                  <button type="button" className="staff-link" onClick={() => openDriver(row.person)}>
+                    <strong>{row.person.full_name}</strong>
+                  </button>
+                  <small>{row.person.company || "Ohne Firma"} · {row.person.location || "—"} · System {row.person.system_type || "—"}</small>
+                </td>
+                <td>
+                  <div className={`driver-list-rating ${row.ratingCount ? "has-rating" : ""}`}>
+                    <div>
+                      <b>{row.ratingCount ? row.rating.toFixed(1) : "—"}</b>
+                      <StarRatingDisplay value={row.rating} count={row.ratingCount} />
+                      <small>{row.ratingCount ? `${row.ratingCount} Bewertung(en)` : "Noch nicht bewertet"}</small>
+                    </div>
+                    {row.lastRating?.notes ? <p className="driver-rating-comment">{row.lastRating.notes}</p> : null}
+                  </div>
+                </td>
+                <td className="driver-actions-cell">
+                  {row.person.status === "active" ? (
+                    <button type="button" className="driver-rate-button" onClick={() => { setSelected(row.person); setRatingValue(5); }}>
+                      Bewertung senden
+                    </button>
+                  ) : (
+                    <button type="button" className="driver-open-profile" onClick={() => openDriver(row.person)}>Fahrerakte</button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {!rows.length ? (
+        <div className="driver-roster-empty"><span>⌕</span><b>Keine Fahrer gefunden</b><p>Suchbegriff ändern oder Archiv einblenden.</p></div>
+      ) : null}
+    </div>
+
+    <div className="driver-event-history">
+      <div className="panel-title">
+        <div><h3>Letzte gesendete Bewertungen</h3><p>Rangliste wird aus dem Durchschnitt aller Bewertungen berechnet</p></div>
+        <span>{ratingEvents.length}</span>
+      </div>
+      {ratingEvents.length ? ratingEvents.slice(0, 12).map((event) => (
+        <article key={event.id} className="event-rating">
+          <span>★</span>
+          <div>
+            <header>
+              <button type="button" onClick={() => { const person = staff.find((item) => String(item.id) === String(event.staff_id)); if (person) openDriver(person); }}>{event.full_name}</button>
+              <Badge value="Bewertung" />
+            </header>
+            <p>{event.notes || "Ohne Kommentar"}</p>
+            <small>{event.event_date} · {event.created_by_name}</small>
+          </div>
+          <b>{event.rating}/5 ★</b>
+        </article>
+      )) : (
+        <div className="vehicle-record-empty"><span>☆</span><strong>Noch keine Bewertungen</strong><small>Klicken Sie bei einem Fahrer auf „Bewertung senden“.</small></div>
+      )}
+    </div>
+
+    {selected ? (
+      <div className="driver-event-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
+        <form className="driver-event-modal driver-rating-modal" onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void action({
+            action: "addDriverPerformance",
+            staffId: selected.id,
+            eventType: "rating",
+            eventDate: form.get("eventDate"),
+            rating: ratingValue,
+            minutesLate: 0,
+            notes: form.get("notes"),
+          }).then(() => setSelected(null));
+        }}>
+          <header>
+            <div>
+              <small>BEWERTUNG SENDEN</small>
+              <h3>{selected.full_name}</h3>
+              <p>{selected.company || "—"} · {selected.location || "—"}</p>
+            </div>
+            <button type="button" onClick={() => setSelected(null)}>×</button>
+          </header>
+          <label>Datum<input name="eventDate" type="date" defaultValue={today} required /></label>
+          <div className="star-rating-field">
+            <span>Sternebewertung</span>
+            <div className="star-rating-input" role="radiogroup" aria-label="Fahrerbewertung">
+              {[1, 2, 3, 4, 5].map((value) => (
+                <button type="button" key={value} className={value <= ratingValue ? "active" : ""} onClick={() => setRatingValue(value)} role="radio" aria-checked={ratingValue === value} aria-label={`${value} Sterne`}>★</button>
+              ))}
+            </div>
+            <strong>{ratingValue} von 5 · {ratingValue === 5 ? "Sehr gut" : ratingValue === 4 ? "Gut" : ratingValue === 3 ? "Befriedigend" : ratingValue === 2 ? "Verbesserungsbedarf" : "Kritisch"}</strong>
+          </div>
+          <label className="event-comment">
+            Kommentar zur Bewertung*
+            <textarea name="notes" minLength={2} required placeholder="z. B. zuverlässig, pünktlich, gute Kommunikation …" />
+          </label>
+          <div className="driver-event-impact">
+            <span>Nach dem Senden wird der Durchschnitt neu berechnet und die Rangliste aktualisiert.</span>
+            <b>{ratingValue}/5 ★</b>
+          </div>
+          <button className="primary-button">Bewertung senden</button>
+          <small className="event-visibility">Sichtbar für Management und alle Dispatcher</small>
+        </form>
+      </div>
+    ) : null}
+  </section>;
+}
+
 function DriverDossier({
   staff,
   planning,
@@ -1088,6 +1681,11 @@ function DriverDossier({
   audit,
   concerns,
   checklists,
+  performance,
+  role,
+  action,
+  openSection,
+  openVehicle,
   close,
 }: {
   staff: Row;
@@ -1104,9 +1702,14 @@ function DriverDossier({
   audit: Row[];
   concerns: Row[];
   checklists: Row[];
+  performance: Row[];
+  role: PortalUser["role"];
+  action: (payload: Record<string, unknown>) => Promise<void>;
+  openSection: (section: Section) => void;
+  openVehicle: (plate: unknown) => void;
   close: () => void;
 }) {
-  const [tab, setTab] = useState<"overview" | "operations" | "documents" | "finance">("overview");
+  const [tab, setTab] = useState<"overview" | "performance" | "operations" | "documents" | "finance">("overview");
   const [dossierNow] = useState(() => new Date().getTime());
   const trips = planning.filter(
     (p) => String(p.staff_id) === String(staff.id) || p.driver_name === staff.full_name,
@@ -1132,10 +1735,13 @@ function DriverDossier({
     const detail = String(row.details || "").toLowerCase();
     return detail.includes(String(staff.full_name || "").toLowerCase()) || detail.includes(`\"staffId\":${staff.id}`) || detail.includes(`\"staffId\":\"${staff.id}\"`);
   });
-  const totalExpenses = driverExpenses.reduce((sum, row) => sum + Number(row.gross_amount || 0), 0);
   const completedTrips = operations.filter((row) => row.status === "Zugestellt").length;
   const violations = driverTachograph.filter((row) => row.infringement || Number(row.remaining_minutes) <= 90);
   const expiring = personnel.filter((row) => row.expires_at && new Date(String(row.expires_at)).getTime() <= dossierNow + 60 * 86400000);
+  const driverPerformance = performance.filter((row) => String(row.staff_id) === String(staff.id));
+  const driverRatings = driverPerformance.filter((row) => row.event_type === "rating" && Number(row.rating));
+  const averageRating = driverRatings.length ? driverRatings.reduce((sum, row) => sum + Number(row.rating), 0) / driverRatings.length : 0;
+  const canViewFinance = role === "management" || role === "accountant";
   const dossierEmpty = (text: string) => <div className="dossier-empty">{text}</div>;
   return (
     <div className="modal-backdrop">
@@ -1149,6 +1755,8 @@ function DriverDossier({
           </div>
           <div className="dossier-hero-actions">
             <Badge value={String(staff.status)} />
+            {role === "management" ? <button type="button" className="dossier-payroll-action" onClick={() => openSection("documents")}>Lohn öffnen</button> : null}
+            {role === "management" && staff.status === "active" ? <button type="button" className="dossier-archive-action" onClick={() => { if (confirm(`${staff.full_name} wirklich als ausgeschieden markieren? Der Login wird deaktiviert.`)) void action({ action: "archiveStaff", id: staff.id }).then(close); }}>Ausscheiden</button> : null}
             <a href={`/api/staff/${staff.id}/export`} target="_blank" rel="noreferrer">DSGVO-Export</a>
             <button type="button" onClick={close} aria-label="Dossier schließen">×</button>
           </div>
@@ -1158,28 +1766,35 @@ function DriverDossier({
           <div><span>Fahrzeug</span><b>{plates[0] || "—"}</b><small>{trucks[0]?.status || "Keine Zuordnung"}</small></div>
           <div className={expiring.length ? "kpi-warning" : ""}><span>Dokumente</span><b>{personnel.length}</b><small>{expiring.length} laufen bald ab</small></div>
           <div className={violations.length ? "kpi-danger" : ""}><span>Verstöße</span><b>{violations.length}</b><small>Tachograph / Ruhezeit</small></div>
-          <div><span>Ausgaben</span><b>{totalExpenses.toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</b><small>{driverExpenses.length} Belege</small></div>
+          <div className={averageRating && averageRating < 3 ? "kpi-danger" : averageRating && averageRating < 4 ? "kpi-warning" : ""}><span>Bewertung</span><b>{averageRating ? `${averageRating.toFixed(1)}/5 ★` : "Noch offen"}</b><small>{driverRatings.length ? `${driverRatings.length} Bewertung(en) mit Kommentar` : "Noch keine Bewertung der Disposition"}</small></div>
           <div><span>Nachrichten</span><b>{messages.length}</b><small>{driverConcerns.length} Anliegen</small></div>
         </div>
         <div className="dossier-tabs" role="tablist">
           <button type="button" className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Übersicht</button>
+          {role === "management" || role === "dispatcher" ? <button type="button" className={tab === "performance" ? "active" : ""} onClick={() => setTab("performance")}>Bewertung & Vorfälle</button> : null}
           <button type="button" className={tab === "operations" ? "active" : ""} onClick={() => setTab("operations")}>Touren & Kommunikation</button>
           <button type="button" className={tab === "documents" ? "active" : ""} onClick={() => setTab("documents")}>Dokumente & Fotos</button>
-          <button type="button" className={tab === "finance" ? "active" : ""} onClick={() => setTab("finance")}>Finanzen & Verlauf</button>
+          {canViewFinance ? <button type="button" className={tab === "finance" ? "active" : ""} onClick={() => setTab("finance")}>Finanzen & Verlauf</button> : null}
         </div>
         <div className="dossier-body">
           {tab === "overview" ? <>
             <div className="dossier-grid">
-              <section><h3>Fahrerdaten</h3><p><span>Status</span><Badge value={String(staff.status)} /></p><p><span>Firma</span><b>{staff.company || "—"}</b></p><p><span>Standort</span><b>{staff.location || "—"}</b></p><p><span>Systemart</span><b>{staff.system_type || "—"}</b></p><p><span>Vergütung</span><b>{staff.compensation || "—"}</b></p><p><span>Eintritt</span><b>{staff.start_date || "—"}</b></p><p><span>Login</span><b>{staff.login_email || "Kein Zugang"}</b></p></section>
-              <section><h3>Aktuelle Fahrzeugzuordnung</h3>{trucks.length ? trucks.map((vehicle) => <div className="dossier-truck" key={vehicle.id}><span>▣</span><div><b>{vehicle.license_plate}</b><small>{vehicle.company || "—"} · {vehicle.location || "—"}</small></div><Badge value={String(vehicle.status || "active")} /></div>) : dossierEmpty("Für diese Woche ist kein Fahrzeug zugeordnet.")}</section>
+              <section><h3>Fahrerdaten</h3><p><span>Status</span><Badge value={String(staff.status)} /></p><p><span>Firma</span><b>{staff.company || "—"}</b></p><p><span>Standort / Base</span><b>{staff.location || "—"}</b></p><p><span>System / Kadenz</span><b>{staff.system_type || "—"}</b></p><p><span>Abwesenheit</span><b>{staff.vacation || "Keine"}</b></p>{canViewFinance ? <p><span>Vergütung</span><b>{staff.compensation || "—"}</b></p> : null}<p><span>Eintritt</span><b>{staff.hired_at || "—"}</b></p><p><span>Login</span><b>{staff.login_email || "Kein Zugang"}</b></p></section>
+              <section><h3>Aktuelle Fahrzeugzuordnung</h3>{trucks.length ? trucks.map((vehicle) => <button type="button" className="dossier-truck dossier-truck-link" onClick={() => openVehicle(vehicle.license_plate)} key={vehicle.id}><span>▣</span><div><b>{vehicle.license_plate}</b><small>{vehicle.company || "—"} · {vehicle.location || "—"}</small></div><Badge value={String(vehicle.status || "active")} /></button>) : dossierEmpty("Für diese Woche ist kein Fahrzeug zugeordnet.")}</section>
             </div>
             <h3 className="dossier-title">Wochenplanung</h3>
-            {trips.length ? <Planning rows={trips} /> : dossierEmpty("Für die ausgewählte Kalenderwoche gibt es keine Planung.")}
+            {trips.length ? <Planning rows={trips} openVehicle={openVehicle} /> : dossierEmpty("Für die ausgewählte Kalenderwoche gibt es keine Planung.")}
             <div className="dossier-mini-grid">
               <section><h3>Letzte Fahrzeug-Checks</h3>{driverChecks.slice(0, 4).map((row) => <p key={row.id}><span>{row.phase} · {row.license_plate}</span><Badge value={String(row.status)} /></p>)}{!driverChecks.length ? dossierEmpty("Noch keine Fahrzeug-Checks") : null}</section>
               <section><h3>Offene Anliegen</h3>{driverConcerns.slice(0, 4).map((row) => <p key={row.id}><span>{row.item_name || row.subject || "Fahreranliegen"}</span><Badge value={String(row.completion_status || row.status || "Neu")} /></p>)}{!driverConcerns.length ? dossierEmpty("Keine offenen Anliegen") : null}</section>
             </div>
           </> : null}
+
+          {tab === "performance" ? <div className="dossier-performance">
+            <div className="performance-summary"><div><small>BEWERTUNG DER DISPOSITION</small><strong>{averageRating ? averageRating.toFixed(1) : "—"}<span> / 5 ★</span></strong><p>{driverRatings.length ? `${driverRatings.length} Bewertung(en), jeweils mit Kommentar und verantwortlichem Dispatcher.` : "Noch keine Bewertung gespeichert."}</p></div><div><small>LETZTER KOMMENTAR</small><strong>{driverRatings[0]?.rating ? `${driverRatings[0].rating}/5 ★` : "—"}</strong><p>{driverRatings[0]?.notes || "Der letzte Bewertungskommentar erscheint hier."}</p></div><div><small>VORFÄLLE</small><strong>{driverPerformance.filter((row) => ["late", "no_show", "accident"].includes(String(row.event_type))).length}</strong><p>{driverPerformance.filter((row) => row.event_type === "late").length} verspätet · {driverPerformance.filter((row) => row.event_type === "no_show").length} nicht erschienen · {driverPerformance.filter((row) => row.event_type === "accident").length} Unfälle</p></div></div>
+            <div className="dossier-section-head"><div><small>GEMEINSAMES DISPOSITIONSPROTOKOLL</small><h3>Bewertungen, Vorfälle und interne Kommentare</h3></div><span>{driverPerformance.length}</span></div>
+            <div className="driver-event-history dossier-event-history">{driverPerformance.length ? driverPerformance.map((event) => <article key={event.id} className={`event-${event.event_type}`}><span>{event.event_type === "late" ? "◷" : event.event_type === "no_show" ? "×" : event.event_type === "accident" ? "!" : event.event_type === "positive" ? "+" : event.event_type === "rating" ? "★" : "●"}</span><div><header><b>{performanceLabels[String(event.event_type)] || event.event_type}</b>{event.rating ? <span>{event.rating}/5 ★</span> : null}</header><p>{event.notes || (event.minutes_late ? `${event.minutes_late} Minuten Verspätung` : "Ohne Zusatzkommentar")}</p><small>{event.event_date} · {event.created_by_name}</small></div><b>{event.event_type === "rating" ? `${event.rating}/5 ★` : performanceLabels[String(event.event_type)] || "Eintrag"}</b></article>) : dossierEmpty("Noch keine Bewertungen der Disposition")}</div>
+          </div> : null}
 
           {tab === "operations" ? <div className="dossier-split">
             <section><div className="dossier-section-head"><div><small>TOUREN</small><h3>Operative Einsätze</h3></div><span>{operations.length}</span></div>{operations.length ? <div className="dossier-operation-list">{operations.map((row) => <article key={row.id}><header><b>{row.license_plate || "Ohne Kennzeichen"}</b><Badge value={String(row.status || "Geplant")} /></header><p>{row.pickup_address || row.location || "Start offen"} <span>→</span> {row.delivery_address || "Ziel offen"}</p><small>{row.block_id || "Kein Block"} · ETA {row.eta ? String(row.eta).slice(0, 16).replace("T", " ") : "offen"}</small>{row.delay_reason ? <em>{row.delay_reason}</em> : null}</article>)}</div> : dossierEmpty("Noch keine operativen Touren")}</section>
@@ -1195,7 +1810,7 @@ function DriverDossier({
             <div className="file-grid">{operationDocuments.length ? operationDocuments.map((file) => <a key={file.id} href={`/api/trip-documents/${file.id}`} target="_blank" rel="noreferrer"><b>{file.category}</b><span>{file.license_plate || "Tourdokument"} · {String(file.created_at).slice(0, 10)}</span><small>{file.file_name}</small></a>) : dossierEmpty("Noch keine Tournachweise")}</div>
           </> : null}
 
-          {tab === "finance" ? <div className="dossier-split">
+          {tab === "finance" && canViewFinance ? <div className="dossier-split">
             <section><div className="dossier-section-head"><div><small>BUCHHALTUNG</small><h3>Lohn & Auslagen</h3></div><span>{salary.length + driverExpenses.length}</span></div><div className="dossier-finance-list">{salary.map((record) => <article key={`salary-${record.id}`}><div><b>Lohnabrechnung {record.period}</b><small>{record.payment_status || "In Vorbereitung"}</small></div><strong>{Number(record.net_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</strong></article>)}{driverExpenses.map((record) => <article key={`expense-${record.id}`}><div><b>{record.category || "Ausgabe"} · {record.merchant || "Beleg"}</b><small>{record.expense_date} · {record.status}</small></div><strong>{Number(record.gross_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</strong></article>)}{!salary.length && !driverExpenses.length ? dossierEmpty("Noch keine Finanzdaten") : null}</div></section>
             <section><div className="dossier-section-head"><div><small>COMPLIANCE</small><h3>Verstöße & Änderungshistorie</h3></div><span>{violations.length + driverAudit.length}</span></div><div className="dossier-timeline">{violations.map((row) => <article className="timeline-danger" key={`violation-${row.id}`}><i /><div><b>{row.infringement || "Restfahrzeit unter 90 Minuten"}</b><small>{row.record_date} · {row.license_plate}</small></div></article>)}{driverAudit.slice(0, 12).map((row) => <article key={`audit-${row.id}`}><i /><div><b>{row.action}</b><small>{String(row.created_at || "").slice(0, 16).replace("T", " ")} · {row.user_name || "System"}</small></div></article>)}{!violations.length && !driverAudit.length ? dossierEmpty("Keine Verstöße oder Änderungen vorhanden") : null}</div></section>
           </div> : null}
@@ -1368,11 +1983,17 @@ function Planning({
   canEdit = false,
   edit,
   remove,
+  openDriver,
+  openVehicle,
+  driverRatingMap,
 }: {
   rows: Row[];
   canEdit?: boolean;
   edit?: (row: Row) => void;
   remove?: (id: number) => void;
+  openDriver?: (row: Row) => void;
+  openVehicle?: (plate: unknown) => void;
+  driverRatingMap?: Map<string, DriverMetrics>;
 }) {
   return (
     <div className="table-wrap">
@@ -1398,15 +2019,15 @@ function Planning({
                 <td>
                   <strong>{r.company}</strong>
                 </td>
-                <td>{r.start_time || "06:00"}</td>
-                <td>{r.driver_name || "NO DRIVER"}</td>
+                <td>{r.driver_name ? <span className="planning-driver-cell"><button type="button" className="staff-link planning-person-link" onClick={() => openDriver?.(r)} disabled={!openDriver}>{r.driver_name}</button>{driverRatingMap ? <DriverPlanningRating metrics={lookupDriverRating(driverRatingMap, r.driver_name)} /> : null}</span> : "NO DRIVER"}</td>
                 <td>{r.location || "—"}</td>
-                <td>{r.license_plate || "—"}</td>
+                <td>{r.license_plate ? <button type="button" className="plate-link planning-plate-link" onClick={() => openVehicle?.(r.license_plate)} disabled={!openVehicle}>{r.license_plate}</button> : "—"}</td>
                 <td>
                   {Array.from(rowDays(r))
                     .map((day) => weekDayNames[day - 1].slice(0, 2))
                     .join(", ")}
                 </td>
+                <td>{r.start_time || "06:00"}</td>
                 <td>{r.block_id || "—"}</td>
                 <td>
                   <Badge value={String(r.status)} />
@@ -1497,10 +2118,16 @@ function PlanningAlerts({
   rows,
   staff,
   vehicles,
+  employeeDocuments,
+  tachograph,
+  departureShifts,
 }: {
   rows: Row[];
   staff: Row[];
   vehicles: Row[];
+  employeeDocuments: Row[];
+  tachograph: Row[];
+  departureShifts: DepartureShift[];
 }) {
   const alerts: { key: string; level: "danger" | "warning"; text: string }[] =
     [];
@@ -1587,6 +2214,53 @@ function PlanningAlerts({
       );
   }
 
+  for (const doc of employeeDocuments) {
+    if (!doc.expires_at) continue;
+    const due = new Date(String(doc.expires_at));
+    const daysLeft = Math.ceil((due.getTime() - today.getTime()) / 86400000);
+    if (daysLeft <= 30) {
+      const label = String(doc.category || doc.file_name || "Dokument");
+      add(
+        `doc-${doc.id}`,
+        daysLeft < 0 ? "danger" : "warning",
+        daysLeft < 0
+          ? `${label} von ${doc.full_name || "Mitarbeiter"} ist abgelaufen.`
+          : `${label} von ${doc.full_name || "Mitarbeiter"} läuft in ${daysLeft} Tagen ab.`,
+      );
+    }
+  }
+
+  const seenTacho = new Set<string>();
+  for (const row of tachograph) {
+    if (!row.infringement && Number(row.remaining_minutes) > 90) continue;
+    const key = String(row.staff_id || row.full_name || row.id);
+    if (seenTacho.has(key)) continue;
+    seenTacho.add(key);
+    const name = row.full_name || "Fahrer";
+    add(
+      `tacho-${row.id}`,
+      row.infringement ? "danger" : "warning",
+      row.infringement
+        ? `Tachograph-Verstoß: ${name} · ${row.infringement}`
+        : `Tachograph-Warnung: ${name} hat nur noch ${row.remaining_minutes} Min. Restlenkzeit.`,
+    );
+  }
+
+  for (const shift of departureShifts.filter((item) => item.status === "overdue")) {
+    add(
+      `departure-${shift.key}`,
+      "danger",
+      `${shift.driverName}: Abfahrt ${shift.shiftDate} ${shift.startTime} nicht bestätigt — Ersatzfahrer suchen.`,
+    );
+  }
+  for (const shift of departureShifts.filter((item) => item.status === "pending")) {
+    add(
+      `departure-pending-${shift.key}`,
+      "warning",
+      `${shift.driverName}: Abfahrt ${shift.shiftDate} ${shift.startTime} wartet auf Bestätigung (Frist 12h vor Start).`,
+    );
+  }
+
   return (
     <div
       className={`planning-alerts ${alerts.length ? "has-alerts" : "all-clear"}`}
@@ -1600,7 +2274,7 @@ function PlanningAlerts({
               : "Keine Konflikte erkannt"}
           </b>
           <small>
-            Fahrer, Fahrzeuge, Kennzeichen und Prüftermine werden automatisch
+            Fahrer, Fahrzeuge, Kennzeichen, Abfahrtsbestätigung, Dokumente, Tachograph und Prüftermine werden automatisch
             geprüft.
           </small>
         </div>
@@ -1622,12 +2296,16 @@ function DispatchBoard({
   rows,
   staff,
   vehicles,
+  driverRatingMap,
+  departureShifts,
   assign,
   moveResource,
 }: {
   rows: Row[];
   staff: Row[];
   vehicles: Row[];
+  driverRatingMap: Map<string, DriverMetrics>;
+  departureShifts: DepartureShift[];
   assign: (row: Row, type: "driver" | "vehicle", value: string) => void | Promise<void>;
   moveResource: (sourceId: string | number, targetId: string | number, type: "driver" | "vehicle", value: string) => void | Promise<void>;
 }) {
@@ -1679,7 +2357,8 @@ function DispatchBoard({
           <div className="dispatch-pool-list">
             {activeStaff.map((person) => {
               const useCount = driverUse(String(person.full_name));
-              return <button type="button" draggable onDragStart={(event) => startDrag(event, "driver", String(person.full_name))} onDragEnd={() => setDragging(null)} className={useCount ? "pool-used" : "pool-free"} key={person.id}><span>{String(person.full_name || "F").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><div><b>{person.full_name}</b><small>{person.company || "—"} · {useCount ? `${useCount}× eingeplant` : "frei"}</small></div><i>⋮⋮</i></button>;
+              const rating = lookupDriverRating(driverRatingMap, person.full_name);
+              return <button type="button" draggable onDragStart={(event) => startDrag(event, "driver", String(person.full_name))} onDragEnd={() => setDragging(null)} className={useCount ? "pool-used" : "pool-free"} key={person.id}><span>{String(person.full_name || "F").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><div><b>{person.full_name}</b><small>{person.company || "—"} · {useCount ? `${useCount}× eingeplant` : "frei"}{rating.ratingCount ? ` · ${rating.rating.toFixed(1)} ★` : ""}</small></div><i>⋮⋮</i></button>;
             })}
             {staff.filter((person) => person.status !== "active").slice(0, 3).map((person) => <div className="pool-disabled" key={person.id}><span>×</span><div><b>{person.full_name}</b><small>Nicht aktiv</small></div></div>)}
           </div>
@@ -1691,13 +2370,15 @@ function DispatchBoard({
               const conflict = rowConflict(row);
               const unavailable = rowUnavailable(row);
               const target = dropTarget === String(row.id);
-              return <article key={row.id} className={`${conflict ? "assignment-conflict" : ""} ${unavailable ? "assignment-unavailable" : ""} ${target ? "assignment-target" : ""}`} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropTarget(String(row.id)); }} onDragLeave={() => setDropTarget(null)} onDrop={(event) => void drop(event, row)}>
+              const departureShift = departureShiftForPlanning(departureShifts, row.id);
+              const departureOverdue = departureShift?.status === "overdue";
+              return <article key={row.id} className={`${conflict ? "assignment-conflict" : ""} ${unavailable ? "assignment-unavailable" : ""} ${departureOverdue ? "assignment-departure-overdue" : ""} ${target ? "assignment-target" : ""}`} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropTarget(String(row.id)); }} onDragLeave={() => setDropTarget(null)} onDrop={(event) => void drop(event, row)}>
                 <div className="assignment-route"><span>{row.start_time || "06:00"}</span><div><b>{row.company || "Ohne Firma"}</b><small>{row.location || "—"} · Block {row.block_id || "—"}</small></div></div>
                 <div className="assignment-slots">
-                  <div className={!row.driver_name ? "slot-empty" : ""}>{row.driver_name ? <button type="button" draggable onDragStart={(event) => startDrag(event, "driver", String(row.driver_name), row.id)} onDragEnd={() => setDragging(null)}><span>◉</span><b>{row.driver_name}</b></button> : <span>Fahrer hier ablegen</span>}{row.driver_name ? <button type="button" className="slot-clear" onClick={() => void assign(row, "driver", "")} aria-label="Fahrer entfernen">×</button> : null}</div>
+                  <div className={!row.driver_name ? "slot-empty" : ""}>{row.driver_name ? <button type="button" draggable onDragStart={(event) => startDrag(event, "driver", String(row.driver_name), row.id)} onDragEnd={() => setDragging(null)}><span>◉</span><b>{row.driver_name}</b><DriverPlanningRating metrics={lookupDriverRating(driverRatingMap, row.driver_name)} /></button> : <span>Fahrer hier ablegen</span>}{row.driver_name ? <button type="button" className="slot-clear" onClick={() => void assign(row, "driver", "")} aria-label="Fahrer entfernen">×</button> : null}</div>
                   <div className={!row.license_plate ? "slot-empty" : ""}>{row.license_plate ? <button type="button" draggable onDragStart={(event) => startDrag(event, "vehicle", String(row.license_plate), row.id)} onDragEnd={() => setDragging(null)}><span>▣</span><b>{row.license_plate}</b></button> : <span>Fahrzeug hier ablegen</span>}{row.license_plate ? <button type="button" className="slot-clear" onClick={() => void assign(row, "vehicle", "")} aria-label="Fahrzeug entfernen">×</button> : null}</div>
                 </div>
-                <div className="assignment-state">{conflict ? <span className="state-danger">Konflikt</span> : unavailable ? <span className="state-warning">Nicht verfügbar</span> : <span className="state-ok">Planbar</span>}<small>{String(row.work_days || "1,2,3,4,5,6,7").split(",").length} Tage</small></div>
+                <div className="assignment-state">{departureOverdue ? <span className="state-danger">Ersatzfahrer</span> : conflict ? <span className="state-danger">Konflikt</span> : unavailable ? <span className="state-warning">Nicht verfügbar</span> : departureShift && departureShift.status !== "confirmed" ? <DepartureConfirmBadge shift={departureShift} /> : <span className="state-ok">Planbar</span>}<small>{String(row.work_days || "1,2,3,4,5,6,7").split(",").length} Tage</small></div>
               </article>;
             }) : <div className="dispatch-empty">Noch keine Einsätze. Legen Sie zuerst eine Planung an.</div>}
           </div>
@@ -1727,6 +2408,10 @@ function WeeklySchedule({
   edit,
   remove,
   move,
+  openDriver,
+  openVehicle,
+  driverRatingMap,
+  departureShifts,
   locale,
 }: {
   rows: Row[];
@@ -1738,6 +2423,10 @@ function WeeklySchedule({
   edit?: (row: Row) => void;
   remove?: (id: number) => void;
   move?: (row: Row, day: number) => void;
+  openDriver?: (row: Row) => void;
+  openVehicle?: (plate: unknown) => void;
+  driverRatingMap?: Map<string, DriverMetrics>;
+  departureShifts?: DepartureShift[];
   locale?: DriverLocale;
 }) {
   const [view, setView] = useState<"calendar" | "table">("calendar");
@@ -1808,7 +2497,7 @@ function WeeklySchedule({
         </div> : null}
       </div>
       {view === "table" ? (
-        <Planning rows={visibleRows} canEdit={canEdit} edit={edit} remove={remove} />
+        <Planning rows={visibleRows} canEdit={canEdit} edit={edit} remove={remove} openDriver={openDriver} openVehicle={openVehicle} driverRatingMap={driverRatingMap} />
       ) : (
         <div className="week-calendar-wrap">
           <div className="week-calendar">
@@ -1839,16 +2528,18 @@ function WeeklySchedule({
                         const conflict = conflicts.has(
                           `${day.number}:${row.id}`,
                         );
+                        const departureShift = departureShifts?.find((shift) => String(shift.planningId) === String(row.id) && shift.dayNumber === day.number);
+                        const departureOverdue = departureShift?.status === "overdue";
                         return (
                           <article
-                            className={`schedule-card ${conflict ? "has-conflict" : ""}`}
+                            className={`schedule-card ${conflict ? "has-conflict" : ""} ${departureOverdue ? "has-departure-overdue" : ""}`}
                             key={`${day.number}-${row.id}`}
                             draggable={canEdit}
                             onDragStart={(event) => event.dataTransfer.setData("text/plain", String(row.id))}
                           >
                             <div className="schedule-card-head">
-                              <b>{row.driver_name || scheduleCopy.noDriver}</b>
-                              {conflict ? <em>{scheduleCopy.conflict}</em> : null}
+                              <b>{row.driver_name || scheduleCopy.noDriver}{row.driver_name && driverRatingMap ? <> <DriverPlanningRating metrics={lookupDriverRating(driverRatingMap, row.driver_name)} /></> : null}</b>
+                              <span className="schedule-card-badges">{conflict ? <em>{scheduleCopy.conflict}</em> : null}{departureShift ? <DepartureConfirmBadge shift={departureShift} /> : null}</span>
                             </div>
                             <span>{row.company}</span>
                             <small>
@@ -1889,7 +2580,7 @@ function WeeklySchedule({
                       <div>
                         {free.length
                           ? free.map((driver) => (
-                              <span key={driver.id}>{driver.full_name}</span>
+                              <span key={driver.id}>{driver.full_name}{driverRatingMap ? <> <DriverPlanningRating metrics={lookupDriverRating(driverRatingMap, driver.full_name)} /></> : null}</span>
                             ))
                           : "Keine freien Fahrer"}
                       </div>
@@ -2349,15 +3040,21 @@ function EntryForm({
   kind,
   kw,
   staff,
+  driverPerformance,
   editing,
   submit,
 }: {
   kind: "staff" | "vehicle" | "planning" | "concern";
   kw: number;
   staff: Row[];
+  driverPerformance?: Row[];
   editing: Row | null;
   submit: (x: Record<string, unknown>) => void;
 }) {
+  const driverRatingMap = useMemo(
+    () => buildDriverRatingByName(staff, driverPerformance || []),
+    [staff, driverPerformance],
+  );
   function go(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -2519,9 +3216,14 @@ function EntryForm({
               defaultValue={String(editing?.driver_name || "")}
             >
               <option value="">NO DRIVER</option>
-              {staff.map((s) => (
-                <option key={s.id}>{s.full_name}</option>
-              ))}
+              {staff.map((s) => {
+                const rating = lookupDriverRating(driverRatingMap, s.full_name);
+                return (
+                  <option key={s.id} value={String(s.full_name)}>
+                    {s.full_name}{rating.ratingCount ? ` · ${rating.rating.toFixed(1)} ★` : ""}
+                  </option>
+                );
+              })}
             </select>
           </label>
           <label>

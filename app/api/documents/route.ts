@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 import { ensureDomainDatabase } from "../../../lib/domain";
 import { requirePortalUser } from "../../../lib/auth";
 

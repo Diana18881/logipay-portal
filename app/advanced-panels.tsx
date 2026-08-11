@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { DriverLocale } from "./driver-i18n";
+import { queueOfflineUpload } from "../lib/offline-client";
 
 type Row = Record<string, string | number | null>;
 type Action = (payload: Record<string, string | number | null>) => Promise<void>;
@@ -9,8 +10,12 @@ type Action = (payload: Record<string, string | number | null>) => Promise<void>
 const euro = (value: unknown) => new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(Number(value || 0));
 const dateText = (value: unknown) => value ? new Date(String(value)).toLocaleDateString("de-DE") : "—";
 
-export function EmployeeDocuments({ rows, staff, driver, locale, reload }: { rows: Row[]; staff: Row[]; driver: boolean; locale: DriverLocale; reload: () => Promise<void> }) {
+export function EmployeeDocuments({ rows, staff, audit, driver, locale, action, reload }: { rows: Row[]; staff: Row[]; audit: Row[]; driver: boolean; locale: DriverLocale; action: Action; reload: () => Promise<void> }) {
   const [notice, setNotice] = useState("");
+  const [scanResult, setScanResult] = useState<Record<string, string | number | null> | null>(null);
+  const [selected, setSelected] = useState<Row | null>(null);
+  const [approvalComment, setApprovalComment] = useState("");
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [renderedAt] = useState(() => new Date().getTime());
   const c = {
     de: { title: "Meine geschützten Dokumente", help: "Führerschein, Fahrerkarte, Aufenthaltstitel und Krankmeldung", type: "Dokumentart", expiry: "Ablaufdatum (optional)", upload: "Sicher hochladen", document: "Dokument", file: "Datei", validTo: "Gültig bis", status: "Status", valid: "Gültig", empty: "Noch keine Dokumente" },
@@ -18,13 +23,40 @@ export function EmployeeDocuments({ rows, staff, driver, locale, reload }: { row
     uk: { title: "Мої захищені документи", help: "Посвідчення, картка водія, дозвіл на проживання та лікарняні", type: "Тип документа", expiry: "Дійсний до (необов’язково)", upload: "Безпечно завантажити", document: "Документ", file: "Файл", validTo: "Дійсний до", status: "Статус", valid: "Дійсний", empty: "Документів ще немає" },
     ru: { title: "Мои защищённые документы", help: "Права, карта водителя, ВНЖ и больничные", type: "Тип документа", expiry: "Действителен до (необязательно)", upload: "Безопасно загрузить", document: "Документ", file: "Файл", validTo: "Действителен до", status: "Статус", valid: "Действителен", empty: "Документов пока нет" },
   }[locale];
+  const documentApprovals = useMemo(() => new Map(rows.map((document) => {
+    const event = audit.find((item) => item.action === "digitalApproval" && String(item.entity_id) === String(document.id) && String(item.details || "").includes('"entityType":"employee_document"'));
+    if (!event) return [String(document.id), null];
+    try { return [String(document.id), { ...JSON.parse(String(event.details || "{}")).newValue, at: event.created_at }]; } catch { return [String(document.id), null]; }
+  })), [audit, rows]);
+
+  async function scan(file: File) {
+    const formData = new FormData(); formData.set("file", file);
+    setNotice("Dokument wird automatisch erkannt …");
+    try {
+      const response = await fetch("/api/document-scan", { method: "POST", body: formData });
+      const payload = await response.json() as { result?: Record<string, string | number | null>; error?: string };
+      if (!response.ok || !payload.result) return setNotice(payload.error || "Erkennung fehlgeschlagen");
+      setScanResult(payload.result); setNotice(`${payload.result.status || "Erkannt"} · ${Math.round(Number(payload.result.confidence || 0) * 100)} %`);
+    } catch { setNotice("Dokument kann weiter manuell hochgeladen werden."); }
+  }
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    const response = await fetch("/api/employee-documents", { method: "POST", body: new FormData(form) });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) return setNotice(result.error || "Upload fehlgeschlagen");
-    form.reset(); setNotice("Dokument sicher gespeichert"); await reload();
+    const formData = new FormData(form); if (scanResult) formData.set("scanResult", JSON.stringify(scanResult));
+    try {
+      if (!navigator.onLine) throw new Error("offline");
+      const response = await fetch("/api/employee-documents", { method: "POST", body: formData });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) return setNotice(result.error || "Upload fehlgeschlagen");
+      form.reset(); setScanResult(null); setNotice("Dokument sicher gespeichert"); await reload();
+    } catch {
+      await queueOfflineUpload("/api/employee-documents", formData); form.reset(); setScanResult(null); setNotice("Offline gespeichert — Upload folgt automatisch.");
+    }
+  }
+  async function decide(decision: "Freigeben" | "Ablehnen" | "Zurück zur Korrektur") {
+    if (!selected) return;
+    await action({ action: "digitalApproval", id: selected.id, entityType: "employee_document", entityId: selected.id, decision, comment: approvalComment });
+    setApprovalComment(""); setSelected(null);
   }
   const expiry = (value: unknown) => {
     if (!value) return "";
@@ -34,15 +66,17 @@ export function EmployeeDocuments({ rows, staff, driver, locale, reload }: { row
   return <section className="advanced-stack">
     <div className="panel">
       <div className="panel-title"><div><h2>{driver ? c.title : "Digitale Personalakte"}</h2><p>{driver ? c.help : "Arbeitsvertrag, Führerschein, Fahrerkarte, Aufenthaltstitel und Krankmeldung"}</p></div></div>
-      <form className="advanced-form" onSubmit={upload}>
+      <form ref={formRef} className="advanced-form" onSubmit={upload}>
         {!driver ? <select name="staffId" required defaultValue=""><option value="">Mitarbeiter wählen</option>{staff.map((person) => <option key={person.id} value={String(person.id)}>{person.full_name}</option>)}</select> : null}
         <select name="category" required defaultValue=""><option value="">{driver ? c.type : "Dokumentart"}</option>{(driver ? ["Führerschein", "Fahrerkarte", "Aufenthaltstitel", "Krankmeldung"] : ["Arbeitsvertrag", "Führerschein", "Fahrerkarte", "Aufenthaltstitel", "Krankmeldung", "Lohnabrechnung", "Sonstiges"]).map((category) => <option key={category}>{category}</option>)}</select>
         <label>{driver ? c.expiry : "Ablaufdatum (optional)"}<input name="expiresAt" type="date" /></label>
-        <input name="file" type="file" accept="application/pdf,image/*" required />
+        <input name="file" type="file" accept="application/pdf,image/*" required onChange={(event) => { const file = event.target.files?.[0]; if (file) void scan(file); }} />
         <button className="primary-button">{driver ? c.upload : "Sicher hochladen"}</button>
       </form>
+      {scanResult ? <div className="scan-result-card"><strong>Dokument erkannt · {Math.round(Number(scanResult.confidence || 0) * 100)} %</strong><span>{[scanResult.date, scanResult.documentNumber, scanResult.licensePlate, scanResult.merchant].filter(Boolean).join(" · ") || "Metadaten werden im Prüfprotokoll gespeichert"}</span></div> : null}
       {notice ? <div className="inline-notice">{notice}</div> : null}
-      <div className="table-wrap"><table><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>{driver ? c.document : "Dokument"}</th><th>{driver ? c.file : "Datei"}</th><th>{driver ? c.validTo : "Gültig bis"}</th><th>{driver ? c.status : "Status"}</th><th>Upload</th></tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td><strong>{row.category}</strong></td><td><a href={`/api/employee-documents/${row.id}`} target="_blank" rel="noreferrer">{row.file_name}</a></td><td>{dateText(row.expires_at)}</td><td>{expiry(row.expires_at) ? <span className="danger-chip">{expiry(row.expires_at)}</span> : <span className="ok-chip">{driver ? c.valid : "Gültig"}</span>}</td><td>{dateText(row.created_at)}</td></tr>) : <tr><td colSpan={6}>{driver ? c.empty : "Noch keine Dokumente"}</td></tr>}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>{driver ? c.document : "Dokument"}</th><th>{driver ? c.file : "Datei"}</th><th>{driver ? c.validTo : "Gültig bis"}</th><th>{driver ? c.status : "Status"}</th><th>Freigabe</th><th>Upload</th></tr></thead><tbody>{rows.length ? rows.map((row) => { const approval = documentApprovals.get(String(row.id)) as { decision?: string } | null; return <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td><strong>{row.category}</strong></td><td><a href={`/api/employee-documents/${row.id}`} target="_blank" rel="noreferrer">{row.file_name}</a></td><td>{dateText(row.expires_at)}</td><td>{expiry(row.expires_at) ? <span className="danger-chip">{expiry(row.expires_at)}</span> : <span className="ok-chip">{driver ? c.valid : "Gültig"}</span>}</td><td>{approval?.decision ? <span className="status-pill">{approval.decision}</span> : (!driver ? <button className="edit-action" type="button" onClick={() => setSelected(row)}>Prüfen</button> : "Offen")}</td><td>{dateText(row.created_at)}</td></tr>; }) : <tr><td colSpan={7}>{driver ? c.empty : "Noch keine Dokumente"}</td></tr>}</tbody></table></div>
+      {selected && !driver ? <div className="digital-approval document-approval"><h3>{selected.category} · {selected.full_name}</h3><textarea value={approvalComment} onChange={(event) => setApprovalComment(event.target.value)} placeholder="Kommentar zur Freigabe" /><div><button className="approval-accept" type="button" onClick={() => decide("Freigeben")}>✓ Freigeben</button><button className="approval-reject" type="button" onClick={() => decide("Ablehnen")}>× Ablehnen</button><button className="approval-correct" type="button" onClick={() => decide("Zurück zur Korrektur")}>↶ Korrektur</button><button type="button" onClick={() => setSelected(null)}>Schließen</button></div></div> : null}
     </div>
   </section>;
 }
@@ -167,10 +201,20 @@ function trackerStatus(row: Row, clock: number) {
   return { label: "Steht", tone: "online" };
 }
 
-export function TruckTracking({ rows, vehicles, canManage, locale, action }: { rows: Row[]; vehicles: Row[]; canManage: boolean; locale: DriverLocale; action: Action }) {
+export function TruckTracking({ rows, vehicles, operations, canManage, locale, action }: { rows: Row[]; vehicles: Row[]; operations: Row[]; canManage: boolean; locale: DriverLocale; action: Action }) {
   const [selectedPlate, setSelectedPlate] = useState("");
   const [history, setHistory] = useState<Row[]>([]);
   const [clock, setClock] = useState(() => new Date().getTime());
+  const [trackerProvider, setTrackerProvider] = useState("Fleetboard");
+  const [fleetboardStatus, setFleetboardStatus] = useState<{
+    credentialsConfigured: boolean;
+    bridgeConfigured: boolean;
+    mappedVehicles: number;
+    reportingVehicles: number;
+    lastSyncAt: string | null;
+    ingestPath: string;
+  } | null>(null);
+  const [fleetboardNotice, setFleetboardNotice] = useState("");
   const driverView = !canManage;
   const c = {
     de: { moving: "In Fahrt", alarms: "Alarme", fleet: "Mein Fahrzeug", refresh: "Aktualisierung alle 15 Sek.", unknown: "Position unbekannt", noTracker: "Noch kein Fahrzeug-Tracker verbunden.", noSignal: "kein Signal", lastSignal: "letztes Signal vor", minutes: "Min.", noPosition: "Noch keine GPS-Position vorhanden.", speed: "Geschwindigkeit", ignition: "Zündung", on: "Ein", off: "Aus", odometer: "Kilometerstand", coordinates: "Koordinaten", source: "Datenquelle", history: "Positionsverlauf", historyHelp: "Die letzten Meldungen des Fahrzeugs" },
@@ -195,6 +239,28 @@ export function TruckTracking({ rows, vehicles, canManage, locale, action }: { r
       .catch(() => { if (!cancelled) setHistory([]); });
     return () => { cancelled = true; };
   }, [activePlate, selectedRecordedAt]);
+  async function refreshFleetboardStatus() {
+    if (!canManage) return;
+    try {
+      const response = await fetch("/api/tracking/fleetboard/status", { cache: "no-store" });
+      const result = await response.json() as typeof fleetboardStatus & { error?: string };
+      if (!response.ok || !result) return setFleetboardNotice(result?.error || "Fleetboard-Status konnte nicht geladen werden");
+      setFleetboardStatus(result); setFleetboardNotice("");
+    } catch { setFleetboardNotice("Fleetboard-Status konnte nicht geladen werden"); }
+  }
+  useEffect(() => {
+    let cancelled = false;
+    if (!canManage) return;
+    fetch("/api/tracking/fleetboard/status", { cache: "no-store" })
+      .then((response) => response.json().then((result) => ({ ok: response.ok, result })))
+      .then(({ ok, result }) => {
+        if (cancelled) return;
+        if (!ok) setFleetboardNotice(String(result?.error || "Fleetboard-Status konnte nicht geladen werden"));
+        else { setFleetboardStatus(result); setFleetboardNotice(""); }
+      })
+      .catch(() => { if (!cancelled) setFleetboardNotice("Fleetboard-Status konnte nicht geladen werden"); });
+    return () => { cancelled = true; };
+  }, [canManage, selectedRecordedAt]);
 
   const summary = useMemo(() => rows.reduce((result, row) => {
     const status = trackerStatus(row, clock);
@@ -211,7 +277,7 @@ export function TruckTracking({ rows, vehicles, canManage, locale, action }: { r
     const form = event.currentTarget;
     const values = Object.fromEntries(new FormData(form).entries());
     await action({ action: "saveTracker", licensePlate: String(values.licensePlate || ""), provider: String(values.provider || ""), deviceId: String(values.deviceId || "") });
-    form.reset();
+    form.reset(); setTrackerProvider("Fleetboard"); await refreshFleetboardStatus();
   }
   async function addManualPosition(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -237,6 +303,21 @@ export function TruckTracking({ rows, vehicles, canManage, locale, action }: { r
   const hasPosition = latitude !== null && longitude !== null && Number.isFinite(latitude) && Number.isFinite(longitude);
   const status = selected ? trackerStatus(selected, clock) : { label: "Kein Signal", tone: "offline" };
   const signalAge = selected?.recorded_at ? Math.max(0, Math.floor((clock - new Date(String(selected.recorded_at)).getTime()) / 60_000)) : null;
+  const mapPoints = useMemo(() => {
+    const points = [...history.slice(0, 50).reverse(), ...rows].filter((row) => Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude)));
+    if (!points.length) return [] as Array<{ row: Row; x: number; y: number }>;
+    const lats = points.map((row) => Number(row.latitude)); const lngs = points.map((row) => Number(row.longitude));
+    const minLat = Math.min(...lats); const maxLat = Math.max(...lats); const minLng = Math.min(...lngs); const maxLng = Math.max(...lngs);
+    const latRange = Math.max(maxLat - minLat, 0.01); const lngRange = Math.max(maxLng - minLng, 0.01);
+    return points.map((row) => ({ row, x: 7 + ((Number(row.longitude) - minLng) / lngRange) * 86, y: 93 - ((Number(row.latitude) - minLat) / latRange) * 86 }));
+  }, [history, rows]);
+  const trailPoints = mapPoints.slice(0, Math.min(history.length, 50));
+  const trailSegments = trailPoints.slice(1).map((point, index) => {
+    const previous = trailPoints[index]; const dx = point.x - previous.x; const dy = point.y - previous.y;
+    return { left: previous.x, top: previous.y, width: Math.sqrt(dx * dx + dy * dy), angle: Math.atan2(dy, dx) * 180 / Math.PI };
+  });
+  const activeOperation = operations.find((row) => String(row.license_plate) === activePlate && !["Zugestellt", "Geplant"].includes(String(row.status))) || operations.find((row) => String(row.license_plate) === activePlate);
+  const stops = trailPoints.filter((point) => Number(point.row.speed_kph || 0) <= 3).length;
 
   return <div className="advanced-stack tracking-page">
     <div className="tracking-summary">
@@ -263,11 +344,17 @@ export function TruckTracking({ rows, vehicles, canManage, locale, action }: { r
       <section className="tracker-map-panel">
         <div className="tracker-map-heading">
           <div><span className={`tracker-dot tracker-${status.tone}`} /><div><h2>{selected?.license_plate || "Live-Tracking"}</h2><p>{status.label} · {signalAge == null ? (driverView ? c.noSignal : "kein Signal") : `${driverView ? c.lastSignal : "letztes Signal vor"} ${signalAge} ${driverView ? c.minutes : "Min."}`}</p></div></div>
+          <div className="map-live-metrics"><span><b>{Math.round(Number(selected?.speed_kph || 0))}</b> km/h</span><span><b>{stops}</b> Stopps</span><span><b>{activeOperation?.eta ? dateText(activeOperation.eta) : "—"}</b> ETA</span></div>
         </div>
         <div className="tracker-private-map">
           <div className="tracker-grid-lines" />
-          {hasPosition ? <div className={`truck-marker tracker-${status.tone}`}><span>▰</span><strong>{selected?.license_plate}</strong></div> : <div className="empty-state">{driverView ? c.noPosition : "Noch keine GPS-Position vorhanden."}</div>}
+          <div className="map-road road-one" /><div className="map-road road-two" /><div className="map-road road-three" />
+          {trailSegments.map((segment, index) => <i key={index} className="map-trail" style={{ left: `${segment.left}%`, top: `${segment.top}%`, width: `${segment.width}%`, transform: `rotate(${segment.angle}deg)` }} />)}
+          {trailPoints.filter((point) => Number(point.row.speed_kph || 0) <= 3).slice(-8).map((point, index) => <span key={`stop-${index}`} className="map-stop" style={{ left: `${point.x}%`, top: `${point.y}%` }} title="Stopp" />)}
+          {mapPoints.slice(Math.min(history.length, 50)).map((point) => { const pointStatus = trackerStatus(point.row, clock); return <button key={`fleet-${point.row.id}`} type="button" className={`map-fleet-marker tracker-${pointStatus.tone} ${String(point.row.license_plate) === activePlate ? "map-fleet-active" : ""}`} style={{ left: `${point.x}%`, top: `${point.y}%` }} onClick={() => setSelectedPlate(String(point.row.license_plate))}><span>▰</span><b>{point.row.license_plate}</b></button>; })}
+          {hasPosition && !mapPoints.length ? <div className={`truck-marker tracker-${status.tone}`}><span>▰</span><strong>{selected?.license_plate}</strong></div> : !hasPosition ? <div className="empty-state">{driverView ? c.noPosition : "Noch keine GPS-Position vorhanden."}</div> : null}
           <div className="tracker-location-label"><strong>{selected?.address || "GPS-Position"}</strong><span>{hasPosition ? `${latitude!.toFixed(5)}, ${longitude!.toFixed(5)}` : "—"}</span></div>
+          <div className={`map-signal-badge ${status.tone === "offline" ? "signal-lost" : ""}`}>{status.tone === "offline" ? "GPS-Signal verloren" : "GPS live"}</div>
         </div>
         {selected ? <div className="tracking-detail-grid">
           <div><span>{driverView ? c.speed : "Geschwindigkeit"}</span><strong>{Math.round(Number(selected.speed_kph || 0))} km/h</strong></div>
@@ -275,7 +362,7 @@ export function TruckTracking({ rows, vehicles, canManage, locale, action }: { r
           <div><span>{driverView ? c.odometer : "Kilometerstand"}</span><strong>{selected.odometer_km == null ? "—" : `${Number(selected.odometer_km).toLocaleString("de-DE")} km`}</strong></div>
           <div><span>Tracker</span><strong>{selected.provider} · {selected.device_id}</strong></div>
           <div><span>{driverView ? c.coordinates : "Koordinaten"}</span><strong>{hasPosition ? `${latitude!.toFixed(5)}, ${longitude!.toFixed(5)}` : "—"}</strong></div>
-          <div><span>{driverView ? c.source : "Datenquelle"}</span><strong>{selected.source === "demo" ? "Demo (nicht live)" : selected.source === "manual" ? "Manuell" : "GPS-Tracker"}</strong></div>
+          <div><span>{driverView ? c.source : "Datenquelle"}</span><strong>{selected.source === "demo" ? "Demo (nicht live)" : selected.source === "manual" ? "Manuell" : selected.source === "fleetboard" ? "Fleetboard Live" : "GPS-Tracker"}</strong></div>
         </div> : null}
         {selected?.source === "demo" ? <div className="tracking-demo-note">Demo-Koordinaten: Für echte Live-Daten bitte den eingebauten Tracker oder Telematik-Anbieter verbinden.</div> : null}
       </section>
@@ -283,19 +370,41 @@ export function TruckTracking({ rows, vehicles, canManage, locale, action }: { r
 
     <div className="panel">
       <div className="panel-title"><div><h2>{driverView ? c.history : "Positionsverlauf"}</h2><p>{driverView ? c.historyHelp : "Die letzten 100 Meldungen des ausgewählten Fahrzeugs"}</p></div></div>
-      <div className="table-wrap"><table><thead><tr><th>Zeit</th><th>Ort</th><th>Geschwindigkeit</th><th>Zündung</th><th>Koordinaten</th><th>Quelle</th></tr></thead><tbody>{history.length ? history.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td>{String(row.recorded_at).slice(0, 16).replace("T", " ")}</td><td>{row.address || "—"}</td><td>{Math.round(Number(row.speed_kph || 0))} km/h</td><td>{Number(row.ignition) ? "Ein" : "Aus"}</td><td>{Number(row.latitude).toFixed(5)}, {Number(row.longitude).toFixed(5)}</td><td>{row.source === "demo" ? "Demo" : row.source === "manual" ? "Manuell" : "Tracker"}</td></tr>) : <tr><td colSpan={6}>Noch keine Positionshistorie</td></tr>}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr><th>Zeit</th><th>Ort</th><th>Geschwindigkeit</th><th>Zündung</th><th>Koordinaten</th><th>Quelle</th></tr></thead><tbody>{history.length ? history.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td>{String(row.recorded_at).slice(0, 16).replace("T", " ")}</td><td>{row.address || "—"}</td><td>{Math.round(Number(row.speed_kph || 0))} km/h</td><td>{Number(row.ignition) ? "Ein" : "Aus"}</td><td>{Number(row.latitude).toFixed(5)}, {Number(row.longitude).toFixed(5)}</td><td>{row.source === "demo" ? "Demo" : row.source === "manual" ? "Manuell" : row.source === "fleetboard" ? "Fleetboard" : "Tracker"}</td></tr>) : <tr><td colSpan={6}>Noch keine Positionshistorie</td></tr>}</tbody></table></div>
     </div>
 
     {canManage ? <div className="tracking-config-grid">
+      <div className="panel fleetboard-connect-panel">
+        <div className="fleetboard-connect-head">
+          <div className="fleetboard-wordmark"><span>FB</span><div><strong>Fleetboard Live GPS</strong><small>Mapping / Track & Trace · sichere Server-Verbindung</small></div></div>
+          <span className={`fleetboard-state ${fleetboardStatus?.lastSyncAt ? "fleetboard-live" : fleetboardStatus?.bridgeConfigured ? "fleetboard-ready" : "fleetboard-setup"}`}>
+            {fleetboardStatus?.lastSyncAt ? "● Live-Daten aktiv" : fleetboardStatus?.bridgeConfigured ? "Bereit zur Fahrzeugzuordnung" : "Einrichtung erforderlich"}
+          </span>
+        </div>
+        <div className="fleetboard-kpis">
+          <div><span>Zugeordnet</span><strong>{fleetboardStatus?.mappedVehicles ?? "—"}</strong><small>Fleetboard Fahrzeuge</small></div>
+          <div><span>Mit Signal</span><strong>{fleetboardStatus?.reportingVehicles ?? "—"}</strong><small>mindestens einmal verbunden</small></div>
+          <div><span>Letzte Synchronisierung</span><strong>{fleetboardStatus?.lastSyncAt ? new Date(fleetboardStatus.lastSyncAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "Noch kein Signal"}</strong><small>automatisch über GPS</small></div>
+        </div>
+        <div className="fleetboard-capabilities"><span>Position</span><span>Geschwindigkeit</span><span>Stopps</span><span>Zündung</span><span>Kilometerstand</span><span>ETA</span></div>
+        <div className="fleetboard-security-state"><span className={fleetboardStatus?.credentialsConfigured ? "is-ready" : "is-missing"}>SOAP-Zugang {fleetboardStatus?.credentialsConfigured ? "geschützt hinterlegt" : "fehlt"}</span><span className={fleetboardStatus?.bridgeConfigured ? "is-ready" : "is-missing"}>Live-Bridge {fleetboardStatus?.bridgeConfigured ? "freigeschaltet" : "noch gesperrt"}</span></div>
+        <div className="fleetboard-setup-steps">
+          <div><b>1</b><span>Fleetboard SOAP-API-Benutzer im Portal anlegen und Mapping / Track & Trace buchen.</span></div>
+          <div><b>2</b><span>Unten Kennzeichen und Fleetboard Fahrzeug-ID oder VIN eindeutig zuordnen.</span></div>
+          <div><b>3</b><span>Server-Zugangsdaten und Bridge-Token geschützt hinterlegen. Keine Passwörter werden im Browser angezeigt.</span></div>
+        </div>
+        <div className="fleetboard-connector-line"><code>{fleetboardStatus?.ingestPath || "/api/tracking/fleetboard/ingest"}</code><button type="button" onClick={() => void refreshFleetboardStatus()}>Verbindung prüfen</button></div>
+        {fleetboardNotice ? <div className="inline-notice">{fleetboardNotice}</div> : null}
+      </div>
       <div className="panel">
         <div className="panel-title"><div><h2>Tracker verbinden</h2><p>Geräte-ID eindeutig einem Kennzeichen zuordnen</p></div></div>
         <form className="advanced-form tracking-form" onSubmit={saveTracker}>
           <select name="licensePlate" required defaultValue=""><option value="">Kennzeichen wählen</option>{vehicles.map((vehicle) => <option key={vehicle.id}>{vehicle.license_plate}</option>)}</select>
-          <select name="provider" defaultValue="Webfleet"><option>Webfleet</option><option>Samsara</option><option>Geotab</option><option>Verizon Connect</option><option>Fleet Complete</option><option>Andere</option></select>
-          <input name="deviceId" required placeholder="Geräte-ID / IMEI" />
+          <select name="provider" value={trackerProvider} onChange={(event) => setTrackerProvider(event.target.value)}><option>Fleetboard</option><option>Webfleet</option><option>Samsara</option><option>Geotab</option><option>Verizon Connect</option><option>Fleet Complete</option><option>Andere</option></select>
+          <input name="deviceId" required placeholder={trackerProvider === "Fleetboard" ? "Fleetboard Fahrzeug-ID / VIN" : "Geräte-ID / IMEI"} />
           <button className="primary-button">Tracker speichern</button>
         </form>
-        <div className="tracking-api-note"><strong>Geschützte Schnittstelle</strong><span>Der Anbieter sendet Daten an <code>/api/tracking/ingest</code>. Der geheime Zugriffsschlüssel wird nur auf dem Server gespeichert.</span></div>
+        <div className="tracking-api-note"><strong>{trackerProvider === "Fleetboard" ? "Fleetboard SOAP + LOGIPAY Bridge" : "Geschützte Schnittstelle"}</strong><span>{trackerProvider === "Fleetboard" ? <>Fleetboard-Daten werden serverseitig normalisiert und an <code>/api/tracking/fleetboard/ingest</code> übertragen.</> : <>Der Anbieter sendet Daten an <code>/api/tracking/ingest</code>.</>} Der geheime Zugriffsschlüssel wird nur auf dem Server gespeichert.</span></div>
       </div>
       <div className="panel">
         <div className="panel-title"><div><h2>Testposition erfassen</h2><p>Nur für Einrichtung oder als manueller Fallback</p></div></div>
@@ -317,6 +426,6 @@ export function TruckTracking({ rows, vehicles, canManage, locale, action }: { r
 
 export function PasswordChange({ required, done }: { required: boolean; done: () => void }) {
   const [error, setError] = useState("");
-  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); if (data.get("newPassword") !== data.get("confirmPassword")) return setError("Пароли не совпадают"); const response = await fetch("/api/auth/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: data.get("currentPassword"), newPassword: data.get("newPassword") }) }); const result = await response.json() as { error?: string }; if (!response.ok) return setError(result.error || "Ошибка"); done(); }
-  return <div className={required ? "password-overlay" : "password-inline"}><form className="password-change-card" onSubmit={submit}><span className="secure-label"><i /> Sicherheit</span><h2>{required ? "Стартовый пароль нужно изменить" : "Пароль ändern"}</h2><p>Минимум 10 символов, заглавная буква и цифра.</p><label>Текущий пароль<input name="currentPassword" type="password" required /></label><label>Новый пароль<input name="newPassword" type="password" minLength={10} required /></label><label>Повторите пароль<input name="confirmPassword" type="password" minLength={10} required /></label>{error ? <div className="login-error">{error}</div> : null}<button className="primary-button">Надёжно сохранить</button></form></div>;
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); if (data.get("newPassword") !== data.get("confirmPassword")) return setError("Passwörter stimmen nicht überein"); const response = await fetch("/api/auth/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: data.get("currentPassword"), newPassword: data.get("newPassword") }) }); const result = await response.json() as { error?: string }; if (!response.ok) return setError(result.error || "Fehler beim Speichern"); done(); }
+  return <div className={required ? "password-overlay" : "password-inline"}><form className="password-change-card" onSubmit={submit}><span className="secure-label"><i /> Sicherheit</span><h2>{required ? "Startpasswort muss geändert werden" : "Passwort ändern"}</h2><p>Mindestens 10 Zeichen, Großbuchstabe und Zahl.</p><label>Aktuelles Passwort<input name="currentPassword" type="password" required /></label><label>Neues Passwort<input name="newPassword" type="password" minLength={10} required /></label><label>Passwort wiederholen<input name="confirmPassword" type="password" minLength={10} required /></label>{error ? <div className="login-error">{error}</div> : null}<button className="primary-button">Sicher speichern</button></form></div>;
 }

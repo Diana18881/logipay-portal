@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../lib/auth";
 import { ensureDomainDatabase } from "../../../lib/domain";
 import { buildTranslations, detectLanguage, normalizeLocale, requireTripAccess } from "../../../lib/trip-chat";

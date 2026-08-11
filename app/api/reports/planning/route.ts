@@ -1,6 +1,6 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 import fontkit from "@pdf-lib/fontkit";
-import { PDFDocument, rgb } from "pdf-lib";
+import { PDFArray, PDFDocument, PDFName, PDFString, rgb } from "pdf-lib";
 import { requirePortalUser } from "../../../../lib/auth";
 import { ensureDomainDatabase } from "../../../../lib/domain";
 
@@ -218,6 +218,7 @@ export async function GET(request: Request) {
     headers: string[],
     widths: number[],
     rows: unknown[][],
+    linkColumns: Record<number, (value: unknown) => string> = {},
   ) => {
     const left = 34;
     const rowHeight = 22;
@@ -250,13 +251,27 @@ export async function GET(request: Request) {
         color: line,
       });
       row.forEach((value, index) => {
-        page.drawText(fit(value, widths[index] - 12), {
+        const label = fit(value, widths[index] - 12);
+        const linked = Boolean(linkColumns[index] && value && value !== "—");
+        page.drawText(label, {
           x: x + 6,
           y: y - 9,
           size: 8,
           font: regular,
-          color: ink,
+          color: linked ? rgb(0.02, 0.36, 0.7) : ink,
         });
+        if (linked) {
+          const textWidth = regular.widthOfTextAtSize(label, 8);
+          page.drawLine({ start: { x: x + 6, y: y - 10 }, end: { x: x + 6 + textWidth, y: y - 10 }, thickness: 0.45, color: rgb(0.02, 0.36, 0.7) });
+          const context = pdf.context;
+          const annotation = context.register(context.obj({
+            Type: "Annot", Subtype: "Link", Rect: [x + 4, y - 13, x + widths[index] - 4, y + 4], Border: [0, 0, 0],
+            A: { Type: "Action", S: "URI", URI: PDFString.of(linkColumns[index](value)) },
+          }));
+          const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+          if (annots) annots.push(annotation);
+          else page.node.set(PDFName.of("Annots"), context.obj([annotation]));
+        }
         x += widths[index];
       });
       y -= rowHeight;
@@ -327,7 +342,9 @@ export async function GET(request: Request) {
       row.block_id || "—",
       row.status,
     ]),
+    { 3: (value) => `${url.origin}/?section=vehicles&vehicle=${encodeURIComponent(String(value))}&vehicleTab=comments` },
   );
+  assignmentPage.drawText("Kennzeichen anklicken: Fahrzeugakte und Manager-Kommentare öffnen", { x: 34, y: 92, size: 7, font: regular, color: muted });
 
   const casePage = header(
     "Operative Fälle",
@@ -366,6 +383,7 @@ export async function GET(request: Request) {
         row.status,
         row.comments,
       ]),
+    { 1: (value) => `${url.origin}/?section=vehicles&vehicle=${encodeURIComponent(String(value))}&vehicleTab=comments` },
   );
   y -= 14;
   casePage.drawText("Open Cases / Fahreranliegen", {
@@ -429,6 +447,7 @@ export async function GET(request: Request) {
         row.inspection_due || "—",
         row.notes || "—",
       ]),
+    { 0: (value) => `${url.origin}/?section=vehicles&vehicle=${encodeURIComponent(String(value))}&vehicleTab=comments` },
   );
   y -= 14;
   statusPage.drawText("Wichtige Hinweise", {

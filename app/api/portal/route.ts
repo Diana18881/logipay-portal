@@ -1,6 +1,7 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 import { ensureDomainDatabase } from "../../../lib/domain";
 import { hashPassword, requirePortalUser } from "../../../lib/auth";
+import { deleteTripMessage } from "../../../lib/trip-chat";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const normalizeDays = (value: unknown) => {
@@ -71,8 +72,11 @@ export async function GET(request: Request) {
   );
   const staffWhere =
     user.role === "driver" ? "WHERE s.user_id = ? OR s.full_name = ?" : "";
+  const staffColumns = user.role === "dispatcher"
+    ? "s.id, s.user_id, s.full_name, s.system_type, NULL AS compensation, s.location, s.company, s.vacation, s.status, s.hired_at, s.terminated_at, s.created_at, s.updated_at, u.email AS login_email"
+    : "s.*, u.email AS login_email";
   const staffStmt = env.DB.prepare(
-    `SELECT s.*, u.email AS login_email FROM staff s LEFT JOIN users u ON u.id=s.user_id ${staffWhere} ORDER BY s.status, s.full_name`,
+    `SELECT ${staffColumns} FROM staff s LEFT JOIN users u ON u.id=s.user_id ${staffWhere} ORDER BY s.status, s.full_name`,
   );
   const staffResult =
     user.role === "driver"
@@ -148,6 +152,32 @@ export async function GET(request: Request) {
             "SELECT vf.*, s.full_name AS driver_name FROM vehicle_files vf LEFT JOIN staff s ON s.id=vf.staff_id ORDER BY vf.created_at DESC",
           ).all()
         : { results: [] };
+  const vehicleComments = user.role === "driver"
+    ? await env.DB.prepare(
+        "SELECT vc.* FROM vehicle_comments vc WHERE vc.license_plate IN (SELECT DISTINCT license_plate FROM weekly_planning WHERE license_plate IS NOT NULL AND license_plate!='' AND (staff_id=? OR driver_name=?)) ORDER BY vc.created_at DESC LIMIT 300",
+      ).bind(driverStaffId || -1, user.fullName).all()
+    : ["management", "dispatcher"].includes(user.role)
+      ? await env.DB.prepare("SELECT * FROM vehicle_comments ORDER BY created_at DESC LIMIT 500").all()
+      : { results: [] };
+  const fuelCodes = user.role === "driver"
+    ? await env.DB.prepare(
+        "SELECT id, license_plate, fuel_type, code_value, active, updated_at FROM vehicle_fuel_codes WHERE active=1 AND license_plate IN (SELECT DISTINCT license_plate FROM weekly_planning WHERE license_plate IS NOT NULL AND license_plate!='' AND (staff_id=? OR driver_name=?)) ORDER BY license_plate, fuel_type",
+      ).bind(driverStaffId || -1, user.fullName).all()
+    : user.role === "management"
+      ? await env.DB.prepare("SELECT id, license_plate, fuel_type, code_value, active, updated_at FROM vehicle_fuel_codes ORDER BY license_plate, fuel_type").all()
+      : { results: [] };
+  const fuelStops = user.role === "driver"
+    ? await env.DB.prepare(
+        "SELECT fs.*, s.full_name AS driver_name FROM fuel_stops fs JOIN staff s ON s.id=fs.staff_id WHERE fs.staff_id=? ORDER BY fs.refueled_at DESC LIMIT 150",
+      ).bind(driverStaffId || -1).all()
+    : ["management", "accountant", "dispatcher"].includes(user.role)
+      ? await env.DB.prepare("SELECT fs.*, s.full_name AS driver_name FROM fuel_stops fs JOIN staff s ON s.id=fs.staff_id ORDER BY fs.refueled_at DESC LIMIT 500").all()
+      : { results: [] };
+  const driverPerformance = ["management", "dispatcher"].includes(user.role)
+    ? await env.DB.prepare(
+        "SELECT dpe.*, s.full_name, s.company, s.location, s.system_type, s.status AS staff_status FROM driver_performance_events dpe JOIN staff s ON s.id=dpe.staff_id ORDER BY dpe.event_date DESC, dpe.created_at DESC LIMIT 1000",
+      ).all()
+    : { results: [] };
   const employeeDocuments =
     user.role === "dispatcher"
       ? { results: [] }
@@ -205,6 +235,10 @@ export async function GET(request: Request) {
     : user.role === "driver"
       ? await env.DB.prepare(`${tripOperationsSql} WHERE p.planning_year=? AND p.calendar_week=? AND (p.staff_id=? OR p.driver_name=?) ORDER BY p.start_time, p.company`).bind(year, kw, driverStaffId || -1, user.fullName).all()
       : await env.DB.prepare(`${tripOperationsSql} WHERE p.planning_year=? AND p.calendar_week=? ORDER BY p.start_time, p.company`).bind(year, kw).all();
+  const departureConfirmations = user.role === "accountant"
+    ? { results: [] }
+    : await env.DB.prepare(`SELECT c.* FROM planning_departure_confirmations c JOIN weekly_planning p ON p.id=c.planning_id WHERE p.planning_year=? AND p.calendar_week=? ORDER BY c.shift_date, c.planning_id`)
+      .bind(year, kw).all();
   const tripDocuments = user.role === "accountant"
     ? { results: [] }
     : user.role === "driver"
@@ -251,6 +285,10 @@ export async function GET(request: Request) {
     concerns: concerns.results,
     voiceMessages: voiceMessages.results,
     files: files.results,
+    vehicleComments: vehicleComments.results,
+    fuelCodes: fuelCodes.results,
+    fuelStops: fuelStops.results,
+    driverPerformance: driverPerformance.results,
     employeeDocuments: employeeDocuments.results,
     payroll: payroll.results,
     maintenance: maintenance.results,
@@ -261,6 +299,7 @@ export async function GET(request: Request) {
     portalUsers: portalUsers.results,
     tachograph: tachograph.results,
     tripOperations: tripOperations.results,
+    departureConfirmations: departureConfirmations.results,
     tripDocuments: tripDocuments.results,
     tripMessages: tripMessages.results,
     expenses: expenses.results,
@@ -293,6 +332,12 @@ export async function POST(request: Request) {
       "INSERT OR IGNORE INTO trip_message_reads (message_id, user_id, read_at) VALUES (?, ?, ?)",
     ).bind(message.id, user.id, now)));
     auditDetails = { oldValue: null, newValue: { tripOperationId, readMessages: unread.results.length } };
+  } else if (action === "deleteTripMessage" && ["management", "dispatcher", "driver"].includes(user.role)) {
+    const messageId = Number(body.id || 0);
+    if (!messageId) return json({ error: "Nachricht fehlt" }, 400);
+    const result = await deleteTripMessage(user, messageId);
+    if ("error" in result) return json({ error: result.error }, result.status);
+    auditDetails = { oldValue: null, newValue: { messageId } };
   } else if (action === "addPortalUser" && user.role === "management") {
     const email = String(body.email || "").trim().toLowerCase();
     const fullName = String(body.fullName || "").trim();
@@ -369,6 +414,39 @@ export async function POST(request: Request) {
       await env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('dispatcher', 'trip', 'Einsatz benötigt Aufmerksamkeit', ?, 'planning', ?, 'urgent', ?)")
         .bind(`${plan.license_plate || "Ohne Kennzeichen"}: ${body.delayReason || "Problem gemeldet"}`, String(planningId), now).run();
     auditDetails = { oldValue, newValue: { planningId, status, pickupAddress: body.pickupAddress, deliveryAddress: body.deliveryAddress, eta: body.eta, delayReason: body.delayReason, recipientName: body.recipientName } };
+  } else if (action === "confirmDeparture" && ["management", "dispatcher", "driver"].includes(user.role)) {
+    const planningId = Number(body.planningId);
+    const shiftDate = String(body.shiftDate || "");
+    if (!planningId || !/^\d{4}-\d{2}-\d{2}$/.test(shiftDate))
+      return json({ error: "Ungültige Abfahrt" }, 400);
+    const plan = await env.DB.prepare("SELECT p.*, s.user_id FROM weekly_planning p LEFT JOIN staff s ON s.id=p.staff_id WHERE p.id=?").bind(planningId).first<Record<string, string | number | null>>();
+    if (!plan) return json({ error: "Planung nicht gefunden" }, 404);
+    if (user.role === "driver" && Number(plan.user_id) !== user.id && String(plan.driver_name) !== user.fullName)
+      return json({ error: "Dieser Einsatz ist Ihnen nicht zugeteilt" }, 403);
+    if (!plan.driver_name) return json({ error: "Kein Fahrer zugeordnet" }, 400);
+    const workDays = String(plan.work_days || "1,2,3,4,5,6,7").split(",").map(Number);
+    const planningYear = Number(plan.planning_year || new Date().getFullYear());
+    const calendarWeek = Number(plan.calendar_week || 1);
+    const weekDates = (() => {
+      const januaryFourth = new Date(Date.UTC(planningYear, 0, 4));
+      const monday = new Date(januaryFourth);
+      monday.setUTCDate(januaryFourth.getUTCDate() - ((januaryFourth.getUTCDay() + 6) % 7) + (calendarWeek - 1) * 7);
+      return Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(monday);
+        date.setUTCDate(monday.getUTCDate() + index);
+        return date.toISOString().slice(0, 10);
+      });
+    })();
+    const dayIndex = weekDates.indexOf(shiftDate);
+    if (dayIndex < 0 || !workDays.includes(dayIndex + 1))
+      return json({ error: "An diesem Tag ist kein Einsatz geplant" }, 400);
+    await env.DB.prepare(`INSERT INTO planning_departure_confirmations (planning_id, shift_date, confirmed_at, confirmed_by, created_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(planning_id, shift_date) DO UPDATE SET confirmed_at=excluded.confirmed_at, confirmed_by=excluded.confirmed_by, created_at=excluded.created_at`)
+      .bind(planningId, shiftDate, now, user.id, now).run();
+    await env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('dispatcher', 'departure', 'Abfahrt bestätigt', ?, 'planning', ?, 'info', ?)")
+      .bind(`${plan.driver_name} bestätigt Abfahrt am ${shiftDate} · Block ${plan.block_id || "—"}`, `${planningId}:${shiftDate}`, now).run();
+    auditDetails = { oldValue: null, newValue: { planningId, shiftDate, confirmedAt: now, confirmedBy: user.id } };
   } else if (action === "updateVoiceMessageStatus" && ["management", "dispatcher"].includes(user.role)) {
     const id = Number(body.id || 0);
     const status = String(body.status || "");
@@ -418,6 +496,38 @@ export async function POST(request: Request) {
         .bind(staffUser.user_id, messages[status], String(body.id), status === "Abgelehnt" ? "warning" : "info", now).run();
     }
     auditDetails = { oldValue, newValue: { status, grossAmount, vatAmount, reimbursable, reimbursementAmount, paymentReference: body.paymentReference, paidAt, rejectionReason: body.rejectionReason, amazonSite: body.amazonSite, blockId: body.blockId, costCenter: body.costCenter } };
+  } else if (action === "digitalApproval" && ["management", "accountant"].includes(user.role)) {
+    const entityType = String(body.entityType || "");
+    const entityId = Number(body.entityId || body.id || 0);
+    const decision = String(body.decision || "");
+    const comment = String(body.comment || "").trim();
+    if (!entityId || !["expense", "employee_document"].includes(entityType))
+      return json({ error: "Vorgang nicht gefunden" }, 400);
+    if (!["Freigeben", "Ablehnen", "Zurück zur Korrektur"].includes(decision))
+      return json({ error: "Ungültige Entscheidung" }, 400);
+    if (decision !== "Freigeben" && !comment)
+      return json({ error: "Bitte einen Kommentar zur Entscheidung eingeben" }, 400);
+
+    if (entityType === "expense") {
+      const oldValue = await env.DB.prepare("SELECT * FROM expenses WHERE id=?").bind(entityId).first<Record<string, string | number | null>>();
+      if (!oldValue) return json({ error: "Ausgabe nicht gefunden" }, 404);
+      const status = decision === "Freigeben" ? "Freigegeben" : decision === "Ablehnen" ? "Abgelehnt" : "Eingereicht";
+      const recognitionStatus = decision === "Zurück zur Korrektur" ? "Korrektur erforderlich" : "Geprüft";
+      await env.DB.prepare("UPDATE expenses SET status=?, recognition_status=?, reviewed_by=?, reviewed_at=?, rejection_reason=?, updated_at=? WHERE id=?")
+        .bind(status, recognitionStatus, user.id, now, comment, now, entityId).run();
+      const staffUser = await env.DB.prepare("SELECT user_id FROM staff WHERE id=?").bind(oldValue.staff_id).first<{ user_id: number | null }>();
+      if (staffUser?.user_id)
+        await env.DB.prepare("INSERT INTO notifications (user_id, category, title, message, entity_type, entity_id, severity, created_at) VALUES (?, 'approval', ?, ?, 'expense', ?, ?, ?)")
+          .bind(staffUser.user_id, `Beleg: ${decision}`, comment || `Ihre Ausgabe wurde ${decision === "Freigeben" ? "freigegeben" : "bearbeitet"}.`, String(entityId), decision === "Freigeben" ? "info" : "warning", now).run();
+      auditDetails = { oldValue, newValue: { entityType, entityId, decision, comment, status, responsible: user.fullName } };
+    } else {
+      const oldValue = await env.DB.prepare("SELECT d.*, s.user_id FROM employee_documents d JOIN staff s ON s.id=d.staff_id WHERE d.id=?").bind(entityId).first<Record<string, string | number | null>>();
+      if (!oldValue) return json({ error: "Dokument nicht gefunden" }, 404);
+      if (oldValue.user_id)
+        await env.DB.prepare("INSERT INTO notifications (user_id, category, title, message, entity_type, entity_id, severity, created_at) VALUES (?, 'approval', ?, ?, 'employee_document', ?, ?, ?)")
+          .bind(oldValue.user_id, `Dokument: ${decision}`, comment || `Ihr Dokument wurde ${decision === "Freigeben" ? "freigegeben" : "bearbeitet"}.`, String(entityId), decision === "Freigeben" ? "info" : "warning", now).run();
+      auditDetails = { oldValue, newValue: { entityType, entityId, decision, comment, responsible: user.fullName } };
+    }
   } else if (action === "saveChecklist" && ["management", "dispatcher", "driver"].includes(user.role)) {
     let staffId = Number(body.staffId || 0);
     if (user.role === "driver") {
@@ -447,6 +557,33 @@ export async function POST(request: Request) {
       await env.DB.prepare("UPDATE notifications SET read_at=? WHERE id=? AND (user_id=? OR role_scope=? OR role_scope='all')")
         .bind(now, body.id, user.id, user.role).run();
     auditDetails = { oldValue: null, newValue: { notificationId: body.id, readAt: now } };
+  } else if (action === "addDriverPerformance" && ["management", "dispatcher"].includes(user.role)) {
+    const staffId = Number(body.staffId || 0);
+    const eventType = String(body.eventType || "");
+    const eventDate = String(body.eventDate || now.slice(0, 10));
+    const notes = String(body.notes || "").trim();
+    const minutesLate = Number(body.minutesLate || 0);
+    const rating = body.rating == null || body.rating === "" ? null : Number(body.rating);
+    const allowedTypes = ["rating", "late", "no_show", "accident", "positive", "comment"];
+    if (!staffId || !allowedTypes.includes(eventType) || !/^\d{4}-\d{2}-\d{2}$/.test(eventDate))
+      return json({ error: "Fahrer, Ereignis und Datum prüfen" }, 400);
+    if (eventType === "rating" && (!rating || rating < 1 || rating > 5))
+      return json({ error: "Bewertung zwischen 1 und 5 wählen" }, 400);
+    if (eventType === "late" && (!Number.isFinite(minutesLate) || minutesLate < 1 || minutesLate > 1440))
+      return json({ error: "Verspätung in Minuten eintragen" }, 400);
+    if (["rating", "no_show", "accident", "comment"].includes(eventType) && notes.length < 2)
+      return json({ error: "Kurzen Kommentar zur Meldung eingeben" }, 400);
+    const person = await env.DB.prepare("SELECT id, full_name FROM staff WHERE id=?").bind(staffId).first<{ id: number; full_name: string }>();
+    if (!person) return json({ error: "Fahrer wurde nicht gefunden" }, 404);
+    const scoreDelta = ({ late: -3, no_show: -10, accident: -12, positive: 5, rating: 0, comment: 0 } as Record<string, number>)[eventType];
+    const result = await env.DB.prepare(
+      "INSERT INTO driver_performance_events (staff_id, event_date, event_type, rating, score_delta, minutes_late, notes, created_by, created_by_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(staffId, eventDate, eventType, rating, scoreDelta, eventType === "late" ? minutesLate : 0, notes, user.id, user.fullName, now).run();
+    if (["late", "no_show", "accident"].includes(eventType))
+      await env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('management', 'driver_performance', ?, ?, 'driver_performance', ?, ?, ?)")
+        .bind(eventType === "late" ? "Fahrerverspätung" : eventType === "no_show" ? "Fahrer nicht erschienen" : "Fahrerunfall", `${person.full_name}${eventType === "late" ? ` · ${minutesLate} Min.` : ""}${notes ? ` · ${notes}` : ""}`, String(result.meta.last_row_id), eventType === "accident" || eventType === "no_show" ? "urgent" : "warning", now).run();
+    auditDetails = { oldValue: null, newValue: { staffId, driverName: person.full_name, eventDate, eventType, rating, scoreDelta, minutesLate, notes } };
+    body.id = Number(result.meta.last_row_id);
   } else if (action === "addStaff" && user.role === "management") {
     let userId: number | null = null;
     if (body.loginEmail && body.loginPassword) {
@@ -598,6 +735,53 @@ export async function POST(request: Request) {
         now,
       )
       .run();
+  } else if (
+    action === "addVehicleComment" &&
+    ["management", "dispatcher"].includes(user.role)
+  ) {
+    const licensePlate = String(body.licensePlate || "").trim();
+    const comment = String(body.comment || "").trim();
+    if (!licensePlate || comment.length < 2)
+      return json({ error: "Kennzeichen und Kommentar sind erforderlich" }, 400);
+    const vehicle = await env.DB.prepare("SELECT id FROM vehicles WHERE license_plate=?")
+      .bind(licensePlate).first();
+    if (!vehicle) return json({ error: "Fahrzeug wurde nicht gefunden" }, 404);
+    const result = await env.DB.prepare(
+      "INSERT INTO vehicle_comments (license_plate, author_user_id, author_name, comment, created_at) VALUES (?, ?, ?, ?, ?)",
+    ).bind(licensePlate, user.id, user.fullName, comment, now).run();
+    auditDetails = { oldValue: null, newValue: { licensePlate, comment } };
+    body.id = Number(result.meta.last_row_id);
+  } else if (action === "saveFuelCode" && user.role === "management") {
+    const licensePlate = String(body.licensePlate || "").trim();
+    const fuelType = String(body.fuelType || "");
+    const codeValue = String(body.codeValue || "").replace(/\s+/g, "").toUpperCase();
+    if (!licensePlate || !["diesel", "adblue"].includes(fuelType) || !/^[A-Z0-9-]{4,32}$/.test(codeValue))
+      return json({ error: "Kennzeichen, Kraftstoffart und Kassencode (4–32 Zeichen) prüfen" }, 400);
+    const vehicle = await env.DB.prepare("SELECT id FROM vehicles WHERE license_plate=?")
+      .bind(licensePlate).first();
+    if (!vehicle) return json({ error: "Fahrzeug wurde nicht gefunden" }, 404);
+    const oldValue = await env.DB.prepare("SELECT * FROM vehicle_fuel_codes WHERE license_plate=? AND fuel_type=?")
+      .bind(licensePlate, fuelType).first();
+    await env.DB.prepare(
+      `INSERT INTO vehicle_fuel_codes (license_plate, fuel_type, code_value, active, updated_by, created_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?, ?)
+       ON CONFLICT(license_plate, fuel_type) DO UPDATE SET code_value=excluded.code_value, active=1, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+    ).bind(licensePlate, fuelType, codeValue, user.id, now, now).run();
+    auditDetails = { oldValue, newValue: { licensePlate, fuelType, codeValue: "***" } };
+  } else if (
+    action === "updateVehicle" &&
+    ["management", "dispatcher"].includes(user.role)
+  ) {
+    const licensePlate = String(body.licensePlate || "").trim();
+    const status = String(body.status || "active");
+    if (!licensePlate || !["active", "workshop", "reserve"].includes(status))
+      return json({ error: "Kennzeichen oder Fahrzeugstatus ist ungültig" }, 400);
+    const oldValue = await env.DB.prepare("SELECT * FROM vehicles WHERE license_plate=?").bind(licensePlate).first();
+    if (!oldValue) return json({ error: "Fahrzeug wurde nicht gefunden" }, 404);
+    await env.DB.prepare(
+      "UPDATE vehicles SET company=?, location=?, status=?, inspection_due=?, notes=?, updated_at=? WHERE license_plate=?",
+    ).bind(body.company || "", body.location || "", status, body.inspectionDue || null, body.notes || "", now, licensePlate).run();
+    auditDetails = { oldValue, newValue: { licensePlate, company: body.company, location: body.location, status, inspectionDue: body.inspectionDue, notes: body.notes } };
   } else if (
     action === "addPlanning" &&
     ["management", "dispatcher"].includes(user.role)
@@ -1193,7 +1377,7 @@ export async function POST(request: Request) {
     .bind(
       user.id,
       action,
-      String(body.id || ""),
+      String(body.id || body.entityId || ""),
       JSON.stringify({
         role: user.role,
         year: body.planningYear,

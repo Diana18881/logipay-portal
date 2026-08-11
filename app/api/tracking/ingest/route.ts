@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 import { ensureDomainDatabase } from "../../../../lib/domain";
 
 type TrackerEnvironment = typeof env & { TRACKER_INGEST_TOKEN?: string };
@@ -47,8 +47,8 @@ export async function POST(request: Request) {
 
   await ensureDomainDatabase();
   const tracker = await env.DB.prepare(
-    "SELECT id, license_plate FROM truck_trackers WHERE device_id=? AND enabled=1",
-  ).bind(deviceId).first<{ id: number; license_plate: string }>();
+    "SELECT id, license_plate, provider FROM truck_trackers WHERE device_id=? AND enabled=1",
+  ).bind(deviceId).first<{ id: number; license_plate: string; provider: string }>();
   if (!tracker)
     return Response.json({ error: "Unbekannter oder deaktivierter Tracker" }, { status: 404 });
 
@@ -58,10 +58,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "Zeitstempel ungültig" }, { status: 400 });
   const recordedAt = recordedAtCandidate.toISOString();
   const ignition = body.ignition === true || body.ignition === 1 || String(body.ignition).toLowerCase() === "true";
+  const source = tracker.provider.toLowerCase() === "fleetboard" ? "fleetboard" : "tracker";
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO truck_positions (tracker_id, license_plate, latitude, longitude, speed_kph, heading, ignition, odometer_km, address, source, recorded_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'tracker', ?, ?)",
-    ).bind(tracker.id, tracker.license_plate, latitude, longitude, speedKph, heading, ignition ? 1 : 0, odometerKm, String(body.address || "").slice(0, 300), recordedAt, receivedAt),
+      "INSERT INTO truck_positions (tracker_id, license_plate, latitude, longitude, speed_kph, heading, ignition, odometer_km, address, source, recorded_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(tracker.id, tracker.license_plate, latitude, longitude, speedKph, heading, ignition ? 1 : 0, odometerKm, String(body.address || "").slice(0, 300), source, recordedAt, receivedAt),
     env.DB.prepare("UPDATE truck_trackers SET last_connected_at=?, updated_at=? WHERE id=?")
       .bind(receivedAt, receivedAt, tracker.id),
   ]);

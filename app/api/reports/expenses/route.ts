@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { requirePortalUser } from "../../../../lib/auth";

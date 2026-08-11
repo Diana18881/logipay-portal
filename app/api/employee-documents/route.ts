@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../lib/auth";
 import { ensureDomainDatabase } from "../../../lib/domain";
 
@@ -12,6 +12,8 @@ export async function POST(request: Request) {
   let staffId = Number(form.get("staffId"));
   const category = String(form.get("category") || "");
   const expiresAt = String(form.get("expiresAt") || "") || null;
+  let scanResult: Record<string, string | number | null> = {};
+  try { scanResult = JSON.parse(String(form.get("scanResult") || "{}")) as Record<string, string | number | null>; } catch { scanResult = {}; }
   if (user.role === "driver") {
     const own = await env.DB.prepare("SELECT id FROM staff WHERE user_id=? OR full_name=? LIMIT 1").bind(user.id, user.fullName).first<{ id: number }>();
     staffId = own?.id || 0;
@@ -23,6 +25,6 @@ export async function POST(request: Request) {
   const key = `personalakte/${staffId}/${category}/${crypto.randomUUID()}`;
   await env.DOCUMENTS.put(key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type }, customMetadata: { originalName: file.name } });
   const result = await env.DB.prepare("INSERT INTO employee_documents (staff_id, category, file_name, object_key, content_type, size_bytes, expires_at, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(staffId, category, file.name, key, file.type, file.size, expiresAt, user.id, new Date().toISOString()).run();
-  await env.DB.prepare("INSERT INTO audit_log (user_id, action, entity_id, details, created_at) VALUES (?, 'uploadEmployeeDocument', ?, ?, ?)").bind(user.id, String(result.meta.last_row_id), JSON.stringify({ staffId, category, fileName: file.name, expiresAt }), new Date().toISOString()).run();
+  await env.DB.prepare("INSERT INTO audit_log (user_id, action, entity_id, details, created_at) VALUES (?, 'uploadEmployeeDocument', ?, ?, ?)").bind(user.id, String(result.meta.last_row_id), JSON.stringify({ staffId, category, fileName: file.name, expiresAt, scanResult }), new Date().toISOString()).run();
   return Response.json({ ok: true });
 }

@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 import { createSession, ensureAuthDatabase, generateTwoFactorSecret, sessionCookie, verifyPassword, verifyTwoFactorCode, type PortalRole } from "../../../../lib/auth";
 
 export async function POST(request: Request) {
@@ -8,7 +8,7 @@ export async function POST(request: Request) {
     const email = payload?.email?.trim().toLowerCase() ?? "";
     const password = payload?.password ?? "";
     if (!email || !password) {
-      return Response.json({ error: "Введите email и пароль" }, { status: 400 });
+      return Response.json({ error: "Bitte E-Mail und Passwort eingeben" }, { status: 400 });
     }
 
     const user = await env.DB.prepare(
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const ipAddress = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "";
     const userAgent = request.headers.get("user-agent") || "";
     if (user?.locked_until && new Date(user.locked_until) > now) {
-      return Response.json({ error: "Учётная запись временно заблокирована. Попробуйте позже." }, { status: 423 });
+      return Response.json({ error: "Konto vorübergehend gesperrt. Bitte später erneut versuchen." }, { status: 423 });
     }
     const valid = user?.active === 1 && await verifyPassword(password, user.password_hash);
     if (!valid || !user) {
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
         await env.DB.prepare("UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?").bind(attempts >= 5 ? 0 : attempts, lockedUntil, user.id).run();
       }
       await env.DB.prepare("INSERT INTO login_audit (user_id, email, success, ip_address, user_agent, created_at) VALUES (?, ?, 0, ?, ?, ?)").bind(user?.id || null, email, ipAddress, userAgent, now.toISOString()).run();
-      return Response.json({ error: "Неверный email или пароль" }, { status: 401 });
+      return Response.json({ error: "E-Mail oder Passwort ist falsch" }, { status: 401 });
     }
 
     if (["management", "accountant"].includes(user.role)) {
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       }
       if (!(await verifyTwoFactorCode(secret, payload.twoFactorCode))) {
         await env.DB.prepare("INSERT INTO login_audit (user_id, email, success, ip_address, user_agent, created_at) VALUES (?, ?, 0, ?, ?, ?)").bind(user.id, email, ipAddress, userAgent, now.toISOString()).run();
-        return Response.json({ error: "Неверный код двухфакторной авторизации", requiresTwoFactor: true }, { status: 401 });
+        return Response.json({ error: "Falscher Zwei-Faktor-Code", requiresTwoFactor: true }, { status: 401 });
       }
       if (!user.two_factor_enabled) await env.DB.prepare("UPDATE users SET two_factor_enabled=1 WHERE id=?").bind(user.id).run();
     }
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Login failed", error);
     return Response.json(
-      { error: "База данных входа ещё не готова. Перезапустите сервер и попробуйте снова." },
+      { error: "Anmeldedatenbank noch nicht bereit. Server neu starten und erneut versuchen." },
       { status: 500 },
     );
   }

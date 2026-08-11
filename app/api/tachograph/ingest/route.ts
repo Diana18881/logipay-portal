@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 import { ensureDomainDatabase } from "../../../../lib/domain";
 
 type TachographEnvironment = typeof env & { TACHOGRAPH_INGEST_TOKEN?: string };

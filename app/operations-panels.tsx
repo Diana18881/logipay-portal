@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { driverText, type DriverLocale } from "./driver-i18n";
+import { queueOfflineUpload } from "../lib/offline-client";
 
 type Row = Record<string, string | number | null>;
 type Action = (payload: Record<string, string | number | null>) => Promise<void>;
@@ -9,6 +10,106 @@ type Action = (payload: Record<string, string | number | null>) => Promise<void>
 const euro = (value: unknown) => new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(Number(value || 0));
 const dateTime = (value: unknown) => value ? new Date(String(value)).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "—";
 const duration = (value: unknown) => `${Math.floor(Number(value || 0) / 60)}:${String(Number(value || 0) % 60).padStart(2, "0")} Std.`;
+
+function pauseTripChatPlayers(root: ParentNode = document) {
+  root.querySelectorAll<HTMLAudioElement>(".trip-chat-stream audio, .chat-center-stream audio").forEach((audio) => {
+    try {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    } catch {
+      /* Safari throws EmptyRanges when native controls sync during teardown */
+    }
+  });
+}
+
+function TripChatAudio({ src }: { src: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  useEffect(() => () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    try {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    } catch {
+      /* ignore Safari media teardown errors */
+    }
+  }, []);
+  return <audio ref={audioRef} controls preload="none" src={src} />;
+}
+
+type ChatCopy = {
+  translated: string;
+  sent: string;
+  read: string;
+  photo: string;
+  delete: string;
+  deleteConfirm: string;
+  deleteDone: string;
+  deleteBlocked: string;
+};
+
+function TripChatMessage({
+  message,
+  own,
+  canModerate,
+  translated,
+  original,
+  copy,
+  onDelete,
+}: {
+  message: Row;
+  own: boolean;
+  canModerate?: boolean;
+  translated: string;
+  original: string;
+  copy: ChatCopy;
+  onDelete?: (messageId: number) => void | Promise<void>;
+}) {
+  const canDelete = canModerate || (own && !Number(message.recipient_read_count));
+  return (
+    <article className={`trip-chat-message ${own ? "message-own" : "message-other"}`}>
+      <header>
+        <strong>{message.sender_name}</strong>
+        <span className="trip-chat-message-meta">
+          <time>{dateTime(message.created_at)}</time>
+          {canDelete ? (
+            <button
+              type="button"
+              className="trip-chat-delete"
+              aria-label={copy.delete}
+              onClick={() => void onDelete?.(Number(message.id))}
+            >
+              {copy.delete}
+            </button>
+          ) : null}
+        </span>
+      </header>
+      {original ? (
+        <>
+          <p>{translated}</p>
+          {translated !== original ? (
+            <small>
+              {copy.translated} · {String(message.original_language).toUpperCase()}
+              <br />
+              {original}
+            </small>
+          ) : null}
+        </>
+      ) : null}
+      {message.message_type === "voice" ? (
+        <TripChatAudio src={`/api/trip-chat/${message.id}/attachment`} />
+      ) : null}
+      {message.message_type === "photo" ? (
+        <a className="trip-chat-photo" href={`/api/trip-chat/${message.id}/attachment`} target="_blank" rel="noreferrer">
+          <img src={`/api/trip-chat/${message.id}/attachment`} alt={String(message.file_name || copy.photo)} />
+        </a>
+      ) : null}
+      <footer>{own ? (Number(message.recipient_read_count) ? copy.read : copy.sent) : ""}</footer>
+    </article>
+  );
+}
 
 export function UserManagement({ rows, staff, resetRequests, action }: { rows: Row[]; staff: Row[]; resetRequests: Row[]; action: Action }) {
   const [editing, setEditing] = useState<Row | null>(null);
@@ -66,7 +167,7 @@ export function TachographCenter({ rows, staff, vehicles, canEdit, locale, actio
     <div className="panel"><div className="panel-title"><div><h2>{driverView ? c.title : "Fahr- und Ruhezeiten"}</h2><p>{driverView ? c.help : "Restfahrzeit und Verstöße werden automatisch hervorgehoben"}</p></div></div><div className="table-wrap"><table><thead><tr><th>{driverView ? c.date : "Datum"}</th><th>{driverView ? c.driver : "Fahrer"}</th><th>{driverView ? c.plate : "Kennzeichen"}</th><th>{driverView ? c.drive : "Fahrzeit"}</th><th>{driverView ? c.break : "Pause"}</th><th>{driverView ? c.rest : "Rest"}</th><th>{driverView ? c.note : "Hinweis"}</th><th>{driverView ? c.source : "Quelle"}</th></tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}><td>{row.record_date}</td><td>{row.full_name}</td><td><strong>{row.license_plate}</strong></td><td>{duration(row.driving_minutes)}</td><td>{duration(row.rest_minutes)}</td><td><span className={Number(row.remaining_minutes) <= 90 ? "danger-chip" : "ok-chip"}>{duration(row.remaining_minutes)}</span></td><td>{row.infringement || "—"}</td><td>{row.source}</td></tr>) : <tr><td colSpan={8}>{driverView ? c.empty : "Noch keine Tachograph-Daten"}</td></tr>}</tbody></table></div></div></div>;
 }
 
-export function TripExecutionCenter({ rows, documents, messages, driver, currentUserId, locale, action, reload, view = "operations" }: { rows: Row[]; documents: Row[]; messages: Row[]; driver: boolean; currentUserId: number; locale: DriverLocale; action: Action; reload: () => Promise<void>; view?: "operations" | "chat" }) {
+export function TripExecutionCenter({ rows, documents, messages, driver, currentUserId, chatModerator = false, locale, action, reload, view = "operations" }: { rows: Row[]; documents: Row[]; messages: Row[]; driver: boolean; currentUserId: number; chatModerator?: boolean; locale: DriverLocale; action: Action; reload: () => Promise<void>; view?: "operations" | "chat" }) {
   const [selected, setSelected] = useState<Row | null>(null);
   const [chatTrip, setChatTrip] = useState<Row | null>(() => {
     if (view !== "chat") return null;
@@ -79,12 +180,23 @@ export function TripExecutionCenter({ rows, documents, messages, driver, current
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [chatNotice, setChatNotice] = useState("");
+  const [deletedMessageIds, setDeletedMessageIds] = useState<number[]>([]);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const startedRef = useRef(0);
+  useEffect(() => {
+    const suppressSafariAudioError = (event: ErrorEvent) => {
+      const message = String(event.message || event.error?.message || "");
+      if (message.includes("EmptyRanges")) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("error", suppressSafariAudioError);
+    return () => window.removeEventListener("error", suppressSafariAudioError);
+  }, []);
   async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const values = Object.fromEntries(new FormData(form).entries()); await action({ action: "saveTripOperation", planningId: selected?.planning_id || null, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) }); setSelected(null); }
-  async function upload(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const response = await fetch("/api/trip-documents", { method: "POST", body: new FormData(form) }); const result = await response.json() as { error?: string }; if (!response.ok) return window.alert(result.error || "Upload fehlgeschlagen"); form.reset(); await reload(); }
+  async function upload(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const formData = new FormData(form); try { if (!navigator.onLine) throw new Error("offline"); const response = await fetch("/api/trip-documents", { method: "POST", body: formData }); const result = await response.json() as { error?: string }; if (!response.ok) return window.alert(result.error || "Upload fehlgeschlagen"); form.reset(); await reload(); } catch { await queueOfflineUpload("/api/trip-documents", formData); form.reset(); setChatNotice(driver ? "Документ сохранён офлайн." : "Dokument offline gespeichert."); } }
   async function sendChatMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!chatTrip) return;
@@ -94,10 +206,16 @@ export function TripExecutionCenter({ rows, documents, messages, driver, current
     data.set("locale", locale);
     if (recordedBlob) data.set("file", new File([recordedBlob], `tour-voice-${Date.now()}.${recordedBlob.type.includes("mp4") ? "m4a" : "webm"}`, { type: recordedBlob.type || "audio/webm" }));
     data.set("durationSeconds", String(durationSeconds));
-    const response = await fetch("/api/trip-chat", { method: "POST", body: data });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) return setChatNotice(result.error || "Nachricht konnte nicht gesendet werden");
-    form.reset(); setRecordedBlob(null); setDurationSeconds(0); setChatNotice(driver ? "Nachricht gesendet" : "Nachricht gesendet"); await reload();
+    try {
+      if (!navigator.onLine) throw new Error("offline");
+      const response = await fetch("/api/trip-chat", { method: "POST", body: data });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) return setChatNotice(result.error || "Nachricht konnte nicht gesendet werden");
+      form.reset(); setRecordedBlob(null); setDurationSeconds(0); setChatNotice("Nachricht gesendet"); await reload();
+    } catch {
+      await queueOfflineUpload("/api/trip-chat", data); form.reset(); setRecordedBlob(null); setDurationSeconds(0);
+      setChatNotice(driver ? "Сообщение сохранено без интернета." : "Nachricht offline gespeichert.");
+    }
   }
   async function startRecording() {
     try {
@@ -122,12 +240,44 @@ export function TripExecutionCenter({ rows, documents, messages, driver, current
   }, [action, chatTrip, unreadOpenChat]);
   const statuses = ["Geplant", "Gestartet", "Beladen", "Unterwegs", "Zugestellt", "Problem"];
   const c = {
-    de: { noPlate: "Ohne Kennzeichen", from: "Von", to: "Nach", update: "Status aktualisieren", empty: "Für diese Woche gibt es noch keine Touren.", title: "Tour", help: "Status, Ziel, Ankunft und Problem melden", pickup: "Ladeadresse", delivery: "Lieferadresse", delay: "Verspätung / Problem", recipient: "Empfänger", signature: "Unterschrift (Name)", save: "Tour speichern", close: "Schließen", docType: "Dokumentart", upload: "Foto / Dokument hochladen", documents: "CMR & Zustellnachweise", docsHelp: "Geschützte Dokumente und Fotos je Tour", time: "Zeit", driver: "Fahrer", kind: "Art", file: "Datei", noDocs: "Noch keine Tourdokumente", chat: "Tour-Chat", chatHelp: "Text, Sprache und Fotos sicher mit der Disposition austauschen", write: "Nachricht schreiben …", photo: "Foto / Audio", record: "Sprache aufnehmen", stop: "Aufnahme stoppen", send: "Senden", translated: "Automatisch übersetzt", sent: "Gesendet", read: "Gelesen", noMessages: "Noch keine Nachrichten in dieser Tour", status: { Geplant: "Geplant", Gestartet: "Gestartet", Beladen: "Beladen", Unterwegs: "Unterwegs", Zugestellt: "Zugestellt", Problem: "Problem" } },
-    pl: { noPlate: "Bez numeru", from: "Z", to: "Do", update: "Zmień status", empty: "Brak tras na ten tydzień.", title: "Trasa", help: "Zmień status, cel, czas przyjazdu lub zgłoś problem", pickup: "Adres załadunku", delivery: "Adres dostawy", delay: "Opóźnienie / problem", recipient: "Odbiorca", signature: "Podpis (imię)", save: "Zapisz trasę", close: "Zamknij", docType: "Rodzaj dokumentu", upload: "Wyślij zdjęcie / dokument", documents: "CMR i potwierdzenia", docsHelp: "Chronione dokumenty i zdjęcia trasy", time: "Czas", driver: "Kierowca", kind: "Typ", file: "Plik", noDocs: "Brak dokumentów", chat: "Czat trasy", chatHelp: "Tekst, głos i zdjęcia bezpiecznie połączone z trasą", write: "Napisz wiadomość …", photo: "Zdjęcie / audio", record: "Nagraj głos", stop: "Zatrzymaj", send: "Wyślij", translated: "Tłumaczenie automatyczne", sent: "Wysłano", read: "Odczytano", noMessages: "Brak wiadomości w tej trasie", status: { Geplant: "Zaplanowana", Gestartet: "Rozpoczęta", Beladen: "Załadowana", Unterwegs: "W drodze", Zugestellt: "Dostarczona", Problem: "Problem" } },
-    uk: { noPlate: "Без номера", from: "Звідки", to: "Куди", update: "Змінити статус", empty: "На цей тиждень рейсів немає.", title: "Рейс", help: "Змініть статус, адресу, час прибуття або повідомте про проблему", pickup: "Адреса завантаження", delivery: "Адреса доставки", delay: "Запізнення / проблема", recipient: "Одержувач", signature: "Підпис (ім’я)", save: "Зберегти рейс", close: "Закрити", docType: "Тип документа", upload: "Завантажити фото / документ", documents: "CMR та підтвердження", docsHelp: "Захищені документи й фото рейсу", time: "Час", driver: "Водій", kind: "Тип", file: "Файл", noDocs: "Документів рейсу ще немає", chat: "Чат рейсу", chatHelp: "Текст, голос і фото захищено прив’язані до рейсу", write: "Напишіть повідомлення …", photo: "Фото / аудіо", record: "Записати голос", stop: "Зупинити", send: "Надіслати", translated: "Автоматичний переклад", sent: "Надіслано", read: "Прочитано", noMessages: "У цьому рейсі повідомлень немає", status: { Geplant: "Заплановано", Gestartet: "Розпочато", Beladen: "Завантажено", Unterwegs: "У дорозі", Zugestellt: "Доставлено", Problem: "Проблема" } },
-    ru: { noPlate: "Без номера", from: "Откуда", to: "Куда", update: "Изменить статус", empty: "На эту неделю рейсов нет.", title: "Рейс", help: "Измените статус, адрес, время прибытия или сообщите о проблеме", pickup: "Адрес загрузки", delivery: "Адрес доставки", delay: "Опоздание / проблема", recipient: "Получатель", signature: "Подпись (имя)", save: "Сохранить рейс", close: "Закрыть", docType: "Тип документа", upload: "Загрузить фото / документ", documents: "CMR и подтверждения", docsHelp: "Защищённые документы и фото рейса", time: "Время", driver: "Водитель", kind: "Тип", file: "Файл", noDocs: "Документов рейса пока нет", chat: "Чат рейса", chatHelp: "Текст, голос и фотографии защищённо привязаны к рейсу", write: "Напишите сообщение …", photo: "Фото / аудио", record: "Записать голос", stop: "Остановить", send: "Отправить", translated: "Автоматический перевод", sent: "Отправлено", read: "Прочитано", noMessages: "В этом рейсе сообщений пока нет", status: { Geplant: "Запланирован", Gestartet: "Начат", Beladen: "Загружен", Unterwegs: "В пути", Zugestellt: "Доставлен", Problem: "Проблема" } },
+    de: { noPlate: "Ohne Kennzeichen", from: "Von", to: "Nach", update: "Status aktualisieren", empty: "Für diese Woche gibt es noch keine Touren.", title: "Tour", help: "Status, Ziel, Ankunft und Problem melden", pickup: "Ladeadresse", delivery: "Lieferadresse", delay: "Verspätung / Problem", recipient: "Empfänger", signature: "Unterschrift (Name)", save: "Tour speichern", close: "Schließen", docType: "Dokumentart", upload: "Foto / Dokument hochladen", documents: "CMR & Zustellnachweise", docsHelp: "Geschützte Dokumente und Fotos je Tour", time: "Zeit", driver: "Fahrer", kind: "Art", file: "Datei", noDocs: "Noch keine Tourdokumente", chat: "Tour-Chat", chatHelp: "Text, Sprache und Fotos sicher mit der Disposition austauschen", write: "Nachricht schreiben …", photo: "Foto / Audio", record: "Sprache aufnehmen", stop: "Aufnahme stoppen", send: "Senden", translated: "Automatisch übersetzt", sent: "Gesendet", read: "Gelesen", delete: "Löschen", deleteConfirm: "Nachricht wirklich löschen?", deleteDone: "Nachricht gelöscht", deleteBlocked: "Bereits gelesen — Löschen nicht möglich", noMessages: "Noch keine Nachrichten in dieser Tour", status: { Geplant: "Geplant", Gestartet: "Gestartet", Beladen: "Beladen", Unterwegs: "Unterwegs", Zugestellt: "Zugestellt", Problem: "Problem" } },
+    pl: { noPlate: "Bez numeru", from: "Z", to: "Do", update: "Zmień status", empty: "Brak tras na ten tydzień.", title: "Trasa", help: "Zmień status, cel, czas przyjazdu lub zgłoś problem", pickup: "Adres załadunku", delivery: "Adres dostawy", delay: "Opóźnienie / problem", recipient: "Odbiorca", signature: "Podpis (imię)", save: "Zapisz trasę", close: "Zamknij", docType: "Rodzaj dokumentu", upload: "Wyślij zdjęcie / dokument", documents: "CMR i potwierdzenia", docsHelp: "Chronione dokumenty i zdjęcia trasy", time: "Czas", driver: "Kierowca", kind: "Typ", file: "Plik", noDocs: "Brak dokumentów", chat: "Czat trasy", chatHelp: "Tekst, głos i zdjęcia bezpiecznie połączone z trasą", write: "Napisz wiadomość …", photo: "Zdjęcie / audio", record: "Nagraj głos", stop: "Zatrzymaj", send: "Wyślij", translated: "Tłumaczenie automatyczne", sent: "Wysłano", read: "Odczytano", delete: "Usuń", deleteConfirm: "Usunąć tę wiadomość?", deleteDone: "Wiadomość usunięta", deleteBlocked: "Już odczytano — nie można usunąć", noMessages: "Brak wiadomości w tej trasie", status: { Geplant: "Zaplanowana", Gestartet: "Rozpoczęta", Beladen: "Załadowana", Unterwegs: "W drodze", Zugestellt: "Dostarczona", Problem: "Problem" } },
+    uk: { noPlate: "Без номера", from: "Звідки", to: "Куди", update: "Змінити статус", empty: "На цей тиждень рейсів немає.", title: "Рейс", help: "Змініть статус, адресу, час прибуття або повідомте про проблему", pickup: "Адреса завантаження", delivery: "Адреса доставки", delay: "Запізнення / проблема", recipient: "Одержувач", signature: "Підпис (ім’я)", save: "Зберегти рейс", close: "Закрити", docType: "Тип документа", upload: "Завантажити фото / документ", documents: "CMR та підтвердження", docsHelp: "Захищені документи й фото рейсу", time: "Час", driver: "Водій", kind: "Тип", file: "Файл", noDocs: "Документів рейсу ще немає", chat: "Чат рейсу", chatHelp: "Текст, голос і фото захищено прив’язані до рейсу", write: "Напишіть повідомлення …", photo: "Фото / аудіо", record: "Записати голос", stop: "Зупинити", send: "Надіслати", translated: "Автоматичний переклад", sent: "Надіслано", read: "Прочитано", delete: "Видалити", deleteConfirm: "Видалити це повідомлення?", deleteDone: "Повідомлення видалено", deleteBlocked: "Вже прочитано — видалити неможливо", noMessages: "У цьому рейсі повідомлень немає", status: { Geplant: "Заплановано", Gestartet: "Розпочато", Beladen: "Завантажено", Unterwegs: "У дорозі", Zugestellt: "Доставлено", Problem: "Проблема" } },
+    ru: { noPlate: "Без номера", from: "Откуда", to: "Куда", update: "Изменить статус", empty: "На эту неделю рейсов нет.", title: "Рейс", help: "Измените статус, адрес, время прибытия или сообщите о проблеме", pickup: "Адрес загрузки", delivery: "Адрес доставки", delay: "Опоздание / проблема", recipient: "Получатель", signature: "Подпись (имя)", save: "Сохранить рейс", close: "Закрыть", docType: "Тип документа", upload: "Загрузить фото / документ", documents: "CMR и подтверждения", docsHelp: "Защищённые документы и фото рейса", time: "Время", driver: "Водитель", kind: "Тип", file: "Файл", noDocs: "Документов рейса пока нет", chat: "Чат рейса", chatHelp: "Текст, голос и фотографии защищённо привязаны к рейсу", write: "Напишите сообщение …", photo: "Фото / аудио", record: "Записать голос", stop: "Остановить", send: "Отправить", translated: "Автоматический перевод", sent: "Отправлено", read: "Прочитано", delete: "Удалить", deleteConfirm: "Удалить это сообщение?", deleteDone: "Сообщение удалено", deleteBlocked: "Уже прочитано — удалить нельзя", noMessages: "В этом рейсе сообщений пока нет", status: { Geplant: "Запланирован", Gestartet: "Начат", Beladen: "Загружен", Unterwegs: "В пути", Zugestellt: "Доставлен", Problem: "Проблема" } },
   }[locale];
-  const activeMessages = chatTrip ? messages.filter((message) => Number(message.trip_operation_id) === Number(chatTrip.id)) : [];
+  const chatCopy: ChatCopy = {
+    translated: c.translated,
+    sent: c.sent,
+    read: c.read,
+    photo: c.photo,
+    delete: c.delete,
+    deleteConfirm: c.deleteConfirm,
+    deleteDone: c.deleteDone,
+    deleteBlocked: c.deleteBlocked,
+  };
+  async function deleteMessage(messageId: number) {
+    const message = messages.find((item) => Number(item.id) === messageId);
+    if (!message) return;
+    const own = Number(message.sender_user_id) === currentUserId;
+    if (!chatModerator && !own) return;
+    if (!chatModerator && Number(message.recipient_read_count) > 0) {
+      setChatNotice(chatCopy.deleteBlocked);
+      return;
+    }
+    if (!window.confirm(chatCopy.deleteConfirm)) return;
+    pauseTripChatPlayers();
+    setDeletedMessageIds((current) => [...current, messageId]);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    try {
+      await action({ action: "deleteTripMessage", id: messageId });
+      setChatNotice(chatCopy.deleteDone);
+      await reload();
+    } finally {
+      setDeletedMessageIds((current) => current.filter((id) => id !== messageId));
+    }
+  }
+  const visibleMessages = (items: Row[]) => items.filter((message) => !deletedMessageIds.includes(Number(message.id)));
+  const activeMessages = chatTrip ? visibleMessages(messages.filter((message) => Number(message.trip_operation_id) === Number(chatTrip.id))) : [];
   const translatedText = (message: Row) => {
     try {
       const translations = JSON.parse(String(message.translations_json || "{}")) as Record<string, string>;
@@ -161,21 +311,59 @@ export function TripExecutionCenter({ rows, documents, messages, driver, current
     </aside>
     <section className="chat-conversation panel">{chatTrip ? <>
       <header className="chat-conversation-header"><div className="chat-thread-avatar">{String(chatTrip.driver_name || chatTrip.license_plate || "T").split(" ").map((part) => part[0]).join("").slice(0, 2)}</div><div><h2>{chatTrip.driver_name || c.driver}</h2><p>{chatTrip.license_plate || c.noPlate}{chatTrip.block_id ? ` · ${chatTrip.block_id}` : ""}</p></div><span className={`trip-live-status trip-live-${String(chatTrip.status).toLowerCase()}`}>{driver ? c.status[String(chatTrip.status) as keyof typeof c.status] || chatTrip.status : chatTrip.status}</span></header>
-      <div className="trip-chat-stream chat-center-stream">{activeMessages.length ? activeMessages.map((message) => { const own = Number(message.sender_user_id) === currentUserId; const translated = translatedText(message); const original = String(message.body || ""); return <article key={message.id} className={`trip-chat-message ${own ? "message-own" : "message-other"}`}><header><strong>{message.sender_name}</strong><span>{dateTime(message.created_at)}</span></header>{original ? <><p>{translated}</p>{translated !== original ? <small>{c.translated} · {String(message.original_language).toUpperCase()}<br />{original}</small> : null}</> : null}{message.message_type === "voice" ? <audio controls preload="none" src={`/api/trip-chat/${message.id}/attachment`} /> : null}{message.message_type === "photo" ? <a className="trip-chat-photo" href={`/api/trip-chat/${message.id}/attachment`} target="_blank" rel="noreferrer"><img src={`/api/trip-chat/${message.id}/attachment`} alt={String(message.file_name || c.photo)} /></a> : null}<footer>{own ? (Number(message.recipient_read_count) ? c.read : c.sent) : ""}</footer></article>; }) : <div className="chat-empty-conversation"><span>✉</span><strong>{inboxCopy.noConversation}</strong><small>{c.chatHelp}</small></div>}</div>
+      <div className="trip-chat-stream chat-center-stream">{activeMessages.length ? activeMessages.map((message) => {
+        const own = Number(message.sender_user_id) === currentUserId;
+        return (
+          <TripChatMessage
+            key={message.id}
+            message={message}
+            own={own}
+            canModerate={chatModerator}
+            translated={translatedText(message)}
+            original={String(message.body || "")}
+            copy={chatCopy}
+            onDelete={deleteMessage}
+          />
+        );
+      }) : <div className="chat-empty-conversation"><span>✉</span><strong>{inboxCopy.noConversation}</strong><small>{c.chatHelp}</small></div>}</div>
       <form className="trip-chat-composer chat-center-composer" onSubmit={sendChatMessage}><textarea name="body" maxLength={2000} placeholder={c.write} /><div className="trip-chat-tools"><label>▣ {c.photo}<input name="file" type="file" accept="image/*,audio/*" /></label><button type="button" className={recording ? "voice-stop" : ""} onClick={recording ? stopRecording : startRecording}>{recording ? `■ ${c.stop}` : `● ${c.record}`}</button>{recordedBlob ? <span className="ok-chip">{durationSeconds}s ✓</span> : null}<button className="primary-button">{c.send} →</button></div>{chatNotice ? <div className="inline-notice">{chatNotice}</div> : null}</form>
     </> : <div className="chat-empty-conversation"><span>✉</span><strong>{inboxCopy.select}</strong></div>}</section>
   </div>;
   return <div className="advanced-stack">
     <div className="trip-board">{rows.length ? rows.map((row) => { const unread = messages.filter((message) => Number(message.trip_operation_id) === Number(row.id) && !Number(message.read_by_me) && Number(message.sender_user_id) !== currentUserId).length; return <article key={row.id} className={`trip-operation trip-status-${String(row.status).toLowerCase()}`}><header><div><strong>{row.license_plate || (driver ? c.noPlate : "Ohne Kennzeichen")}</strong><span>{row.driver_name}{row.block_id ? ` · ${row.block_id}` : ""}</span></div><b>{driver ? c.status[String(row.status) as keyof typeof c.status] || row.status : row.status}</b></header><p><span>{driver ? c.from : "Von"}</span>{row.pickup_address || row.location || "—"}</p><p><span>{driver ? c.to : "Nach"}</span>{row.delivery_address || "—"}</p><p><span>ETA</span>{dateTime(row.eta)}</p>{row.delay_reason ? <div className="trip-problem">{row.delay_reason}</div> : null}<div className="trip-card-actions"><button className="edit-action" onClick={() => setSelected(row)}>{driver ? c.update : "Einsatz bearbeiten"}</button><button className="trip-chat-button" onClick={() => setChatTrip(row)}>{c.chat}{unread ? <em>{unread}</em> : null}</button></div></article>; }) : <div className="empty-state">{driver ? c.empty : "Für diese Woche gibt es noch keine operativen Einsätze."}</div>}</div>
     {selected ? <div className="panel"><div className="panel-title"><div><h2>{driver ? c.title : "Einsatz"} {selected.license_plate}</h2><p>{driver ? c.help : "Status, Ziel, ETA, Verzögerung und Zustellbestätigung"}</p></div></div><form className="advanced-form trip-operation-form" onSubmit={submit} key={String(selected.id)}><select name="status" defaultValue={String(selected.status || "Geplant")}>{statuses.map((status) => <option key={status} value={status}>{driver ? c.status[status as keyof typeof c.status] : status}</option>)}</select><input name="pickupAddress" placeholder={driver ? c.pickup : "Ladeadresse"} defaultValue={String(selected.pickup_address || "")} /><input name="deliveryAddress" placeholder={driver ? c.delivery : "Lieferadresse"} defaultValue={String(selected.delivery_address || "")} /><label>ETA<input name="eta" type="datetime-local" defaultValue={String(selected.eta || "").slice(0, 16)} /></label><input name="delayReason" placeholder={driver ? c.delay : "Verspätung / Problem"} defaultValue={String(selected.delay_reason || "")} /><input name="recipientName" placeholder={driver ? c.recipient : "Empfänger"} defaultValue={String(selected.recipient_name || "")} /><input name="signatureName" placeholder={driver ? c.signature : "Unterschrift (Name)"} defaultValue={String(selected.signature_name || "")} /><button className="primary-button">{driver ? c.save : "Einsatz speichern"}</button><button type="button" onClick={() => setSelected(null)}>{driver ? c.close : "Schließen"}</button></form><form className="advanced-form trip-upload-form" onSubmit={upload}><input type="hidden" name="tripOperationId" value={String(selected.id)} /><select name="category" required defaultValue=""><option value="">{driver ? c.docType : "Dokumentart"}</option><option>CMR</option><option>Lieferschein</option><option>Ladung</option><option>Zustellung</option><option>Unterschrift</option><option>Sonstiges</option></select><input name="file" type="file" accept="image/*,application/pdf" capture="environment" required /><button className="primary-button">{driver ? c.upload : "Foto / Dokument hochladen"}</button></form></div> : null}
-    {chatTrip ? <div className="panel trip-chat-panel"><div className="panel-title"><div><h2>{c.chat} · {chatTrip.license_plate || c.noPlate}</h2><p>{chatTrip.driver_name} · {chatTrip.block_id || "Block ID —"} · {c.chatHelp}</p></div><button type="button" onClick={() => setChatTrip(null)}>{c.close}</button></div><div className="trip-chat-stream">{activeMessages.length ? activeMessages.map((message) => { const own = Number(message.sender_user_id) === currentUserId; const translated = translatedText(message); const original = String(message.body || ""); return <article key={message.id} className={`trip-chat-message ${own ? "message-own" : "message-other"}`}><header><strong>{message.sender_name}</strong><span>{dateTime(message.created_at)}</span></header>{original ? <><p>{translated}</p>{translated !== original ? <small>{c.translated} · {String(message.original_language).toUpperCase()}<br />{original}</small> : null}</> : null}{message.message_type === "voice" ? <audio controls preload="none" src={`/api/trip-chat/${message.id}/attachment`} /> : null}{message.message_type === "photo" ? <a className="trip-chat-photo" href={`/api/trip-chat/${message.id}/attachment`} target="_blank" rel="noreferrer"><img src={`/api/trip-chat/${message.id}/attachment`} alt={String(message.file_name || c.photo)} /></a> : null}<footer>{own ? (Number(message.recipient_read_count) ? c.read : c.sent) : ""}</footer></article>; }) : <div className="empty-state">{c.noMessages}</div>}</div><form className="trip-chat-composer" onSubmit={sendChatMessage}><textarea name="body" maxLength={2000} placeholder={c.write} /><div className="trip-chat-tools"><label>{c.photo}<input name="file" type="file" accept="image/*,audio/*" /></label><button type="button" className={recording ? "voice-stop" : ""} onClick={recording ? stopRecording : startRecording}>{recording ? c.stop : c.record}</button>{recordedBlob ? <span className="ok-chip">{durationSeconds}s ✓</span> : null}<button className="primary-button">{c.send}</button></div>{chatNotice ? <div className="inline-notice">{chatNotice}</div> : null}</form></div> : null}
+    {chatTrip ? <div className="panel trip-chat-panel"><div className="panel-title"><div><h2>{c.chat} · {chatTrip.license_plate || c.noPlate}</h2><p>{chatTrip.driver_name} · {chatTrip.block_id || "Block ID —"} · {c.chatHelp}</p></div><button type="button" onClick={() => setChatTrip(null)}>{c.close}</button></div><div className="trip-chat-stream">{activeMessages.length ? activeMessages.map((message) => {
+      const own = Number(message.sender_user_id) === currentUserId;
+      return (
+        <TripChatMessage
+          key={message.id}
+          message={message}
+          own={own}
+          canModerate={chatModerator}
+          translated={translatedText(message)}
+          original={String(message.body || "")}
+          copy={chatCopy}
+          onDelete={deleteMessage}
+        />
+      );
+    }) : <div className="empty-state">{c.noMessages}</div>}</div><form className="trip-chat-composer" onSubmit={sendChatMessage}><textarea name="body" maxLength={2000} placeholder={c.write} /><div className="trip-chat-tools"><label>{c.photo}<input name="file" type="file" accept="image/*,audio/*" /></label><button type="button" className={recording ? "voice-stop" : ""} onClick={recording ? stopRecording : startRecording}>{recording ? c.stop : c.record}</button>{recordedBlob ? <span className="ok-chip">{durationSeconds}s ✓</span> : null}<button className="primary-button">{c.send}</button></div>{chatNotice ? <div className="inline-notice">{chatNotice}</div> : null}</form></div> : null}
     <div className="panel"><div className="panel-title"><div><h2>{driver ? c.documents : "CMR & Zustellnachweise"}</h2><p>{driver ? c.docsHelp : "Geschützte Dokumente und Fotos je Einsatz"}</p></div></div><div className="table-wrap"><table><thead><tr><th>{driver ? c.time : "Zeit"}</th><th>{driver ? c.noPlate : "Kennzeichen"}</th><th>{driver ? c.driver : "Fahrer"}</th><th>{driver ? c.kind : "Art"}</th><th>{driver ? c.file : "Datei"}</th></tr></thead><tbody>{documents.length ? documents.map((row) => <tr key={row.id}><td>{dateTime(row.created_at)}</td><td>{row.license_plate || "—"}</td><td>{row.driver_name || "—"}</td><td>{row.category}</td><td><a href={`/api/trip-documents/${row.id}`} target="_blank" rel="noreferrer">{row.file_name}</a></td></tr>) : <tr><td colSpan={5}>{driver ? c.noDocs : "Noch keine Einsatzdokumente"}</td></tr>}</tbody></table></div></div>
   </div>;
 }
 
-export function ExpenseCenter({ rows, staff, vehicles, driver, canApprove, locale, action, reload }: { rows: Row[]; staff: Row[]; vehicles: Row[]; driver: boolean; canApprove: boolean; locale: DriverLocale; action: Action; reload: () => Promise<void> }) {
+type ScanResult = { date?: string; grossAmount?: string; vatAmount?: string; licensePlate?: string; documentNumber?: string; merchant?: string; confidence?: number; status?: string };
+
+function approvalDetails(row: Row) {
+  try { return JSON.parse(String(row.details || "{}")) as { newValue?: { entityType?: string; decision?: string; comment?: string; responsible?: string } }; }
+  catch { return {}; }
+}
+
+export function ExpenseCenter({ rows, staff, vehicles, audit, driver, canApprove, locale, action, reload }: { rows: Row[]; staff: Row[]; vehicles: Row[]; audit: Row[]; driver: boolean; canApprove: boolean; locale: DriverLocale; action: Action; reload: () => Promise<void> }) {
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<Row | null>(null);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [approvalComment, setApprovalComment] = useState("");
+  const uploadFormRef = useRef<HTMLFormElement | null>(null);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -206,17 +394,49 @@ export function ExpenseCenter({ rows, staff, vehicles, driver, canApprove, local
     const haystack = [row.full_name, row.license_plate, row.category, row.merchant, row.amazon_site, row.block_id, row.tour_reference, row.cost_center, row.receipt_number].join(" ").toLowerCase();
     return (!from || date >= from) && (!to || date <= to) && (!statusFilter || row.status === statusFilter) && (!needle || haystack.includes(needle));
   }), [rows, from, to, statusFilter, search]);
+  const approvalHistory = useMemo(() => selected ? audit.filter((row) => row.action === "digitalApproval" && String(row.entity_id) === String(selected.id) && approvalDetails(row).newValue?.entityType === "expense") : [], [audit, selected]);
+
+  async function scanDocument(file: File) {
+    const formData = new FormData(); formData.set("file", file);
+    setNotice(driver ? "Документ распознаётся…" : "Beleg wird erkannt …");
+    try {
+      const response = await fetch("/api/document-scan", { method: "POST", body: formData });
+      const payload = await response.json() as { result?: ScanResult; error?: string };
+      if (!response.ok || !payload.result) return setNotice(payload.error || "Dokument konnte nicht gelesen werden");
+      setScanResult(payload.result);
+      const form = uploadFormRef.current;
+      if (form) {
+        const setValue = (name: string, value?: string) => { const input = form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null; if (input && value) input.value = value; };
+        setValue("expenseDate", payload.result.date); setValue("grossAmount", payload.result.grossAmount); setValue("vatAmount", payload.result.vatAmount);
+        setValue("receiptNumber", payload.result.documentNumber); setValue("merchant", payload.result.merchant);
+        if (payload.result.licensePlate && vehicles.some((vehicle) => vehicle.license_plate === payload.result?.licensePlate)) setValue("licensePlate", payload.result.licensePlate);
+      }
+      setNotice(`${payload.result.status || "Erkannt"} · ${Math.round(Number(payload.result.confidence || 0) * 100)} %`);
+    } catch { setNotice("Erkennung derzeit nicht verfügbar — Felder können manuell ausgefüllt werden."); }
+  }
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget;
-    const response = await fetch("/api/expense-receipts", { method: "POST", body: new FormData(form) });
-    const result = await response.json() as { error?: string; recognitionStatus?: string };
-    if (!response.ok) return setNotice(result.error || "Upload fehlgeschlagen");
-    setNotice(`${driver ? c.sent : "Ausgabe an die Buchhaltung gesendet"} · ${result.recognitionStatus}`); form.reset(); await reload();
+    const formData = new FormData(form); if (scanResult) formData.set("scanResult", JSON.stringify(scanResult));
+    try {
+      if (!navigator.onLine) throw new Error("offline");
+      const response = await fetch("/api/expense-receipts", { method: "POST", body: formData });
+      const result = await response.json() as { error?: string; recognitionStatus?: string };
+      if (!response.ok) return setNotice(result.error || "Upload fehlgeschlagen");
+      setNotice(`${driver ? c.sent : "Ausgabe an die Buchhaltung gesendet"} · ${result.recognitionStatus}`); form.reset(); setScanResult(null); await reload();
+    } catch {
+      await queueOfflineUpload("/api/expense-receipts", formData); form.reset(); setScanResult(null);
+      setNotice(driver ? "Чек сохранён без интернета и отправится автоматически." : "Beleg offline gespeichert und wird automatisch synchronisiert.");
+    }
   }
   async function review(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget).entries());
     await action({ action: "updateExpenseStatus", id: selected?.id || null, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) });
     setSelected(null);
+  }
+  async function decide(decision: "Freigeben" | "Ablehnen" | "Zurück zur Korrektur") {
+    if (!selected) return;
+    await action({ action: "digitalApproval", id: selected.id, entityType: "expense", entityId: selected.id, decision, comment: approvalComment });
+    setApprovalComment(""); setSelected(null);
   }
   const total = filteredRows.reduce((sum, row) => sum + Number(row.gross_amount || 0), 0);
   const openReimbursement = filteredRows.filter((row) => Number(row.reimbursable) && !["Erstattet", "Abgelehnt", "Exportiert"].includes(String(row.status))).reduce((sum, row) => sum + Number(row.reimbursement_amount || 0), 0);
@@ -227,7 +447,7 @@ export function ExpenseCenter({ rows, staff, vehicles, driver, canApprove, local
   return <div className="advanced-stack">
     <div className="expense-summary"><div><span>{driver ? c.total : "Ausgaben gesamt"}</span><strong>{euro(total)}</strong></div><div><span>{driver ? c.open : "Offene Erstattungen"}</span><strong>{euro(openReimbursement)}</strong></div><div><span>{driver ? c.pay : "Zur Zahlung"}</span><strong>{euro(readyToPay)}</strong></div><div><span>{driver ? c.paid : "Erstattet"}</span><strong>{euro(reimbursed)}</strong></div><div><span>{driver ? c.fuel : "Kraftstoff"}</span><strong>{liters.toLocaleString("de-DE")} l</strong></div></div>
     <div className="panel"><div className="panel-title"><div><h2>{driver ? c.title : "Ausgabe oder Privatauslage erfassen"}</h2><p>{driver ? c.help : "Der Beleg erscheint sofort in der Warteschlange der Buchhaltung"}</p></div></div>
-      <form className="advanced-form expense-form" onSubmit={upload}>
+      <form ref={uploadFormRef} className="advanced-form expense-form" onSubmit={upload}>
         {!driver ? <select name="staffId" required defaultValue=""><option value="">Mitarbeiter</option>{staff.map((person) => <option key={person.id} value={String(person.id)}>{person.full_name}</option>)}</select> : null}
         <select name="licensePlate" defaultValue="OHNE FAHRZEUG"><option value="OHNE FAHRZEUG">{driver ? c.noVehicle : "Ohne Fahrzeug"}</option>{vehicles.map((vehicle) => <option key={vehicle.id}>{vehicle.license_plate}</option>)}</select>
         <label>{driver ? c.date : "Datum"}<input name="expenseDate" type="date" required /></label>
@@ -246,12 +466,12 @@ export function ExpenseCenter({ rows, staff, vehicles, driver, canApprove, local
         <input name="tourReference" placeholder={driver ? c.tour : "Tour-/Auftragsreferenz"} />
         <input name="costCenter" placeholder={driver ? c.cost : "Kostenstelle"} />
         <input name="notes" placeholder={driver ? c.note : "Begründung / Notiz"} />
-        <input name="file" type="file" accept="image/*,application/pdf" capture="environment" required />
+        <label className="scan-file-field"><span>Foto / PDF · automatische Erkennung</span><input name="file" type="file" accept="image/*,application/pdf" capture="environment" required onChange={(event) => { const file = event.target.files?.[0]; if (file) void scanDocument(file); }} /></label>
         <button className="primary-button">{driver ? c.send : "An Buchhaltung senden"}</button>
-      </form>{notice ? <div className="inline-notice">{notice}</div> : null}<div className="ocr-note"><strong>Belegpflicht</strong><span>Originalfoto oder PDF bleibt geschützt gespeichert. Brutto, MwSt., Kostenstelle, Amazon- und Zahlungsreferenzen werden gemeinsam protokolliert.</span></div>
+      </form>{scanResult ? <div className="scan-result-card"><strong>Automatisch erkannt · {Math.round(Number(scanResult.confidence || 0) * 100)} %</strong><span>{[scanResult.date, scanResult.merchant, scanResult.grossAmount && `${scanResult.grossAmount} €`, scanResult.vatAmount && `MwSt. ${scanResult.vatAmount} €`, scanResult.licensePlate, scanResult.documentNumber].filter(Boolean).join(" · ")}</span><small>Bitte erkannte Werte vor dem Senden kurz kontrollieren.</small></div> : null}{notice ? <div className="inline-notice">{notice}</div> : null}<div className="ocr-note"><strong>Dokumentenscan</strong><span>Datum, Betrag, MwSt., Kennzeichen und Belegnummer werden vorbefüllt. Das Original bleibt geschützt gespeichert.</span></div>
     </div>
     {canApprove ? <div className="panel expense-report-panel"><div className="panel-title"><div><h2>Berichte & Nachweise</h2><p>Zeitraum wählen und vollständige Listen für Amazon, Finanzamt oder interne Prüfung exportieren</p></div></div><div className="expense-filter-bar"><label>Von<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label><label>Bis<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Alle Status</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Fahrer, Kennzeichen, Block, Kostenstelle…" /><div className="expense-report-actions"><a href={`/api/reports/expenses?audience=amazon&format=pdf&${reportQuery}`}>Amazon PDF</a><a href={`/api/reports/expenses?audience=amazon&format=csv&${reportQuery}`}>Amazon CSV</a><a href={`/api/reports/expenses?audience=finanzamt&format=pdf&${reportQuery}`}>Finanzamt PDF</a><a href={`/api/reports/expenses?audience=finanzamt&format=csv&${reportQuery}`}>Finanzamt CSV</a></div></div></div> : null}
-    {selected && canApprove ? <div className="panel expense-review-panel"><div className="panel-title"><div><h2>Ausgabe #{selected.id} prüfen</h2><p>{selected.full_name} · {selected.expense_date} · {selected.receipt_file_name}</p></div></div><form className="advanced-form expense-review-form" onSubmit={review} key={String(selected.id)}><select name="status" defaultValue={String(selected.status || "In Prüfung")}>{statuses.map((item) => <option key={item}>{item}</option>)}</select><select name="paymentMethod" defaultValue={String(selected.payment_method || "Privatauslage")}><option value="Privatauslage">Privat bezahlt</option><option value="Firmenkarte">Firmenkarte</option><option value="Tankkarte">Tankkarte</option><option value="Bar">Firmenkasse / Bar</option></select><select name="reimbursable" defaultValue={String(selected.reimbursable ?? 1)}><option value="1">Erstattung erforderlich</option><option value="0">Keine Erstattung</option></select><input name="merchant" defaultValue={String(selected.merchant || "")} placeholder="Anbieter" /><input name="grossAmount" type="number" min="0.01" step="0.01" required defaultValue={String(selected.gross_amount || 0)} placeholder="Brutto €" /><input name="vatAmount" type="number" min="0" step="0.01" defaultValue={String(selected.vat_amount || 0)} placeholder="MwSt. €" /><input name="reimbursementAmount" type="number" min="0" step="0.01" defaultValue={String(selected.reimbursement_amount || 0)} placeholder="Erstattung €" /><input name="receiptNumber" defaultValue={String(selected.receipt_number || "")} placeholder="Belegnummer" /><input name="amazonSite" defaultValue={String(selected.amazon_site || "")} placeholder="Amazon Standort" /><input name="blockId" defaultValue={String(selected.block_id || "")} placeholder="Block ID" /><input name="tourReference" defaultValue={String(selected.tour_reference || "")} placeholder="Tourreferenz" /><input name="costCenter" defaultValue={String(selected.cost_center || "")} placeholder="Kostenstelle" /><input name="paymentReference" defaultValue={String(selected.payment_reference || "")} placeholder="Zahlungsreferenz / Überweisung" /><label>Zahlungsdatum<input name="paidAt" type="date" defaultValue={String(selected.paid_at || "").slice(0, 10)} /></label><input name="rejectionReason" defaultValue={String(selected.rejection_reason || "")} placeholder="Ablehnungsgrund" /><input name="notes" defaultValue={String(selected.notes || "")} placeholder="Buchhaltungsnotiz" /><button className="primary-button">Prüfung speichern</button><button type="button" onClick={() => setSelected(null)}>Schließen</button></form></div> : null}
+    {selected && canApprove ? <div className="panel expense-review-panel"><div className="panel-title"><div><h2>Ausgabe #{selected.id} prüfen</h2><p>{selected.full_name} · {selected.expense_date} · {selected.receipt_file_name}</p></div></div><form className="advanced-form expense-review-form" onSubmit={review} key={String(selected.id)}><select name="status" defaultValue={String(selected.status || "In Prüfung")}>{statuses.map((item) => <option key={item}>{item}</option>)}</select><select name="paymentMethod" defaultValue={String(selected.payment_method || "Privatauslage")}><option value="Privatauslage">Privat bezahlt</option><option value="Firmenkarte">Firmenkarte</option><option value="Tankkarte">Tankkarte</option><option value="Bar">Firmenkasse / Bar</option></select><select name="reimbursable" defaultValue={String(selected.reimbursable ?? 1)}><option value="1">Erstattung erforderlich</option><option value="0">Keine Erstattung</option></select><input name="merchant" defaultValue={String(selected.merchant || "")} placeholder="Anbieter" /><input name="grossAmount" type="number" min="0.01" step="0.01" required defaultValue={String(selected.gross_amount || 0)} placeholder="Brutto €" /><input name="vatAmount" type="number" min="0" step="0.01" defaultValue={String(selected.vat_amount || 0)} placeholder="MwSt. €" /><input name="reimbursementAmount" type="number" min="0" step="0.01" defaultValue={String(selected.reimbursement_amount || 0)} placeholder="Erstattung €" /><input name="receiptNumber" defaultValue={String(selected.receipt_number || "")} placeholder="Belegnummer" /><input name="amazonSite" defaultValue={String(selected.amazon_site || "")} placeholder="Amazon Standort" /><input name="blockId" defaultValue={String(selected.block_id || "")} placeholder="Block ID" /><input name="tourReference" defaultValue={String(selected.tour_reference || "")} placeholder="Tourreferenz" /><input name="costCenter" defaultValue={String(selected.cost_center || "")} placeholder="Kostenstelle" /><input name="paymentReference" defaultValue={String(selected.payment_reference || "")} placeholder="Zahlungsreferenz / Überweisung" /><label>Zahlungsdatum<input name="paidAt" type="date" defaultValue={String(selected.paid_at || "").slice(0, 10)} /></label><input name="rejectionReason" defaultValue={String(selected.rejection_reason || "")} placeholder="Ablehnungsgrund" /><input name="notes" defaultValue={String(selected.notes || "")} placeholder="Buchhaltungsnotiz" /><button className="primary-button">Prüfung speichern</button><button type="button" onClick={() => setSelected(null)}>Schließen</button></form><div className="digital-approval"><label>Kommentar zur Entscheidung<textarea value={approvalComment} onChange={(event) => setApprovalComment(event.target.value)} placeholder="Begründung oder Hinweis für den Fahrer" /></label><div><button className="approval-accept" type="button" onClick={() => decide("Freigeben")}>✓ Freigeben</button><button className="approval-reject" type="button" onClick={() => decide("Ablehnen")}>× Ablehnen</button><button className="approval-correct" type="button" onClick={() => decide("Zurück zur Korrektur")}>↶ Zurück zur Korrektur</button></div>{approvalHistory.length ? <ol className="approval-history">{approvalHistory.map((row) => { const details = approvalDetails(row).newValue; return <li key={row.id}><b>{details?.decision}</b><span>{details?.responsible || row.user_name} · {dateTime(row.created_at)}</span><small>{details?.comment || "Ohne Kommentar"}</small></li>; })}</ol> : <p className="empty-history">Noch keine Entscheidung protokolliert.</p>}</div></div> : null}
     <div className="panel"><div className="panel-title"><div><h2>{canApprove ? "Buchhaltungs-Warteschlange" : (driver ? c.my : "Meine Auslagen und Erstattungen")}</h2><p>{filteredRows.length} {driver ? c.entries : "Einträge"} · {driver ? c.proof : "Prüfung, Auszahlung und vollständiger Belegnachweis"}</p></div></div>{driver ? <div className="driver-expense-list">{filteredRows.length ? filteredRows.map((row) => <article key={row.id}><div><strong>{categoryLabels[locale][String(row.category)] || row.category}</strong><span>{row.expense_date} · {row.license_plate}</span><small>{row.merchant || row.amazon_site || "—"}</small></div><div><b>{euro(row.gross_amount)}</b><span className="status-pill">{statusLabels[locale][String(row.status)] || row.status}</span>{row.receipt_object_key ? <a href={`/api/expense-receipts/${row.id}`} target="_blank" rel="noreferrer">{c.openReceipt}</a> : null}</div></article>) : <div className="empty-state">{c.empty}</div>}</div> : <div className="table-wrap"><table className="expense-ledger"><thead><tr><th>Datum</th><th>Mitarbeiter</th><th>Kennzeichen</th><th>Amazon / Block</th><th>Kategorie</th><th>Brutto / MwSt.</th><th>Bezahlt mit</th><th>Erstattung</th><th>Status</th><th>Beleg</th>{canApprove ? <th /> : null}</tr></thead><tbody>{filteredRows.length ? filteredRows.map((row) => <tr key={row.id}><td>{row.expense_date}</td><td><strong>{row.full_name}</strong><small>{row.cost_center || "Keine Kostenstelle"}</small></td><td>{row.license_plate}</td><td>{row.amazon_site || "—"}<small>{row.block_id || row.tour_reference || "—"}</small></td><td>{row.category}<small>{row.merchant || "—"}</small></td><td><strong>{euro(row.gross_amount)}</strong><small>MwSt. {euro(row.vat_amount)}</small></td><td>{row.payment_method || "—"}</td><td>{Number(row.reimbursable) ? <strong>{euro(row.reimbursement_amount)}</strong> : "—"}<small>{row.payment_reference || ""}</small></td><td><span className="status-pill">{row.status}</span>{row.paid_at ? <small>{String(row.paid_at).slice(0, 10)}</small> : null}</td><td>{row.receipt_object_key ? <a href={`/api/expense-receipts/${row.id}`} target="_blank" rel="noreferrer">Öffnen</a> : "—"}</td>{canApprove ? <td><button className="edit-action" onClick={() => setSelected(row)}>Prüfen</button></td> : null}</tr>) : <tr><td colSpan={11}>Keine Ausgaben für diesen Filter</td></tr>}</tbody></table></div>}</div>
   </div>;
 }

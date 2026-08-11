@@ -333,6 +333,15 @@ export const tripOperations = sqliteTable("trip_operations", {
   updatedAt: text("updated_at").notNull(),
 }, (table) => [uniqueIndex("trip_operations_planning_unique").on(table.planningId), index("idx_trip_operations_status_eta").on(table.status, table.eta)]);
 
+export const planningDepartureConfirmations = sqliteTable("planning_departure_confirmations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  planningId: integer("planning_id").notNull().references(() => weeklyPlanning.id),
+  shiftDate: text("shift_date").notNull(),
+  confirmedAt: text("confirmed_at").notNull(),
+  confirmedBy: integer("confirmed_by").notNull().references(() => users.id),
+  createdAt: text("created_at").notNull(),
+}, (table) => [uniqueIndex("planning_departure_unique").on(table.planningId, table.shiftDate)]);
+
 export const tripDocuments = sqliteTable("trip_documents", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   tripOperationId: integer("trip_operation_id").notNull().references(() => tripOperations.id),
@@ -445,3 +454,74 @@ export const vehicleFiles = sqliteTable("vehicle_files", {
   notes: text("notes"),
   createdAt: text("created_at").notNull(),
 });
+
+export const vehicleComments = sqliteTable("vehicle_comments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  licensePlate: text("license_plate").notNull(),
+  authorUserId: integer("author_user_id").notNull().references(() => users.id),
+  authorName: text("author_name").notNull(),
+  comment: text("comment").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_vehicle_comments_plate_created").on(table.licensePlate, table.createdAt)]);
+
+export const vehicleFuelCodes = sqliteTable("vehicle_fuel_codes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  licensePlate: text("license_plate").notNull(),
+  fuelType: text("fuel_type", { enum: ["diesel", "adblue"] }).notNull(),
+  codeValue: text("code_value").notNull(),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  updatedBy: integer("updated_by").notNull().references(() => users.id),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("vehicle_fuel_code_plate_type_unique").on(table.licensePlate, table.fuelType)]);
+
+export const fuelStops = sqliteTable("fuel_stops", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").notNull().references(() => staff.id),
+  licensePlate: text("license_plate").notNull(),
+  station: text("station").notNull(),
+  refueledAt: text("refueled_at").notNull(),
+  odometerKm: real("odometer_km").notNull(),
+  dieselLiters: real("diesel_liters").notNull().default(0),
+  adblueLiters: real("adblue_liters").notNull().default(0),
+  grossAmount: real("gross_amount").notNull().default(0),
+  status: text("status").notNull().default("Eingereicht"),
+  stationFileName: text("station_file_name").notNull(),
+  stationObjectKey: text("station_object_key").notNull().unique(),
+  stationContentType: text("station_content_type").notNull(),
+  dieselFileName: text("diesel_file_name").notNull(),
+  dieselObjectKey: text("diesel_object_key").notNull().unique(),
+  dieselContentType: text("diesel_content_type").notNull(),
+  adblueFileName: text("adblue_file_name").notNull(),
+  adblueObjectKey: text("adblue_object_key").notNull().unique(),
+  adblueContentType: text("adblue_content_type").notNull(),
+  receiptFileName: text("receipt_file_name").notNull(),
+  receiptObjectKey: text("receipt_object_key").notNull().unique(),
+  receiptContentType: text("receipt_content_type").notNull(),
+  expenseId: integer("expense_id").references(() => expenses.id),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  index("idx_fuel_stops_plate_date").on(table.licensePlate, table.refueledAt),
+  index("idx_fuel_stops_staff_date").on(table.staffId, table.refueledAt),
+]);
+
+export const driverPerformanceEvents = sqliteTable("driver_performance_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  staffId: integer("staff_id").notNull().references(() => staff.id),
+  eventDate: text("event_date").notNull(),
+  eventType: text("event_type", {
+    enum: ["rating", "late", "no_show", "accident", "positive", "comment"],
+  }).notNull(),
+  rating: integer("rating"),
+  scoreDelta: integer("score_delta").notNull().default(0),
+  minutesLate: integer("minutes_late").notNull().default(0),
+  notes: text("notes"),
+  createdBy: integer("created_by").notNull().references(() => users.id),
+  createdByName: text("created_by_name").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  index("idx_driver_performance_staff_date").on(table.staffId, table.eventDate),
+  index("idx_driver_performance_type_date").on(table.eventType, table.eventDate),
+]);

@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@logipay/env";
 
 const drivers = [
   [
@@ -105,6 +105,15 @@ export async function ensureDomainDatabase() {
       `CREATE TABLE IF NOT EXISTS vehicle_files (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER, license_plate TEXT NOT NULL, category TEXT NOT NULL, file_name TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, content_type TEXT NOT NULL, notes TEXT, created_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS vehicle_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, license_plate TEXT NOT NULL, author_user_id INTEGER NOT NULL, author_name TEXT NOT NULL, comment TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_vehicle_comments_plate_created ON vehicle_comments(license_plate, created_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS vehicle_fuel_codes (id INTEGER PRIMARY KEY AUTOINCREMENT, license_plate TEXT NOT NULL, fuel_type TEXT NOT NULL, code_value TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, updated_by INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(license_plate, fuel_type))`,
+    ),
+    env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS employee_documents (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, category TEXT NOT NULL, file_name TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, expires_at TEXT, uploaded_by INTEGER NOT NULL, created_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
@@ -159,6 +168,9 @@ export async function ensureDomainDatabase() {
       `CREATE INDEX IF NOT EXISTS idx_trip_operations_status_eta ON trip_operations(status, eta)`,
     ),
     env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS planning_departure_confirmations (id INTEGER PRIMARY KEY AUTOINCREMENT, planning_id INTEGER NOT NULL, shift_date TEXT NOT NULL, confirmed_at TEXT NOT NULL, confirmed_by INTEGER NOT NULL, created_at TEXT NOT NULL, UNIQUE(planning_id, shift_date), FOREIGN KEY (planning_id) REFERENCES weekly_planning(id), FOREIGN KEY (confirmed_by) REFERENCES users(id))`,
+    ),
+    env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS trip_documents (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_operation_id INTEGER NOT NULL, staff_id INTEGER, category TEXT NOT NULL, file_name TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
@@ -181,6 +193,24 @@ export async function ensureDomainDatabase() {
     ),
     env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, license_plate TEXT NOT NULL, expense_date TEXT NOT NULL, category TEXT NOT NULL, merchant TEXT, gross_amount REAL NOT NULL DEFAULT 0, vat_amount REAL NOT NULL DEFAULT 0, liters REAL, odometer_km REAL, payment_method TEXT NOT NULL DEFAULT 'Privatauslage', reimbursable INTEGER NOT NULL DEFAULT 1, reimbursement_amount REAL NOT NULL DEFAULT 0, amazon_site TEXT, block_id TEXT, tour_reference TEXT, cost_center TEXT, receipt_number TEXT, status TEXT NOT NULL DEFAULT 'Eingereicht', receipt_file_name TEXT, receipt_object_key TEXT UNIQUE, receipt_content_type TEXT, recognition_status TEXT NOT NULL DEFAULT 'Prüfen', payment_reference TEXT, reviewed_by INTEGER, reviewed_at TEXT, paid_at TEXT, rejection_reason TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS fuel_stops (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, license_plate TEXT NOT NULL, station TEXT NOT NULL, refueled_at TEXT NOT NULL, odometer_km REAL NOT NULL, diesel_liters REAL NOT NULL DEFAULT 0, adblue_liters REAL NOT NULL DEFAULT 0, gross_amount REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'Eingereicht', station_file_name TEXT NOT NULL, station_object_key TEXT NOT NULL UNIQUE, station_content_type TEXT NOT NULL, diesel_file_name TEXT NOT NULL, diesel_object_key TEXT NOT NULL UNIQUE, diesel_content_type TEXT NOT NULL, adblue_file_name TEXT NOT NULL, adblue_object_key TEXT NOT NULL UNIQUE, adblue_content_type TEXT NOT NULL, receipt_file_name TEXT NOT NULL, receipt_object_key TEXT NOT NULL UNIQUE, receipt_content_type TEXT NOT NULL, expense_id INTEGER, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_fuel_stops_plate_date ON fuel_stops(license_plate, refueled_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_fuel_stops_staff_date ON fuel_stops(staff_id, refueled_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS driver_performance_events (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, event_date TEXT NOT NULL, event_type TEXT NOT NULL, rating INTEGER, score_delta INTEGER NOT NULL DEFAULT 0, minutes_late INTEGER NOT NULL DEFAULT 0, notes TEXT, created_by INTEGER NOT NULL, created_by_name TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_driver_performance_staff_date ON driver_performance_events(staff_id, event_date)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_driver_performance_type_date ON driver_performance_events(event_type, event_date)`,
     ),
     env.DB.prepare(
       `CREATE INDEX IF NOT EXISTS idx_expenses_date_status ON expenses(expense_date, status)`,
@@ -584,6 +614,20 @@ export async function ensureDomainDatabase() {
        FROM driver_concerns c LEFT JOIN staff s ON s.id=c.staff_id
        WHERE c.completion_status NOT IN ('Erledigt','Delivered')
        AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.category='concern' AND n.entity_type='concern' AND n.entity_id=CAST(c.id AS TEXT))`,
+    ).bind(syncNow),
+    env.DB.prepare(
+      `INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at)
+       SELECT 'dispatcher', 'departure', 'Abfahrt nicht bestätigt', COALESCE(p.driver_name, 'Fahrer') || ' · ' || COALESCE(p.company, 'Tour') || ' · Block ' || COALESCE(p.block_id, '—') || ' · Ersatzfahrer suchen', 'planning', CAST(p.id AS TEXT) || ':' || date('now'), 'urgent', ?
+       FROM weekly_planning p
+       WHERE p.driver_name IS NOT NULL AND p.driver_name != '' AND COALESCE(p.status, 'planned') != 'vacation'
+       AND NOT EXISTS (
+         SELECT 1 FROM planning_departure_confirmations c
+         WHERE c.planning_id = p.id AND c.shift_date = date('now')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM notifications n
+         WHERE n.category = 'departure' AND n.entity_type = 'planning' AND n.entity_id = CAST(p.id AS TEXT) || ':' || date('now')
+       )`,
     ).bind(syncNow),
   ]);
   await env.DB.prepare("PRAGMA optimize").run();
