@@ -44,7 +44,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     dispatcherVoice: "Sprachnachrichten der Fahrer", dispatcherVoiceHelp: "Neue Aufnahmen anhören und bearbeiten.",
     driverName: "Fahrer", note: "Notiz", markListened: "Als abgehört markieren", markDone: "Erledigt",
     notificationCenter: "Meine Meldungen", unread: "ungelesen", markRead: "Gelesen", done: "Erledigt",
-    noNotifications: "Keine Meldungen", home: "Start", receipts: "Belege", messages: "Nachricht", alerts: "Meldungen",
+    noNotifications: "Keine Meldungen", home: "Start", receipts: "Belege", messages: "Chats", alerts: "Meldungen",
   },
   pl: {
     overview: "Start", vehicles: "Moja ciężarówka", tracking: "Lokalizacja", planning: "Plan tygodnia",
@@ -82,7 +82,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     dispatcherVoice: "Wiadomości głosowe kierowców", dispatcherVoiceHelp: "Odsłuchaj nowe nagrania i zmień status.",
     driverName: "Kierowca", note: "Notatka", markListened: "Oznacz jako odsłuchane", markDone: "Zakończone",
     notificationCenter: "Moje powiadomienia", unread: "nieprzeczytane", markRead: "Przeczytane", done: "Gotowe",
-    noNotifications: "Brak powiadomień", home: "Start", receipts: "Paragony", messages: "Wiadomość", alerts: "Alerty",
+    noNotifications: "Brak powiadomień", home: "Start", receipts: "Paragony", messages: "Czaty", alerts: "Alerty",
   },
   uk: {
     overview: "Головна", vehicles: "Моя вантажівка", tracking: "Місцезнаходження", planning: "План тижня",
@@ -120,7 +120,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     dispatcherVoice: "Голосові повідомлення водіїв", dispatcherVoiceHelp: "Прослуховуйте нові записи та змінюйте статус.",
     driverName: "Водій", note: "Примітка", markListened: "Позначити прослуханим", markDone: "Виконано",
     notificationCenter: "Мої сповіщення", unread: "непрочитаних", markRead: "Прочитано", done: "Готово",
-    noNotifications: "Сповіщень немає", home: "Головна", receipts: "Чеки", messages: "Повідомлення", alerts: "Сповіщення",
+    noNotifications: "Сповіщень немає", home: "Головна", receipts: "Чеки", messages: "Чати", alerts: "Сповіщення",
   },
   ru: {
     overview: "Главная", vehicles: "Мой грузовик", tracking: "Местоположение", planning: "План недели",
@@ -158,7 +158,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     dispatcherVoice: "Голосовые сообщения водителей", dispatcherVoiceHelp: "Прослушивайте новые записи и меняйте статус.",
     driverName: "Водитель", note: "Заметка", markListened: "Отметить прослушанным", markDone: "Выполнено",
     notificationCenter: "Мои уведомления", unread: "непрочитанных", markRead: "Прочитано", done: "Готово",
-    noNotifications: "Уведомлений нет", home: "Главная", receipts: "Чеки", messages: "Сообщение", alerts: "Уведомления",
+    noNotifications: "Уведомлений нет", home: "Главная", receipts: "Чеки", messages: "Чаты", alerts: "Уведомления",
   },
 };
 

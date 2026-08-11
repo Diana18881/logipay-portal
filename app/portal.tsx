@@ -13,6 +13,7 @@ type Section =
   | "tracking"
   | "planning"
   | "operations"
+  | "messages"
   | "tachograph"
   | "expenses"
   | "checklists"
@@ -81,6 +82,7 @@ const nav: { id: Section; label: string; roles: string[] }[] = [
     roles: ["management", "dispatcher", "driver"],
   },
   { id: "operations", label: "Touren & Zustellung", roles: ["management", "dispatcher", "driver"] },
+  { id: "messages", label: "Nachrichten", roles: ["management", "dispatcher", "driver"] },
   { id: "tachograph", label: "Tachograph", roles: ["management", "dispatcher", "driver"] },
   { id: "expenses", label: "Auslagen & Erstattungen", roles: ["management", "accountant", "driver"] },
   { id: "checklists", label: "Fahrzeug-Check", roles: ["management", "dispatcher", "driver"] },
@@ -112,6 +114,24 @@ const labels: Record<string, string> = {
   accountant: "Buchhaltung",
   dispatcher: "Disposition",
   driver: "Fahrer",
+};
+
+const sectionDescriptions: Partial<Record<Section, string>> = {
+  overview: "Heute im Blick: Fahrer, Fahrzeuge, Touren und offene Aufgaben",
+  staff: "Personal, Zugänge und Beschäftigungsstatus zentral verwalten",
+  vehicles: "Fahrzeugdaten, Dokumente, Prüfungen und Werkstattstatus",
+  tracking: "Aktuelle Fahrzeugpositionen und operative Warnungen",
+  planning: "Fahrer und Fahrzeuge konfliktfrei für die Woche einteilen",
+  operations: "Tourstatus, Zustellung und Nachweise laufend aktualisieren",
+  messages: "Alle geschützten Tour-Chats zwischen Fahrern und Disposition",
+  tachograph: "Fahrzeiten, Ruhezeiten und Verstöße kontrollieren",
+  expenses: "Belege prüfen, Erstattungen freigeben und Kosten auswerten",
+  checklists: "Fahrzeugkontrollen vor und nach jeder Tour dokumentieren",
+  concerns: "Anliegen der Fahrer annehmen, bearbeiten und abschließen",
+  documents: "Monatsabrechnungen berechnen, prüfen und sicher abschließen",
+  personnel: "Verträge, Führerscheine und persönliche Dokumente schützen",
+  notifications: "Wichtige Meldungen aus allen Arbeitsbereichen bündeln",
+  analytics: "Auslastung, Qualität und Kosten der Logistik überblicken",
 };
 
 export function Portal({ currentUser }: { currentUser: PortalUser }) {
@@ -318,6 +338,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     return age > 30 * 60_000 || Number(item.speed_kph || 0) > 90;
   }).length;
   const unreadNotificationCount = data.notifications.filter((item) => !item.read_at).length;
+  const unreadChatCount = data.tripMessages.filter((item) => !Number(item.read_by_me) && Number(item.sender_user_id) !== currentUser.id).length;
   const title = isDriver ? t(section, nav.find((n) => n.id === section)?.label) : nav.find((n) => n.id === section)?.label;
   return (
     <main className={`app-shell role-${currentUser.role} ${isDriver ? "driver-mobile-shell" : ""}`}>
@@ -361,6 +382,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                         tracking: "⌖",
                         planning: "▦",
                         operations: "➜",
+                        messages: "✉",
                         tachograph: "◴",
                         expenses: "◈",
                         checklists: "✓",
@@ -388,6 +410,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 ) : null}
                 {n.id === "notifications" && unreadNotificationCount ? (
                   <span className="nav-counter">{unreadNotificationCount}</span>
+                ) : null}
+                {n.id === "messages" && unreadChatCount ? (
+                  <span className="nav-counter nav-counter-chat">{unreadChatCount}</span>
                 ) : null}
               </button>
             ))}
@@ -448,6 +473,13 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
             {driverLanguages.map((item) => <button key={item.code} type="button" className={locale === item.code ? "language-active" : ""} title={item.label} aria-label={item.label} onClick={() => changeLocale(item.code)}>{item.short}</button>)}
           </div> : null}
           <div className="top-actions">
+            {["management", "dispatcher", "driver"].includes(currentUser.role) ? (
+              <button className="top-chat-button" type="button" onClick={() => setSection("messages")} aria-label={isDriver ? t("messages") : "Nachrichten"}>
+                <span>✉</span>
+                <b>{isDriver ? t("messages") : "Nachrichten"}</b>
+                {unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}
+              </button>
+            ) : null}
             {["management", "dispatcher"].includes(currentUser.role) ? (
               <button className="pdf-button" onClick={downloadPlanningReport}>
                 ↓ Planning Report PDF
@@ -466,7 +498,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
             <div>
               <p>{isDriver ? t("logistics") : "LOGISTIKVERWALTUNG"}</p>
               <h1>{title}</h1>
-              <span>{isDriver ? t("centralData") : "Zentrale Daten statt einzelner Excel-Tabellen"}</span>
+              <span>{isDriver ? t("centralData") : sectionDescriptions[section] || "Zentrale Daten statt einzelner Excel-Tabellen"}</span>
             </div>
             {section === "staff" && currentUser.role === "management" ? (
               <button
@@ -495,7 +527,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 className="primary-button"
                 onClick={() => openModal("concern")}
               >
-                ＋ {isDriver ? t("messages") : "Anliegen erfassen"}
+                ＋ {isDriver ? t("newConcern") : "Anliegen erfassen"}
               </button>
             ) : null}
           </div>
@@ -519,6 +551,18 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   />
                 ) : (
                   <>
+                    <div className="overview-command-card">
+                      <div>
+                        <small>OPERATIVE ZENTRALE</small>
+                        <h2>Guten Tag, {currentUser.fullName.split(" ")[0]}</h2>
+                        <p>{unreadChatCount ? `${unreadChatCount} neue Chat-Nachrichten benötigen Aufmerksamkeit.` : "Alle Tour-Chats sind gelesen."}</p>
+                      </div>
+                      <div className="overview-quick-actions">
+                        <button type="button" onClick={() => setSection("messages")}><span>✉</span><b>Nachrichten</b><small>{unreadChatCount ? `${unreadChatCount} neu` : "Alles gelesen"}</small></button>
+                        <button type="button" onClick={() => setSection("planning")}><span>▦</span><b>Wochenplanung</b><small>KW {kw}</small></button>
+                        <button type="button" onClick={() => setSection("concerns")}><span>!</span><b>Fahreranliegen</b><small>{openConcernCount} offen</small></button>
+                      </div>
+                    </div>
                     <div className="metric-grid">
                       <Metric
                         label="Aktive Mitarbeiter"
@@ -705,6 +749,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 </Card>
               )}
               {section === "operations" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} locale={locale} action={action} reload={load} />}
+              {section === "messages" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} locale={locale} action={action} reload={load} view="chat" />}
               {section === "tachograph" && <TachographCenter rows={data.tachograph} staff={active} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} />}
               {section === "expenses" && <ExpenseCenter rows={data.expenses} staff={active} vehicles={data.vehicles} driver={currentUser.role === "driver"} canApprove={["management", "accountant"].includes(currentUser.role)} locale={locale} action={action} reload={load} />}
               {section === "checklists" && <ChecklistCenter rows={data.checklists} staff={active} vehicles={data.vehicles} planning={data.planning} driver={currentUser.role === "driver"} locale={locale} action={action} />}
@@ -776,10 +821,10 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
         {([
           ["overview", "⌂", "home"],
           ["operations", "➜", "operations"],
-          ["concerns", "●", "messages"],
+          ["messages", "✉", "messages"],
           ["expenses", "◈", "receipts"],
           ["notifications", "!", "alerts"],
-        ] as Array<[Section, string, string]>).map(([id, icon, key]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id)}><span>{icon}</span><b>{t(key)}</b>{id === "notifications" && unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}</button>)}
+        ] as Array<[Section, string, string]>).map(([id, icon, key]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id)}><span>{icon}</span><b>{t(key)}</b>{id === "notifications" && unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}{id === "messages" && unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}</button>)}
       </nav> : null}
       {modal && (
         <Modal
