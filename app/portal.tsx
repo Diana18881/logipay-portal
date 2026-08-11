@@ -146,7 +146,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
   const [notice, setNotice] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
-  const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
+  // Keep the first server and browser render identical; the real connection
+  // state is applied after hydration in the effect below.
+  const [online, setOnline] = useState(true);
   const [renderedAt] = useState(() => new Date().getTime());
   const load = useCallback(
     async (background = false) => {
@@ -193,9 +195,10 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     }
     const handleOnline = () => { setOnline(true); void flushOfflineQueue(); };
     const handleOffline = () => setOnline(false);
+    const syncConnectionState = window.setTimeout(() => setOnline(navigator.onLine), 0);
     window.addEventListener("online", handleOnline); window.addEventListener("offline", handleOffline);
     if (navigator.onLine) void flushOfflineQueue();
-    return () => { window.removeEventListener("online", handleOnline); window.removeEventListener("offline", handleOffline); };
+    return () => { window.clearTimeout(syncConnectionState); window.removeEventListener("online", handleOnline); window.removeEventListener("offline", handleOffline); };
   }, [load]);
   async function action(payload: Record<string, unknown>) {
     let r: Response;
