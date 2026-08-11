@@ -15,6 +15,53 @@ const daySetsOverlap = (left: string, right: string) => {
   return left.split(",").some((day) => rightDays.has(day));
 };
 
+const parseCompensation = (value: unknown) => {
+  const normalized = String(value || "").replaceAll(".", "").replace(",", ".");
+  const match = normalized.match(/\d+(?:\.\d{1,2})?/);
+  return match ? Number(match[0]) : 0;
+};
+
+const easterSunday = (year: number) => {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month - 1, day));
+};
+
+const isGermanFederalHoliday = (date: Date) => {
+  const year = date.getUTCFullYear();
+  const key = `${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+  if (["01-01", "05-01", "10-03", "12-25", "12-26"].includes(key)) return true;
+  const easter = easterSunday(year).getTime();
+  const day = Date.UTC(year, date.getUTCMonth(), date.getUTCDate());
+  return [-2, 1, 39, 50].some((offset) => day === easter + offset * 86400000);
+};
+
+const berlinTripTime = (value: string) => {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(value)).map((part) => [part.type, part.value]));
+  const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+  return { hour: Number(parts.hour), sunday: parts.weekday === "Sun", holiday: isGermanFederalHoliday(date) };
+};
+
 export async function GET(request: Request) {
   const user = await requirePortalUser();
   await ensureDomainDatabase();
@@ -163,6 +210,20 @@ export async function GET(request: Request) {
     : user.role === "driver"
       ? await env.DB.prepare("SELECT d.* FROM trip_documents d JOIN trip_operations o ON o.id=d.trip_operation_id JOIN weekly_planning p ON p.id=o.planning_id WHERE p.staff_id=? OR p.driver_name=? ORDER BY d.created_at DESC").bind(driverStaffId || -1, user.fullName).all()
       : await env.DB.prepare("SELECT d.*, p.license_plate, p.driver_name FROM trip_documents d JOIN trip_operations o ON o.id=d.trip_operation_id JOIN weekly_planning p ON p.id=o.planning_id ORDER BY d.created_at DESC LIMIT 300").all();
+  const tripMessagesSql = `SELECT m.*, u.full_name AS sender_name, p.driver_name, p.license_plate, p.block_id,
+      EXISTS(SELECT 1 FROM trip_message_reads own_read WHERE own_read.message_id=m.id AND own_read.user_id=?) AS read_by_me,
+      (SELECT COUNT(*) FROM trip_message_reads recipient_read WHERE recipient_read.message_id=m.id AND recipient_read.user_id!=m.sender_user_id) AS recipient_read_count
+    FROM trip_messages m
+    JOIN users u ON u.id=m.sender_user_id
+    JOIN trip_operations o ON o.id=m.trip_operation_id
+    JOIN weekly_planning p ON p.id=o.planning_id`;
+  const tripMessages = user.role === "accountant"
+    ? { results: [] }
+    : user.role === "driver"
+      ? await env.DB.prepare(`${tripMessagesSql} WHERE p.planning_year=? AND p.calendar_week=? AND (p.staff_id=? OR p.driver_name=?) ORDER BY m.created_at, m.id`)
+        .bind(user.id, year, kw, driverStaffId || -1, user.fullName).all()
+      : await env.DB.prepare(`${tripMessagesSql} WHERE p.planning_year=? AND p.calendar_week=? ORDER BY m.created_at, m.id`)
+        .bind(user.id, year, kw).all();
   const expenses = user.role === "driver"
     ? await env.DB.prepare("SELECT e.*, s.full_name FROM expenses e JOIN staff s ON s.id=e.staff_id WHERE e.staff_id=? ORDER BY e.expense_date DESC, e.id DESC").bind(driverStaffId || -1).all()
     : await env.DB.prepare("SELECT e.*, s.full_name FROM expenses e JOIN staff s ON s.id=e.staff_id ORDER BY e.expense_date DESC, e.id DESC LIMIT 500").all();
@@ -176,6 +237,9 @@ export async function GET(request: Request) {
     : user.role === "driver"
       ? await env.DB.prepare("SELECT c.*, s.full_name FROM vehicle_checklists c JOIN staff s ON s.id=c.staff_id WHERE c.staff_id=? ORDER BY c.created_at DESC LIMIT 120").bind(driverStaffId || -1).all()
       : await env.DB.prepare("SELECT c.*, s.full_name FROM vehicle_checklists c JOIN staff s ON s.id=c.staff_id ORDER BY c.created_at DESC LIMIT 300").all();
+  const payrollPeriods = user.role === "dispatcher"
+    ? { results: [] }
+    : await env.DB.prepare("SELECT pp.*, closer.full_name AS closed_by_name, opener.full_name AS reopened_by_name FROM payroll_periods pp LEFT JOIN users closer ON closer.id=pp.closed_by LEFT JOIN users opener ON opener.id=pp.reopened_by ORDER BY pp.period DESC LIMIT 36").all();
   return json({
     user,
     year,
@@ -198,9 +262,11 @@ export async function GET(request: Request) {
     tachograph: tachograph.results,
     tripOperations: tripOperations.results,
     tripDocuments: tripDocuments.results,
+    tripMessages: tripMessages.results,
     expenses: expenses.results,
     notifications: notifications.results,
     checklists: checklists.results,
+    payrollPeriods: payrollPeriods.results,
   });
 }
 
@@ -211,7 +277,23 @@ export async function POST(request: Request) {
   const action = String(body.action || "");
   const now = new Date().toISOString();
   let auditDetails: Record<string, unknown> = {};
-  if (action === "addPortalUser" && user.role === "management") {
+  if (action === "markTripMessagesRead" && ["management", "dispatcher", "driver"].includes(user.role)) {
+    const tripOperationId = Number(body.tripOperationId || 0);
+    if (!tripOperationId) return json({ error: "Tour fehlt" }, 400);
+    const trip = await env.DB.prepare(
+      "SELECT o.id, p.driver_name, s.user_id AS staff_user_id FROM trip_operations o JOIN weekly_planning p ON p.id=o.planning_id LEFT JOIN staff s ON s.id=p.staff_id WHERE o.id=?",
+    ).bind(tripOperationId).first<{ id: number; driver_name: string | null; staff_user_id: number | null }>();
+    if (!trip) return json({ error: "Tour nicht gefunden" }, 404);
+    if (user.role === "driver" && Number(trip.staff_user_id) !== user.id && trip.driver_name !== user.fullName)
+      return json({ error: "Diese Tour ist Ihnen nicht zugeteilt" }, 403);
+    const unread = await env.DB.prepare(
+      "SELECT id FROM trip_messages WHERE trip_operation_id=? AND sender_user_id!=? AND id NOT IN (SELECT message_id FROM trip_message_reads WHERE user_id=?)",
+    ).bind(tripOperationId, user.id, user.id).all<{ id: number }>();
+    if (unread.results.length) await env.DB.batch(unread.results.map((message) => env.DB.prepare(
+      "INSERT OR IGNORE INTO trip_message_reads (message_id, user_id, read_at) VALUES (?, ?, ?)",
+    ).bind(message.id, user.id, now)));
+    auditDetails = { oldValue: null, newValue: { tripOperationId, readMessages: unread.results.length } };
+  } else if (action === "addPortalUser" && user.role === "management") {
     const email = String(body.email || "").trim().toLowerCase();
     const fullName = String(body.fullName || "").trim();
     const role = String(body.role || "");
@@ -686,7 +768,8 @@ export async function POST(request: Request) {
     const operation = await env.DB.prepare("SELECT id FROM trip_operations WHERE planning_id=?").bind(body.id).first<{ id: number }>();
     if (operation) {
       const documents = await env.DB.prepare("SELECT COUNT(*) AS count FROM trip_documents WHERE trip_operation_id=?").bind(operation.id).first<{ count: number }>();
-      if (documents?.count) return json({ error: "Einsatz hat CMR/Fotos und kann nur archiviert werden" }, 409);
+      const messages = await env.DB.prepare("SELECT COUNT(*) AS count FROM trip_messages WHERE trip_operation_id=?").bind(operation.id).first<{ count: number }>();
+      if (documents?.count || messages?.count) return json({ error: "Einsatz hat Dokumente oder Chatverlauf und kann nur archiviert werden" }, 409);
       await env.DB.prepare("DELETE FROM trip_operations WHERE id=?").bind(operation.id).run();
     }
     await env.DB.prepare("DELETE FROM weekly_planning WHERE id=?")
@@ -828,27 +911,140 @@ export async function POST(request: Request) {
       .bind(body.id)
       .run();
   } else if (
+    action === "calculatePayrollPeriod" &&
+    ["management", "accountant"].includes(user.role)
+  ) {
+    const period = String(body.period || "");
+    if (!/^\d{4}-\d{2}$/.test(period)) return json({ error: "Gültigen Abrechnungsmonat wählen" }, 400);
+    const periodState = await env.DB.prepare("SELECT status FROM payroll_periods WHERE period=?").bind(period).first<{ status: string }>();
+    if (periodState?.status === "closed") return json({ error: "Monat ist geschlossen. Management muss ihn mit Begründung wieder öffnen." }, 409);
+    const spesenRate = Math.max(0, Number(body.spesenRate || 0));
+    const nightRate = Math.max(0, Number(body.nightRate || 0));
+    const sundayRate = Math.max(0, Number(body.sundayRate || 0));
+    const holidayRate = Math.max(0, Number(body.holidayRate || 0));
+    if (![spesenRate, nightRate, sundayRate, holidayRate].every(Number.isFinite))
+      return json({ error: "Zuschlagssätze sind ungültig" }, 400);
+    const people = await env.DB.prepare("SELECT id, full_name, compensation FROM staff WHERE status='active' ORDER BY full_name").all<{ id: number; full_name: string; compensation: string | null }>();
+    let calculated = 0;
+    for (const person of people.results) {
+      const tours = await env.DB.prepare(
+        `SELECT o.id, o.started_at, o.delivered_at, o.updated_at
+         FROM trip_operations o JOIN weekly_planning p ON p.id=o.planning_id
+         WHERE o.status='Zugestellt' AND (p.staff_id=? OR p.driver_name=?)
+         AND substr(COALESCE(o.delivered_at,o.updated_at),1,7)=?`,
+      ).bind(person.id, person.full_name, period).all<{ id: number; started_at: string | null; delivered_at: string | null; updated_at: string }>();
+      const existing = await env.DB.prepare("SELECT * FROM payroll_calculations WHERE staff_id=? AND period=?")
+        .bind(person.id, period).first<Record<string, string | number | null>>();
+      const previous = existing || await env.DB.prepare("SELECT base_salary, deductions FROM payroll_calculations WHERE staff_id=? ORDER BY period DESC LIMIT 1")
+        .bind(person.id).first<Record<string, string | number | null>>();
+      const baseSalary = Number(previous?.base_salary || parseCompensation(person.compensation));
+      const deductions = Number(existing?.deductions || previous?.deductions || 0);
+      let nightCount = 0;
+      let sundayCount = 0;
+      let holidayCount = 0;
+      for (const tour of tours.results) {
+        const stamp = tour.started_at || tour.delivered_at || tour.updated_at;
+        const details = berlinTripTime(stamp);
+        if (details.hour >= 22 || details.hour < 6) nightCount += 1;
+        if (details.sunday) sundayCount += 1;
+        if (details.holiday) holidayCount += 1;
+      }
+      const tourCount = tours.results.length;
+      const expensesAmount = Math.round(tourCount * spesenRate * 100) / 100;
+      const nightBonus = Math.round(nightCount * nightRate * 100) / 100;
+      const sundayBonus = Math.round(sundayCount * sundayRate * 100) / 100;
+      const holidayBonus = Math.round(holidayCount * holidayRate * 100) / 100;
+      const bonuses = Math.round((nightBonus + sundayBonus + holidayBonus) * 100) / 100;
+      const reimbursement = await env.DB.prepare(
+        "SELECT COALESCE(SUM(reimbursement_amount),0) AS total FROM expenses WHERE staff_id=? AND substr(expense_date,1,7)=? AND reimbursable=1 AND status IN ('Freigegeben','Zur Zahlung')",
+      ).bind(person.id, period).first<{ total: number }>();
+      const reimbursements = Math.round(Number(reimbursement?.total || 0) * 100) / 100;
+      const netAmount = Math.round((baseSalary + expensesAmount + bonuses + reimbursements - deductions) * 100) / 100;
+      const calculationDetails = JSON.stringify({
+        source: "completed-trips-and-approved-expenses",
+        tourIds: tours.results.map((tour) => tour.id),
+        counts: { tours: tourCount, night: nightCount, sunday: sundayCount, holiday: holidayCount },
+        rates: { spesen: spesenRate, night: nightRate, sunday: sundayRate, holiday: holidayRate },
+      });
+      await env.DB.prepare(`INSERT INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, night_bonus, sunday_bonus, holiday_bonus, reimbursements, deductions, net_amount, payment_status, calculation_details, calculated_at, calculated_by, locked_at, locked_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, NULL, NULL, ?, ?)
+        ON CONFLICT(staff_id, period) DO UPDATE SET base_salary=excluded.base_salary, tour_count=excluded.tour_count, bonuses=excluded.bonuses, expenses=excluded.expenses, night_bonus=excluded.night_bonus, sunday_bonus=excluded.sunday_bonus, holiday_bonus=excluded.holiday_bonus, reimbursements=excluded.reimbursements, deductions=excluded.deductions, net_amount=excluded.net_amount, calculation_details=excluded.calculation_details, calculated_at=excluded.calculated_at, calculated_by=excluded.calculated_by, updated_at=excluded.updated_at`)
+        .bind(person.id, period, baseSalary, tourCount, bonuses, expensesAmount, nightBonus, sundayBonus, holidayBonus, reimbursements, deductions, netAmount, calculationDetails, now, user.id, now, now).run();
+      calculated += 1;
+    }
+    await env.DB.prepare("INSERT INTO payroll_periods (period, status, updated_at) VALUES (?, 'open', ?) ON CONFLICT(period) DO UPDATE SET updated_at=excluded.updated_at")
+      .bind(period, now).run();
+    auditDetails = { oldValue: periodState || null, newValue: { period, calculated, spesenRate, nightRate, sundayRate, holidayRate } };
+  } else if (
+    action === "setPayrollPeriodStatus" &&
+    ["management", "accountant"].includes(user.role)
+  ) {
+    const period = String(body.period || "");
+    const status = String(body.status || "");
+    if (!/^\d{4}-\d{2}$/.test(period) || !["review", "closed"].includes(status))
+      return json({ error: "Monat oder Status ist ungültig" }, 400);
+    const oldValue = await env.DB.prepare("SELECT * FROM payroll_periods WHERE period=?").bind(period).first<Record<string, unknown>>();
+    if (oldValue?.status === "closed") return json({ error: "Monat ist bereits geschlossen" }, 409);
+    const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM payroll_calculations WHERE period=?").bind(period).first<{ count: number }>();
+    if (!count?.count) return json({ error: "Zuerst Monatsabrechnung berechnen" }, 409);
+    if (status === "closed") {
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO payroll_periods (period, status, closed_by, closed_at, updated_at) VALUES (?, 'closed', ?, ?, ?)
+          ON CONFLICT(period) DO UPDATE SET status='closed', closed_by=excluded.closed_by, closed_at=excluded.closed_at, updated_at=excluded.updated_at`).bind(period, user.id, now, now),
+        env.DB.prepare("UPDATE payroll_calculations SET locked_at=?, locked_by=?, payment_status=CASE WHEN payment_status='paid' THEN 'paid' ELSE 'approved' END, updated_at=? WHERE period=?").bind(now, user.id, now, period),
+      ]);
+    } else {
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO payroll_periods (period, status, updated_at) VALUES (?, 'review', ?)
+          ON CONFLICT(period) DO UPDATE SET status='review', updated_at=excluded.updated_at`).bind(period, now),
+        env.DB.prepare("UPDATE payroll_calculations SET payment_status=CASE WHEN payment_status='draft' THEN 'review' ELSE payment_status END, updated_at=? WHERE period=?").bind(now, period),
+      ]);
+    }
+    auditDetails = { oldValue, newValue: { period, status, changedBy: user.id } };
+  } else if (
+    action === "reopenPayrollPeriod" && user.role === "management"
+  ) {
+    const period = String(body.period || "");
+    const reason = String(body.reason || "").trim().slice(0, 500);
+    if (!/^\d{4}-\d{2}$/.test(period) || reason.length < 5)
+      return json({ error: "Monat und Begründung mit mindestens 5 Zeichen eingeben" }, 400);
+    const oldValue = await env.DB.prepare("SELECT * FROM payroll_periods WHERE period=?").bind(period).first<Record<string, unknown>>();
+    if (oldValue?.status !== "closed") return json({ error: "Nur ein geschlossener Monat kann wieder geöffnet werden" }, 409);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE payroll_periods SET status='open', reopened_by=?, reopened_at=?, reopen_reason=?, updated_at=? WHERE period=?").bind(user.id, now, reason, now, period),
+      env.DB.prepare("UPDATE payroll_calculations SET locked_at=NULL, locked_by=NULL, payment_status=CASE WHEN payment_status='paid' THEN 'paid' ELSE 'review' END, updated_at=? WHERE period=?").bind(now, period),
+    ]);
+    auditDetails = { oldValue, newValue: { period, status: "open", reopenedBy: user.id, reason } };
+  } else if (
     action === "savePayroll" &&
     ["management", "accountant"].includes(user.role)
   ) {
     const staffId = Number(body.staffId);
     const period = String(body.period || "");
     if (!staffId || !/^\d{4}-\d{2}$/.test(period)) return json({ error: "Mitarbeiter und Monat sind erforderlich" }, 400);
+    const periodState = await env.DB.prepare("SELECT status FROM payroll_periods WHERE period=?").bind(period).first<{ status: string }>();
+    if (periodState?.status === "closed") return json({ error: "Monat ist geschlossen. Management muss ihn zuerst mit Begründung öffnen." }, 409);
     const baseSalary = Number(body.baseSalary || 0);
     const tourCount = Number(body.tourCount || 0);
-    const bonuses = Number(body.bonuses || 0);
     const expenses = Number(body.expenses || 0);
+    const nightBonus = Number(body.nightBonus || 0);
+    const sundayBonus = Number(body.sundayBonus || 0);
+    const holidayBonus = Number(body.holidayBonus || 0);
+    const reimbursements = Number(body.reimbursements || 0);
+    const bonuses = Math.round((nightBonus + sundayBonus + holidayBonus) * 100) / 100;
     const deductions = Number(body.deductions || 0);
-    const netAmount = Math.round((baseSalary + bonuses + expenses - deductions) * 100) / 100;
+    const netAmount = Math.round((baseSalary + bonuses + expenses + reimbursements - deductions) * 100) / 100;
     const paymentStatus = String(body.paymentStatus || "draft");
     if (!["draft", "review", "approved", "paid"].includes(paymentStatus)) return json({ error: "Ungültiger Zahlungsstatus" }, 400);
     const oldValue = await env.DB.prepare("SELECT * FROM payroll_calculations WHERE staff_id=? AND period=?").bind(staffId, period).first<Record<string, unknown>>();
-    if (oldValue?.locked_at && user.role !== "management") return json({ error: "Freigegebene Abrechnung ist gesperrt" }, 409);
-    await env.DB.prepare(`INSERT INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, deductions, net_amount, payment_status, locked_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(staff_id, period) DO UPDATE SET base_salary=excluded.base_salary, tour_count=excluded.tour_count, bonuses=excluded.bonuses, expenses=excluded.expenses, deductions=excluded.deductions, net_amount=excluded.net_amount, payment_status=excluded.payment_status, locked_at=excluded.locked_at, updated_at=excluded.updated_at`)
-      .bind(staffId, period, baseSalary, tourCount, bonuses, expenses, deductions, netAmount, paymentStatus, ["approved", "paid"].includes(paymentStatus) ? now : null, now, now).run();
-    auditDetails = { oldValue, newValue: { staffId, period, baseSalary, tourCount, bonuses, expenses, deductions, netAmount, paymentStatus } };
+    if (oldValue?.locked_at) return json({ error: "Abrechnung ist gesperrt. Monat muss ausdrücklich wieder geöffnet werden." }, 409);
+    const details = JSON.stringify({ source: "manual-adjustment", previousCalculation: oldValue?.calculation_details || null });
+    await env.DB.prepare(`INSERT INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, night_bonus, sunday_bonus, holiday_bonus, reimbursements, deductions, net_amount, payment_status, calculation_details, calculated_at, calculated_by, locked_at, locked_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+      ON CONFLICT(staff_id, period) DO UPDATE SET base_salary=excluded.base_salary, tour_count=excluded.tour_count, bonuses=excluded.bonuses, expenses=excluded.expenses, night_bonus=excluded.night_bonus, sunday_bonus=excluded.sunday_bonus, holiday_bonus=excluded.holiday_bonus, reimbursements=excluded.reimbursements, deductions=excluded.deductions, net_amount=excluded.net_amount, payment_status=excluded.payment_status, calculation_details=excluded.calculation_details, calculated_at=excluded.calculated_at, calculated_by=excluded.calculated_by, updated_at=excluded.updated_at`)
+      .bind(staffId, period, baseSalary, tourCount, bonuses, expenses, nightBonus, sundayBonus, holidayBonus, reimbursements, deductions, netAmount, paymentStatus, details, now, user.id, now, now).run();
+    await env.DB.prepare("INSERT INTO payroll_periods (period, status, updated_at) VALUES (?, 'open', ?) ON CONFLICT(period) DO NOTHING").bind(period, now).run();
+    auditDetails = { oldValue, newValue: { staffId, period, baseSalary, tourCount, nightBonus, sundayBonus, holidayBonus, expenses, reimbursements, deductions, netAmount, paymentStatus } };
   } else if (
     action === "addMaintenance" &&
     ["management", "dispatcher"].includes(user.role)

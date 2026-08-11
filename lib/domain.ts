@@ -114,6 +114,9 @@ export async function ensureDomainDatabase() {
       `CREATE TABLE IF NOT EXISTS payroll_calculations (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, period TEXT NOT NULL, base_salary REAL NOT NULL DEFAULT 0, tour_count INTEGER NOT NULL DEFAULT 0, bonuses REAL NOT NULL DEFAULT 0, expenses REAL NOT NULL DEFAULT 0, deductions REAL NOT NULL DEFAULT 0, net_amount REAL NOT NULL DEFAULT 0, payment_status TEXT NOT NULL DEFAULT 'draft', locked_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(staff_id, period))`,
     ),
     env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS payroll_periods (id INTEGER PRIMARY KEY AUTOINCREMENT, period TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'open', closed_by INTEGER, closed_at TEXT, reopened_by INTEGER, reopened_at TEXT, reopen_reason TEXT, updated_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS vehicle_maintenance (id INTEGER PRIMARY KEY AUTOINCREMENT, license_plate TEXT NOT NULL, category TEXT NOT NULL, description TEXT NOT NULL, cost REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'Gemeldet', responsible TEXT, due_date TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
@@ -160,6 +163,21 @@ export async function ensureDomainDatabase() {
     ),
     env.DB.prepare(
       `CREATE INDEX IF NOT EXISTS idx_trip_documents_trip ON trip_documents(trip_operation_id, category)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS trip_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_operation_id INTEGER NOT NULL, sender_user_id INTEGER NOT NULL, sender_role TEXT NOT NULL, message_type TEXT NOT NULL DEFAULT 'text', body TEXT, original_language TEXT NOT NULL DEFAULT 'de', translations_json TEXT NOT NULL DEFAULT '{}', file_name TEXT, object_key TEXT UNIQUE, content_type TEXT, size_bytes INTEGER, duration_seconds INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_trip_messages_operation_created ON trip_messages(trip_operation_id, created_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_trip_messages_sender_created ON trip_messages(sender_user_id, created_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS trip_message_reads (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL, user_id INTEGER NOT NULL, read_at TEXT NOT NULL, UNIQUE(message_id, user_id))`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_trip_message_reads_user ON trip_message_reads(user_id, read_at)`,
     ),
     env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, license_plate TEXT NOT NULL, expense_date TEXT NOT NULL, category TEXT NOT NULL, merchant TEXT, gross_amount REAL NOT NULL DEFAULT 0, vat_amount REAL NOT NULL DEFAULT 0, liters REAL, odometer_km REAL, payment_method TEXT NOT NULL DEFAULT 'Privatauslage', reimbursable INTEGER NOT NULL DEFAULT 1, reimbursement_amount REAL NOT NULL DEFAULT 0, amazon_site TEXT, block_id TEXT, tour_reference TEXT, cost_center TEXT, receipt_number TEXT, status TEXT NOT NULL DEFAULT 'Eingereicht', receipt_file_name TEXT, receipt_object_key TEXT UNIQUE, receipt_content_type TEXT, recognition_status TEXT NOT NULL DEFAULT 'Prüfen', payment_reference TEXT, reviewed_by INTEGER, reviewed_at TEXT, paid_at TEXT, rejection_reason TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
@@ -213,6 +231,28 @@ export async function ensureDomainDatabase() {
   ).run();
   await env.DB.prepare(
     "CREATE INDEX IF NOT EXISTS idx_expenses_reimbursement_status ON expenses(reimbursable, status, paid_at)",
+  ).run();
+  const payrollColumns = await env.DB.prepare(
+    "PRAGMA table_info(payroll_calculations)",
+  ).all<{ name: string }>();
+  const payrollColumnNames = new Set(payrollColumns.results.map((column) => column.name));
+  const missingPayrollColumns: Array<[string, string]> = [
+    ["night_bonus", "ALTER TABLE payroll_calculations ADD COLUMN night_bonus REAL NOT NULL DEFAULT 0"],
+    ["sunday_bonus", "ALTER TABLE payroll_calculations ADD COLUMN sunday_bonus REAL NOT NULL DEFAULT 0"],
+    ["holiday_bonus", "ALTER TABLE payroll_calculations ADD COLUMN holiday_bonus REAL NOT NULL DEFAULT 0"],
+    ["reimbursements", "ALTER TABLE payroll_calculations ADD COLUMN reimbursements REAL NOT NULL DEFAULT 0"],
+    ["calculation_details", "ALTER TABLE payroll_calculations ADD COLUMN calculation_details TEXT NOT NULL DEFAULT '{}'"],
+    ["calculated_at", "ALTER TABLE payroll_calculations ADD COLUMN calculated_at TEXT"],
+    ["calculated_by", "ALTER TABLE payroll_calculations ADD COLUMN calculated_by INTEGER"],
+    ["locked_by", "ALTER TABLE payroll_calculations ADD COLUMN locked_by INTEGER"],
+  ];
+  for (const [name, sql] of missingPayrollColumns) {
+    if (!payrollColumnNames.has(name)) await env.DB.prepare(sql).run();
+  }
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO payroll_periods (period, status, closed_at, updated_at)
+     SELECT DISTINCT period, 'closed', MAX(locked_at), MAX(updated_at)
+     FROM payroll_calculations WHERE locked_at IS NOT NULL GROUP BY period`,
   ).run();
   const planningColumns = await env.DB.prepare(
     "PRAGMA table_info(weekly_planning)",

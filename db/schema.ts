@@ -226,13 +226,33 @@ export const payrollCalculations = sqliteTable("payroll_calculations", {
   tourCount: integer("tour_count").notNull().default(0),
   bonuses: real("bonuses").notNull().default(0),
   expenses: real("expenses").notNull().default(0),
+  nightBonus: real("night_bonus").notNull().default(0),
+  sundayBonus: real("sunday_bonus").notNull().default(0),
+  holidayBonus: real("holiday_bonus").notNull().default(0),
+  reimbursements: real("reimbursements").notNull().default(0),
   deductions: real("deductions").notNull().default(0),
   netAmount: real("net_amount").notNull().default(0),
   paymentStatus: text("payment_status").notNull().default("draft"),
+  calculationDetails: text("calculation_details").notNull().default("{}"),
+  calculatedAt: text("calculated_at"),
+  calculatedBy: integer("calculated_by").references(() => users.id),
   lockedAt: text("locked_at"),
+  lockedBy: integer("locked_by").references(() => users.id),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (table) => [uniqueIndex("payroll_staff_period_unique").on(table.staffId, table.period)]);
+
+export const payrollPeriods = sqliteTable("payroll_periods", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  period: text("period").notNull().unique(),
+  status: text("status").notNull().default("open"),
+  closedBy: integer("closed_by").references(() => users.id),
+  closedAt: text("closed_at"),
+  reopenedBy: integer("reopened_by").references(() => users.id),
+  reopenedAt: text("reopened_at"),
+  reopenReason: text("reopen_reason"),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("payroll_period_unique").on(table.period)]);
 
 export const vehicleMaintenance = sqliteTable("vehicle_maintenance", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -324,6 +344,36 @@ export const tripDocuments = sqliteTable("trip_documents", {
   sizeBytes: integer("size_bytes").notNull(),
   createdAt: text("created_at").notNull(),
 }, (table) => [index("idx_trip_documents_trip").on(table.tripOperationId, table.category)]);
+
+export const tripMessages = sqliteTable("trip_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  tripOperationId: integer("trip_operation_id").notNull().references(() => tripOperations.id),
+  senderUserId: integer("sender_user_id").notNull().references(() => users.id),
+  senderRole: text("sender_role").notNull(),
+  messageType: text("message_type").notNull().default("text"),
+  body: text("body"),
+  originalLanguage: text("original_language").notNull().default("de"),
+  translationsJson: text("translations_json").notNull().default("{}"),
+  fileName: text("file_name"),
+  objectKey: text("object_key").unique(),
+  contentType: text("content_type"),
+  sizeBytes: integer("size_bytes"),
+  durationSeconds: integer("duration_seconds").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  index("idx_trip_messages_operation_created").on(table.tripOperationId, table.createdAt),
+  index("idx_trip_messages_sender_created").on(table.senderUserId, table.createdAt),
+]);
+
+export const tripMessageReads = sqliteTable("trip_message_reads", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  messageId: integer("message_id").notNull().references(() => tripMessages.id),
+  userId: integer("user_id").notNull().references(() => users.id),
+  readAt: text("read_at").notNull(),
+}, (table) => [
+  uniqueIndex("trip_message_read_unique").on(table.messageId, table.userId),
+  index("idx_trip_message_reads_user").on(table.userId, table.readAt),
+]);
 
 export const expenses = sqliteTable("expenses", {
   id: integer("id").primaryKey({ autoIncrement: true }),

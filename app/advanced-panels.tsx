@@ -47,13 +47,15 @@ export function EmployeeDocuments({ rows, staff, driver, locale, reload }: { row
   </section>;
 }
 
-export function PayrollCenter({ rows, staff, driver, locale, action }: { rows: Row[]; staff: Row[]; driver: boolean; locale: DriverLocale; action: Action }) {
+export function PayrollCenter({ rows, periods, staff, driver, management, locale, action }: { rows: Row[]; periods: Row[]; staff: Row[]; driver: boolean; management: boolean; locale: DriverLocale; action: Action }) {
   const [selected, setSelected] = useState<Row | null>(null);
+  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const [reopenReason, setReopenReason] = useState("");
   const c = {
-    de: { title: "Meine Abrechnung", help: "Monatliche Lohnwerte, Zahlungsstatus und PDF", month: "Monat", base: "Grundgehalt", tours: "Touren", bonuses: "Zuschläge", expenses: "Spesen", deductions: "Abzüge", net: "Netto", status: "Status", empty: "Noch keine Monatsabrechnung" },
-    pl: { title: "Moje rozliczenie", help: "Miesięczne wynagrodzenie, status płatności i PDF", month: "Miesiąc", base: "Podstawa", tours: "Trasy", bonuses: "Dodatki", expenses: "Diety", deductions: "Potrącenia", net: "Netto", status: "Status", empty: "Brak rozliczenia" },
-    uk: { title: "Мій розрахунок", help: "Місячна зарплата, статус виплати та PDF", month: "Місяць", base: "Основна зарплата", tours: "Рейси", bonuses: "Доплати", expenses: "Добові", deductions: "Відрахування", net: "Нетто", status: "Статус", empty: "Розрахунку ще немає" },
-    ru: { title: "Мой расчёт", help: "Месячная зарплата, статус выплаты и PDF", month: "Месяц", base: "Основная зарплата", tours: "Рейсы", bonuses: "Доплаты", expenses: "Суточные", deductions: "Удержания", net: "Нетто", status: "Статус", empty: "Расчёта пока нет" },
+    de: { title: "Meine Abrechnung", help: "Monatliche Lohnwerte, Zahlungsstatus und PDF", month: "Monat", base: "Grundgehalt", tours: "Touren", night: "Nacht", sunday: "Sonntag", holiday: "Feiertag", expenses: "Spesen", reimbursements: "Erstattungen", deductions: "Abzüge", net: "Netto", status: "Status", empty: "Noch keine Monatsabrechnung" },
+    pl: { title: "Moje rozliczenie", help: "Miesięczne wynagrodzenie, status płatności i PDF", month: "Miesiąc", base: "Podstawa", tours: "Trasy", night: "Noc", sunday: "Niedziela", holiday: "Święta", expenses: "Diety", reimbursements: "Zwroty", deductions: "Potrącenia", net: "Netto", status: "Status", empty: "Brak rozliczenia" },
+    uk: { title: "Мій розрахунок", help: "Місячна зарплата, статус виплати та PDF", month: "Місяць", base: "Основна зарплата", tours: "Рейси", night: "Нічні", sunday: "Неділя", holiday: "Свята", expenses: "Добові", reimbursements: "Повернення витрат", deductions: "Відрахування", net: "Нетто", status: "Статус", empty: "Розрахунку ще немає" },
+    ru: { title: "Мой расчёт", help: "Месячная зарплата, статус выплаты и PDF", month: "Месяц", base: "Основная зарплата", tours: "Рейсы", night: "Ночные", sunday: "Воскресенье", holiday: "Праздники", expenses: "Суточные", reimbursements: "Возврат расходов", deductions: "Удержания", net: "Нетто", status: "Статус", empty: "Расчёта пока нет" },
   }[locale];
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -61,19 +63,39 @@ export function PayrollCenter({ rows, staff, driver, locale, action }: { rows: R
     await action({ action: "savePayroll", id: selected?.id || null, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) });
     setSelected(null); event.currentTarget.reset();
   }
-  return <div className="advanced-stack">
-    {!driver ? <div className="panel"><div className="panel-title"><div><h2>Monatsabrechnung erfassen</h2><p>Netto wird serverseitig berechnet und Freigaben werden protokolliert</p></div></div><form className="payroll-form" onSubmit={submit} key={String(selected?.id || "new")}>
+  const periodRow = periods.find((row) => row.period === period);
+  const isClosed = periodRow?.status === "closed";
+  async function calculate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    await action({ action: "calculatePayrollPeriod", ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) });
+  }
+  async function reopen() {
+    await action({ action: "reopenPayrollPeriod", period, reason: reopenReason }); setReopenReason("");
+  }
+  return <div className="advanced-stack payroll-workspace">
+    {!driver ? <div className="panel payroll-automation"><div className="panel-title"><div><h2>Monat automatisch abrechnen</h2><p>Abgeschlossene Touren, Spesen, Nacht-/Sonntag-/Feiertagszuschläge und freigegebene Erstattungen werden zusammengeführt.</p></div><span className={`period-state state-${String(periodRow?.status || "open")}`}>{periodRow?.status === "closed" ? "Geschlossen" : periodRow?.status === "review" ? "In Prüfung" : "Offen"}</span></div><form className="payroll-auto-form" onSubmit={calculate}>
+      <label>Abrechnungsmonat<input name="period" type="month" required value={period} onChange={(event) => setPeriod(event.target.value)} /></label>
+      <label>Spesen je Tour €<input name="spesenRate" type="number" min="0" step="0.01" defaultValue="14" /></label>
+      <label>Nacht je Tour €<input name="nightRate" type="number" min="0" step="0.01" defaultValue="25" /></label>
+      <label>Sonntag je Tour €<input name="sundayRate" type="number" min="0" step="0.01" defaultValue="50" /></label>
+      <label>Feiertag je Tour €<input name="holidayRate" type="number" min="0" step="0.01" defaultValue="100" /></label>
+      <button className="primary-button" disabled={isClosed}>Automatisch berechnen</button>
+    </form><div className="payroll-period-actions"><span>Die Sätze sind Firmenregeln und können vor jeder Berechnung angepasst werden.</span>{!isClosed ? <><button onClick={() => action({ action: "setPayrollPeriodStatus", period, status: "review" })}>Zur Prüfung</button><button className="close-period-button" onClick={() => action({ action: "setPayrollPeriodStatus", period, status: "closed" })}>Monat schließen</button></> : management ? <><input value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Begründung für Wiederöffnung" /><button className="reopen-period-button" disabled={reopenReason.trim().length < 5} onClick={reopen}>Mit Management-Freigabe öffnen</button></> : <strong>Nur Management kann diesen Monat wieder öffnen.</strong>}</div>{periodRow?.closed_at ? <div className="period-audit">Geschlossen am {dateText(periodRow.closed_at)} von {periodRow.closed_by_name || "Buchhaltung"}{periodRow.reopen_reason ? ` · Letzte Wiederöffnung: ${periodRow.reopen_reason}` : ""}</div> : null}</div> : null}
+    {!driver ? <div className="panel"><div className="panel-title"><div><h2>Abrechnung prüfen und korrigieren</h2><p>Automatische Werte können vor dem Monatsabschluss nachvollziehbar angepasst werden.</p></div></div><form className="payroll-form" onSubmit={submit} key={String(selected?.id || "new")}>
       <select name="staffId" required defaultValue={String(selected?.staff_id || "")}><option value="">Mitarbeiter</option>{staff.map((person) => <option key={person.id} value={String(person.id)}>{person.full_name}</option>)}</select>
       <label>Monat<input name="period" type="month" required defaultValue={String(selected?.period || new Date().toISOString().slice(0, 7))} /></label>
       <label>Grundgehalt<input name="baseSalary" type="number" step="0.01" min="0" defaultValue={String(selected?.base_salary || 0)} /></label>
       <label>Anzahl Touren<input name="tourCount" type="number" min="0" defaultValue={String(selected?.tour_count || 0)} /></label>
-      <label>Zuschläge<input name="bonuses" type="number" step="0.01" defaultValue={String(selected?.bonuses || 0)} /></label>
       <label>Spesen<input name="expenses" type="number" step="0.01" defaultValue={String(selected?.expenses || 0)} /></label>
+      <label>Nachtzuschläge<input name="nightBonus" type="number" step="0.01" defaultValue={String(selected?.night_bonus || 0)} /></label>
+      <label>Sonntagszuschläge<input name="sundayBonus" type="number" step="0.01" defaultValue={String(selected?.sunday_bonus || 0)} /></label>
+      <label>Feiertagszuschläge<input name="holidayBonus" type="number" step="0.01" defaultValue={String(selected?.holiday_bonus || 0)} /></label>
+      <label>Erstattungen<input name="reimbursements" type="number" step="0.01" defaultValue={String(selected?.reimbursements || 0)} /></label>
       <label>Abzüge<input name="deductions" type="number" step="0.01" defaultValue={String(selected?.deductions || 0)} /></label>
       <label>Zahlungsstatus<select name="paymentStatus" defaultValue={String(selected?.payment_status || "draft")}><option value="draft">Entwurf</option><option value="review">Prüfung</option><option value="approved">Freigegeben</option><option value="paid">Bezahlt</option></select></label>
       <button className="primary-button">Abrechnung speichern</button>{selected ? <button type="button" onClick={() => setSelected(null)}>Abbrechen</button> : null}
     </form></div> : null}
-    <div className="panel"><div className="panel-title"><div><h2>{driver ? c.title : "Lohnjournal"}</h2><p>{driver ? c.help : "Monatliche Lohnwerte, Zahlungsstatus und automatisch erzeugtes PDF"}</p></div></div><div className="table-wrap"><table><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>{driver ? c.month : "Monat"}</th><th>{driver ? c.base : "Grundgehalt"}</th><th>{driver ? c.tours : "Touren"}</th><th>{driver ? c.bonuses : "Zuschläge"}</th><th>{driver ? c.expenses : "Spesen"}</th><th>{driver ? c.deductions : "Abzüge"}</th><th>{driver ? c.net : "Netto"}</th><th>{driver ? c.status : "Status"}</th><th>PDF</th>{!driver ? <th /> : null}</tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td>{row.period}</td><td>{euro(row.base_salary)}</td><td>{row.tour_count}</td><td>{euro(row.bonuses)}</td><td>{euro(row.expenses)}</td><td>{euro(row.deductions)}</td><td><strong>{euro(row.net_amount)}</strong></td><td><span className="status-pill">{row.payment_status}</span></td><td><a href={`/api/payroll/${row.id}/pdf`} target="_blank">PDF ↓</a></td>{!driver ? <td><button className="edit-action" onClick={() => setSelected(row)}>Bearbeiten</button></td> : null}</tr>) : <tr><td colSpan={11}>{driver ? c.empty : "Noch keine Monatsabrechnung"}</td></tr>}</tbody></table></div></div>
+    <div className="panel"><div className="panel-title"><div><h2>{driver ? c.title : "Lohnjournal"}</h2><p>{driver ? c.help : "Monatliche Lohnwerte, Zahlungsstatus, Berechnungsquelle und PDF"}</p></div></div><div className="table-wrap"><table className="payroll-ledger"><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>{driver ? c.month : "Monat"}</th><th>{driver ? c.base : "Grundgehalt"}</th><th>{driver ? c.tours : "Touren"}</th><th>{c.expenses}</th><th>{c.night}</th><th>{c.sunday}</th><th>{c.holiday}</th><th>{c.reimbursements}</th><th>{c.deductions}</th><th>{c.net}</th><th>{c.status}</th><th>PDF</th>{!driver ? <th /> : null}</tr></thead><tbody>{rows.length ? rows.map((row) => { const closed = periods.some((item) => item.period === row.period && item.status === "closed"); return <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td><strong>{row.period}</strong>{closed ? <small className="locked-note">🔒 geschlossen</small> : null}</td><td>{euro(row.base_salary)}</td><td>{row.tour_count}</td><td>{euro(row.expenses)}</td><td>{euro(row.night_bonus)}</td><td>{euro(row.sunday_bonus)}</td><td>{euro(row.holiday_bonus)}</td><td>{euro(row.reimbursements)}</td><td>{euro(row.deductions)}</td><td><strong>{euro(row.net_amount)}</strong></td><td><span className="status-pill">{row.payment_status}</span></td><td><a href={`/api/payroll/${row.id}/pdf`} target="_blank">PDF ↓</a></td>{!driver ? <td>{closed ? <span className="locked-note">Gesperrt</span> : <button className="edit-action" onClick={() => setSelected(row)}>Bearbeiten</button>}</td> : null}</tr>; }) : <tr><td colSpan={14}>{driver ? c.empty : "Noch keine Monatsabrechnung"}</td></tr>}</tbody></table></div></div>
   </div>;
 }
 

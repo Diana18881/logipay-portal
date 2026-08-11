@@ -45,9 +45,11 @@ type Data = {
   tachograph: Row[];
   tripOperations: Row[];
   tripDocuments: Row[];
+  tripMessages: Row[];
   expenses: Row[];
   notifications: Row[];
   checklists: Row[];
+  payrollPeriods: Row[];
   year: number;
   kw: number;
 };
@@ -133,9 +135,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     tachograph: [],
     tripOperations: [],
     tripDocuments: [],
+    tripMessages: [],
     expenses: [],
     notifications: [],
     checklists: [],
+    payrollPeriods: [],
     year: 2026,
     kw: 32,
   });
@@ -700,7 +704,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   />
                 </Card>
               )}
-              {section === "operations" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} driver={currentUser.role === "driver"} locale={locale} action={action} reload={load} />}
+              {section === "operations" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} locale={locale} action={action} reload={load} />}
               {section === "tachograph" && <TachographCenter rows={data.tachograph} staff={active} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} />}
               {section === "expenses" && <ExpenseCenter rows={data.expenses} staff={active} vehicles={data.vehicles} driver={currentUser.role === "driver"} canApprove={["management", "accountant"].includes(currentUser.role)} locale={locale} action={action} reload={load} />}
               {section === "checklists" && <ChecklistCenter rows={data.checklists} staff={active} vehicles={data.vehicles} planning={data.planning} driver={currentUser.role === "driver"} locale={locale} action={action} />}
@@ -724,7 +728,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 ))}
               {section === "documents" && (
                 <div className="advanced-stack">
-                  <PayrollCenter rows={data.payroll} staff={active} driver={currentUser.role === "driver"} locale={locale} action={action} />
+                  <PayrollCenter rows={data.payroll} periods={data.payrollPeriods} staff={active} driver={currentUser.role === "driver"} management={currentUser.role === "management"} locale={locale} action={action} />
                   <Documents rows={data.documents} staff={active} driver={currentUser.role === "driver"} locale={locale} canUpload={["management", "accountant"].includes(currentUser.role)} reload={load} />
                 </div>
               )}
