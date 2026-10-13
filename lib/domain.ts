@@ -666,7 +666,8 @@ export async function ensureDomainDatabase() {
        )`,
     ).bind(syncNow),
   ]);
-  await env.DB.prepare("PRAGMA optimize").run();
+  // Optional planner hint; Turso/libsql rejects this statement, so failures are ignored.
+  await env.DB.prepare("PRAGMA optimize").run().catch(() => undefined);
 }
 
 async function ensureDemoDriverSetup() {
