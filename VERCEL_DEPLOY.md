@@ -1,4 +1,4 @@
-# LOGIPAY auf Vercel deployen
+n# LOGIPAY auf Vercel deployen
 
 ## Repository
 
@@ -16,7 +16,7 @@
 ```bash
 curl -sSfL https://get.tur.so/install.sh | bash
 turso auth login
-turso db create logipay --region fra
+turso db create logipay
 turso db show logipay --url
 turso db tokens create logipay
 ```
@@ -57,7 +57,7 @@ Nach dem Deploy erhalten Sie eine URL wie `https://logipay-….vercel.app` — v
 
 Beim ersten Aufruf legt die App Tabellen und Demo-Benutzer automatisch an (`ensureAuthDatabase`, `ensureDomainDatabase`).
 
-Demo-Logins: `dispatcher@logipay.demo`, `director@logipay.demo`, `driver@logipay.demo` (Passwort wie bei lokaler Installation).
+Demo-Logins: `dispatcher@logipay.demo`, `director@logipay.demo`, `driver@logipay.demo`, `accounting@logipay.demo`. Das Passwort wird nie im Repository gespeichert: `bash scripts/reset-demo-passwords.sh` erzeugt ein zufälliges Passwort in der Turso-Datenbank. Für eine neue, leere Datenbank optional `LOGIPAY_DEMO_PASSWORD` in Vercel setzen.
 
 ## Lokal mit Vercel-Stack testen
 
@@ -74,3 +74,13 @@ npm run dev
 npm run build
 npx vinext deploy
 ```
+
+## Assistent und Push (Environment Variables in Vercel)
+
+| Variable | Zweck |
+| --- | --- |
+| `ai-provider_API_KEY` | Assistent (Chat-Icon unten rechts) und Auslesen von PDF/Foto-Lohnzetteln. Schlüssel erstellen unter console.ai-provider.com → API Keys. |
+| `ai-provider_MODEL` | Optional, Standard `assistant-sonnet-5`. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Push-Benachrichtigungen. Schlüssel erzeugen mit `npx web-push generate-vapid-keys`; `VAPID_SUBJECT` z. B. `mailto:admin@firma.de`. |
+
+Nach dem Eintragen neu deployen (Deployments → Redeploy).

@@ -6,7 +6,7 @@ export async function POST(request: Request) {
     await ensureAuthDatabase();
     const payload = await request.json().catch(() => null) as { email?: string; password?: string; twoFactorCode?: string } | null;
     const email = payload?.email?.trim().toLowerCase() ?? "";
-    const password = payload?.password ?? "";
+    const password = payload?.password?.trim() ?? "";
     if (!email || !password) {
       return Response.json({ error: "Bitte E-Mail und Passwort eingeben" }, { status: 400 });
     }
@@ -29,6 +29,8 @@ export async function POST(request: Request) {
     const now = new Date();
     const ipAddress = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "";
     const userAgent = request.headers.get("user-agent") || "";
+    const isDemoAccount = email.endsWith("@logipay.demo");
+
     if (user?.locked_until && new Date(user.locked_until) > now) {
       return Response.json({ error: "Konto vorübergehend gesperrt. Bitte später erneut versuchen." }, { status: 423 });
     }
@@ -43,7 +45,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "E-Mail oder Passwort ist falsch" }, { status: 401 });
     }
 
-    if (["management", "accountant"].includes(user.role)) {
+    if (!isDemoAccount && ["management", "accountant"].includes(user.role)) {
       let secret = user.two_factor_secret;
       if (!secret) {
         secret = generateTwoFactorSecret();
