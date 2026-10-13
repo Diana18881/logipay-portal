@@ -79,8 +79,8 @@ npx vinext deploy
 
 | Variable | Zweck |
 | --- | --- |
-| `ai-provider_API_KEY` | Assistent (Chat-Icon unten rechts) und Auslesen von PDF/Foto-Lohnzetteln. Schlüssel erstellen unter console.ai-provider.com → API Keys. |
-| `ai-provider_MODEL` | Optional, Standard `assistant-sonnet-5`. |
+| `AI_GATEWAY_API_KEY` | Assistent (Chat-Icon unten rechts) und Auslesen von PDF/Foto-Lohnzetteln über Vercel AI Gateway. Schlüssel anlegen unter Vercel → AI Gateway → API Keys. |
+| `AI_MODEL` | Modell-ID aus der Liste https://ai-gateway.vercel.sh/v1/models. Ohne diese Variable ist der Assistent ausgeschaltet. |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Push-Benachrichtigungen. Schlüssel erzeugen mit `npx web-push generate-vapid-keys`; `VAPID_SUBJECT` z. B. `mailto:admin@firma.de`. |
 
 Nach dem Eintragen neu deployen (Deployments → Redeploy).

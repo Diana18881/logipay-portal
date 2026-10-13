@@ -2,14 +2,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vinext from "vinext";
 import { defineConfig } from "vite";
-import hostingConfig from "./.hosting/hosting.json";
-import { sites } from "./build/sites-vite-plugin";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
-const { d1, r2 } = hostingConfig;
+const d1 = "DB";
+const r2 = "DOCUMENTS";
 const isVercelPlatform =
   process.env.LOGIPAY_PLATFORM === "vercel" || process.env.VERCEL === "1";
 
@@ -35,8 +34,6 @@ const localBindingConfig = {
     : [],
 };
 
-const issandboxSeatbeltSandbox = process.env.sandbox_SANDBOX === "seatbelt";
-
 export default defineConfig(async () => {
   process.env.WRANGLER_WRITE_LOGS ??= "false";
   process.env.WRANGLER_LOG_PATH ??= ".wrangler/logs";
@@ -50,7 +47,6 @@ export default defineConfig(async () => {
   } else {
     const { cloudflare } = await import("@cloudflare/vite-plugin");
     plugins.push(
-      sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         config: localBindingConfig,
@@ -59,9 +55,6 @@ export default defineConfig(async () => {
   }
 
   return {
-    server: issandboxSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
     css: {
       postcss: path.resolve(root, "postcss.config.mjs"),
     },

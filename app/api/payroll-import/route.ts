@@ -2,30 +2,23 @@ import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../lib/auth";
 import { ensureDomainDatabase } from "../../../lib/domain";
 import { parseNumber, parsePeriod, type PayrollRecord } from "../../../lib/payroll-import";
-
-const MODEL = process.env.ai-provider_MODEL || "assistant-sonnet-5";
+import { aiConfigured, aiMessages, type AiContentPart } from "../../../lib/ai";
 
 /** PDF / image payslips → structured records automatisch. */
 async function extractWithAi(file: File, fallbackPeriod: string): Promise<{ records?: PayrollRecord[]; error?: string }> {
-  const apiKey = process.env.ai-provider_API_KEY;
-  if (!apiKey) return { error: "Für PDF- und Bilddateien muss das automatische Auslesen eingerichtet sein. Alternativ Excel- oder CSV-Datei hochladen." };
+  if (!aiConfigured()) return { error: "Für PDF- und Bilddateien muss das automatische Auslesen eingerichtet sein. Alternativ Excel- oder CSV-Datei hochladen." };
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   const data = btoa(binary);
   const isPdf = file.type === "application/pdf";
-  const part = isPdf
+  const part: AiContentPart = isPdf
     ? { type: "document", source: { type: "base64", media_type: "application/pdf", data } }
     : { type: "image", source: { type: "base64", media_type: file.type, data } };
   const prompt = `Extrahiere aus diesem Lohn-/Gehaltsdokument alle Mitarbeiter-Abrechnungen. Antworte NUR mit einem JSON-Array. Jedes Element: {"name": string, "period": "YYYY-MM" (Standard ${fallbackPeriod}), "baseSalary": number, "tourCount": number, "expenses": number, "nightBonus": number, "sundayBonus": number, "holidayBonus": number, "reimbursements": number, "deductions": number}. Beträge als Zahl in EUR ohne Symbol; fehlende Werte = 0. Brutto/Grundgehalt in baseSalary.`;
-  const response = await fetch("https://api.ai-provider.com/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": apiKey, "ai-provider-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL, max_tokens: 4096, messages: [{ role: "user", content: [part, { type: "text", text: prompt }] }] }),
-  });
+  const response = await aiMessages({ max_tokens: 4096, messages: [{ role: "user", content: [part, { type: "text", text: prompt }] }] });
   if (!response.ok) return { error: `Automatisches Auslesen fehlgeschlagen (${response.status})` };
-  const result = await response.json() as { content?: { type: string; text?: string }[] };
-  const text = (result.content || []).map((item) => item.text || "").join("");
+  const text = response.text;
   const json = text.match(/\[[\s\S]*\]/)?.[0];
   if (!json) return { error: "Keine Abrechnungsdaten erkannt" };
   try {

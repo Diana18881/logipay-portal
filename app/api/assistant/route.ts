@@ -1,6 +1,6 @@
 import { requirePortalUser } from "../../../lib/auth";
+import { aiConfigured, aiMessages } from "../../../lib/ai";
 
-const MODEL = process.env.ai-provider_MODEL || "assistant-sonnet-5";
 const roleNames: Record<string, string> = { management: "Management", accountant: "Buchhaltung", dispatcher: "Disposition", driver: "Fahrer" };
 
 const portalGuide = `Menü des Portals (Gruppen):
@@ -15,13 +15,12 @@ type ChatTurn = { role: "user" | "assistant"; content: string };
 
 export async function GET() {
   await requirePortalUser(["management", "accountant", "dispatcher", "driver"]);
-  return Response.json({ configured: Boolean(process.env.ai-provider_API_KEY) });
+  return Response.json({ configured: aiConfigured() });
 }
 
 export async function POST(request: Request) {
   const user = await requirePortalUser(["management", "accountant", "dispatcher", "driver"]);
-  const apiKey = process.env.ai-provider_API_KEY;
-  if (!apiKey) return Response.json({ error: "Der Assistent ist nicht eingerichtet (Zugangsschlüssel fehlt in den Umgebungsvariablen)." }, { status: 503 });
+  if (!aiConfigured()) return Response.json({ error: "Der Assistent ist nicht eingerichtet (Zugangsschlüssel fehlt in den Umgebungsvariablen)." }, { status: 503 });
 
   const body = await request.json().catch(() => null) as { messages?: ChatTurn[]; context?: unknown; locale?: string; section?: string } | null;
   const messages = (Array.isArray(body?.messages) ? body!.messages : [])
@@ -42,13 +41,8 @@ export async function POST(request: Request) {
     `Portal-Daten (JSON, Stand jetzt):\n${context}`,
   ].filter(Boolean).join("\n\n");
 
-  const response = await fetch("https://api.ai-provider.com/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": apiKey, "ai-provider-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL, max_tokens: 1024, system, messages }),
-  });
+  const response = await aiMessages({ max_tokens: 1024, system, messages });
   if (!response.ok) return Response.json({ error: `Assistent antwortet nicht (${response.status})` }, { status: 502 });
-  const result = await response.json() as { content?: { type: string; text?: string }[] };
-  const reply = (result.content || []).filter((part) => part.type === "text").map((part) => part.text).join("\n").trim();
+  const reply = response.text;
   return Response.json({ reply: reply || "Keine Antwort erhalten." }, { headers: { "Cache-Control": "private, no-store" } });
 }

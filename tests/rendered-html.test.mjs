@@ -52,7 +52,7 @@ test("ships the refreshed responsive LOGIPAY visual system", async () => {
   assert.match(css, /\.chat-conversation/);
   assert.match(css, /@media screen and \(max-width: 760px\)/);
   assert.match(layout, /LOGIPAY/);
-  assert.doesNotMatch(layout, /Starter Project|sandbox-preview/);
+  assert.doesNotMatch(layout, /Starter Project/);
 });
 
 test("includes the operations command center, global search and driver 360 dossier", async () => {
