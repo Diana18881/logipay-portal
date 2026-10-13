@@ -12,7 +12,7 @@ CREATE UNIQUE INDEX `sessions_token_hash_unique` ON `sessions` (`token_hash`);--
 ALTER TABLE `users` ADD `password_hash` text NOT NULL;--> statement-breakpoint
 ALTER TABLE `users` ADD `must_change_password` integer DEFAULT true NOT NULL;--> statement-breakpoint
 INSERT INTO `users` (`email`, `full_name`, `role`, `password_hash`, `must_change_password`, `active`) VALUES
-('director@logipay.demo', 'Алексей Орлов', 'management', 'pbkdf2_sha256$210000$DWGodkYNPzMpQKdqkvsM8w==$40SLjYyIO9PnETVOu8TfPtK60JlhDUOidG/xqqHJzjs=', 1, 1),
+('director@logipay.demo', 'Lirim Krasnici', 'management', 'pbkdf2_sha256$210000$DWGodkYNPzMpQKdqkvsM8w==$40SLjYyIO9PnETVOu8TfPtK60JlhDUOidG/xqqHJzjs=', 1, 1),
 ('accounting@logipay.demo', 'Елена Волкова', 'accountant', 'pbkdf2_sha256$210000$H0SJBqBEUEQ+dayMOW5YqA==$oP2MVO5ym0TIV4kveKq5jdoRgp9iYzAibCQPzWyYck0=', 1, 1),
 ('dispatcher@logipay.demo', 'Ирина Соколова', 'dispatcher', 'pbkdf2_sha256$210000$80XB8VADHtpNRi9e/95H8w==$15+DDBe39mSXGTlie1/yOO0fR0s5TkpZ8dfm+yxCLrE=', 1, 1),
 ('driver@logipay.demo', 'Михаил Козлов', 'driver', 'pbkdf2_sha256$210000$D+OAHkFUpdqX4iCAtILvvQ==$aev3aSc/SShRVrdjU0NUAeib2zhI0S6pwW060QpDFg0=', 1, 1);--> statement-breakpoint

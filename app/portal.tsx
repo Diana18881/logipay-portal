@@ -1,9 +1,12 @@
 "use client";
 
-import { type DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PortalUser } from "../lib/auth";
-import { EmployeeDocuments, ExcelImporter, MaintenanceCenter, PasswordChange, PayrollCenter, SecurityCenter, TruckTracking } from "./advanced-panels";
-import { AnalyticsCenter, ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
+import { EmployeeDocuments, MaintenanceCenter, PasswordChange, PayrollCenter, SecurityCenter, TruckTracking } from "./advanced-panels";
+import { AbsenceCalendar } from "./absences";
+import { EmptyState } from "./empty-state";
+import { AssistantWidget } from "./assistant-panel";
+import { ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
 import { driverLanguages, driverText, type DriverLocale } from "./driver-i18n";
 import { countOfflineUploads, flushOfflineUploads, loadPortalSnapshot, queueOfflineUpload, savePortalSnapshot } from "../lib/offline-client";
 import { buildDepartureShifts, departureShiftForPlanning, type DepartureShift } from "../lib/departure-confirmations";
@@ -23,15 +26,14 @@ type Section =
   | "checklists"
   | "notifications"
   | "users"
-  | "analytics"
   | "concerns"
   | "documents"
   | "personnel"
-  | "import"
   | "security"
-  | "reports";
+  | "reports"
+  | "absences";
 type Row = Record<string, string | number | null>;
-type SearchResult = { id: string; kind: string; title: string; meta: string; section: Section; row?: Row };
+type SearchResult = { id: string; kind: string; title: string; meta: string; section: Section; row?: Row; plate?: string; contactKey?: string; tripId?: number };
 type ThemeMode = "light" | "dark" | "system";
 type DensityMode = "compact" | "comfortable" | "large";
 type PortalTask = { id: string; title: string; detail: string; priority: "urgent" | "warning" | "normal"; section: Section; owner: string; due?: string };
@@ -60,69 +62,78 @@ type Data = {
   departureConfirmations: Row[];
   tripDocuments: Row[];
   tripMessages: Row[];
+  chatContacts: Row[];
+  directMessages: Row[];
   expenses: Row[];
   notifications: Row[];
   checklists: Row[];
   payrollPeriods: Row[];
+  workDays: Row[];
+  absences: Row[];
   year: number;
   kw: number;
 };
 
 const nav: { id: Section; label: string; roles: string[] }[] = [
-  {
-    id: "overview",
-    label: "Übersicht",
-    roles: ["management", "accountant", "dispatcher", "driver"],
-  },
-  { id: "tasks", label: "Aufgabenzentrale", roles: ["management", "accountant", "dispatcher"] },
+  { id: "overview", label: "Übersicht", roles: ["management", "accountant", "dispatcher", "driver"] },
   { id: "driverFlow", label: "Mein Arbeitstag", roles: ["driver"] },
-  {
-    id: "staff",
-    label: "Mitarbeiter",
-    roles: ["management", "accountant", "dispatcher"],
-  },
-  {
-    id: "vehicles",
-    label: "Fahrzeugakte",
-    roles: ["management", "dispatcher", "driver"],
-  },
-  {
-    id: "tracking",
-    label: "Live-Tracking",
-    roles: ["management", "dispatcher", "driver"],
-  },
-  {
-    id: "planning",
-    label: "KW-Planung",
-    roles: ["management", "dispatcher", "driver"],
-  },
-  { id: "operations", label: "Touren & Zustellung", roles: ["management", "dispatcher", "driver"] },
-  { id: "messages", label: "Nachrichten", roles: ["management", "dispatcher", "driver"] },
-  { id: "tachograph", label: "Tachograph", roles: ["management", "dispatcher", "driver"] },
-  { id: "expenses", label: "Auslagen & Erstattungen", roles: ["management", "accountant", "driver"] },
-  { id: "checklists", label: "Fahrzeug-Check", roles: ["management", "dispatcher", "driver"] },
-  {
-    id: "concerns",
-    label: "Fahreranliegen",
-    roles: ["management", "accountant", "dispatcher", "driver"],
-  },
-  {
-    id: "documents",
-    label: "Lohn & Abrechnung",
-    roles: ["management", "accountant", "driver"],
-  },
+  { id: "planning", label: "Wochenplan", roles: ["management", "dispatcher", "driver"] },
+  { id: "operations", label: "Touren", roles: ["management", "dispatcher", "driver"] },
+  { id: "messages", label: "Chats", roles: ["management", "dispatcher", "driver"] },
+  { id: "tracking", label: "Karte", roles: ["management", "dispatcher", "driver"] },
+  { id: "staff", label: "Mitarbeiter", roles: ["management", "accountant", "dispatcher"] },
+  { id: "absences", label: "Urlaub & Krankheit", roles: ["management", "dispatcher"] },
   { id: "personnel", label: "Personalakte", roles: ["management", "accountant", "driver"] },
-  { id: "notifications", label: "Benachrichtigungen", roles: ["management", "accountant", "dispatcher", "driver"] },
-  { id: "analytics", label: "Unternehmensanalyse", roles: ["management", "accountant", "dispatcher"] },
-  { id: "users", label: "Benutzerverwaltung", roles: ["management"] },
-  { id: "import", label: "Excel-Import", roles: ["management", "dispatcher"] },
+  { id: "tachograph", label: "Fahrzeiten", roles: ["management", "dispatcher", "driver"] },
+  { id: "vehicles", label: "Fahrzeuge", roles: ["management", "dispatcher", "driver"] },
+  { id: "checklists", label: "Fahrzeug-Check", roles: ["management", "dispatcher", "driver"] },
+  { id: "expenses", label: "Belege & Auslagen", roles: ["management", "accountant", "driver"] },
+  { id: "documents", label: "Lohn & Abrechnung", roles: ["management", "accountant", "driver"] },
+  { id: "reports", label: "Berichte", roles: ["management", "accountant", "dispatcher"] },
+  { id: "tasks", label: "Aufgaben", roles: ["management", "accountant", "dispatcher"] },
+  { id: "concerns", label: "Fahreranliegen", roles: ["management", "accountant", "dispatcher", "driver"] },
+  { id: "notifications", label: "Meldungen", roles: ["management", "accountant", "dispatcher", "driver"] },
+  { id: "users", label: "Benutzer", roles: ["management"] },
   { id: "security", label: "Sicherheit & Audit", roles: ["management"] },
-  {
-    id: "reports",
-    label: "Berichte",
-    roles: ["management", "accountant", "dispatcher"],
-  },
 ];
+
+// A few main areas in the sidebar; everything else is a tab inside its area.
+const navGroups: { id: string; title: string; icon: string; ids: Section[] }[] = [
+  { id: "navHome", title: "Startseite", icon: "⌂", ids: ["driverFlow", "overview"] },
+  { id: "navPlan", title: "Planung & Touren", icon: "▦", ids: ["planning", "operations", "messages", "tracking"] },
+  { id: "navPeople", title: "Fahrer & Personal", icon: "◉", ids: ["staff", "absences", "personnel", "tachograph"] },
+  { id: "navFleet", title: "Fuhrpark", icon: "▣", ids: ["vehicles", "checklists"] },
+  { id: "navMoney", title: "Finanzen", icon: "€", ids: ["expenses", "documents", "reports"] },
+  { id: "navTasks", title: "Aufgaben & Tickets", icon: "◆", ids: ["tasks", "concerns", "notifications"] },
+  { id: "navAdmin", title: "Verwaltung", icon: "⚙", ids: ["users", "security"] },
+];
+
+// Everyday words (DE/RU/UK/PL) that should find a function in the global search.
+const sectionKeywords: Partial<Record<Section, string>> = {
+  overview: "start startseite übersicht dashboard главная",
+  driverFlow: "arbeitstag mein tag heute мой день",
+  planning: "planung wochenplan kw woche dienstplan план неделя",
+  operations: "touren tour zustellung lieferung cmr рейс рейсы доставка",
+  messages: "chat chats nachricht nachrichten schreiben сообщения чат написать",
+  tracking: "karte map gps standort fleetboard ortung карта",
+  staff: "fahrer mitarbeiter personal team водители сотрудники",
+  absences: "urlaub krank krankheit abwesenheit urlop отпуск больничный відпустка",
+  personnel: "personalakte dokumente vertrag führerschein документы",
+  tachograph: "tachograph fahrzeiten lenkzeit ruhezeit тахограф",
+  vehicles: "fahrzeug fahrzeuge lkw fuhrpark tüv werkstatt reparatur unfall foto машины грузовик ремонт",
+  checklists: "check fahrzeug-check kontrolle abfahrtskontrolle проверка",
+  expenses: "beleg belege auslagen tanken diesel quittung erstattung чеки расходы топливо",
+  documents: "lohn gehalt abrechnung lohnabrechnung datev wynagrodzenie zarplata зарплата payroll",
+  reports: "berichte report auswertung pdf отчёты",
+  tasks: "aufgaben todo offen задачи",
+  concerns: "anliegen ticket problem bestellung обращения заявка",
+  notifications: "meldungen benachrichtigungen уведомления",
+  users: "benutzer login zugang passwort пользователи",
+  security: "sicherheit audit protokoll безопасность",
+};
+
+// Chat housekeeping must not show the loading screen or a toast.
+const quietActions = new Set(["markTripMessagesRead", "markDirectMessagesRead", "deleteTripMessage", "deleteDirectMessage"]);
 
 const labels: Record<string, string> = {
   management: "Management",
@@ -135,20 +146,20 @@ const sectionDescriptions: Partial<Record<Section, string>> = {
   overview: "Heute im Blick: Fahrer, Fahrzeuge, Touren und offene Aufgaben",
   tasks: "Alle prüfungs- und entscheidungsrelevanten Vorgänge in einer Warteschlange",
   driverFlow: "Ein klarer Ablauf von der Tour bis zum vollständigen Nachweis",
+  absences: "Urlaub und Krankmeldungen – die Planung berücksichtigt sie automatisch",
   staff: "Personal, Zugänge und Beschäftigungsstatus zentral verwalten",
   vehicles: "Fahrzeugdaten, Dokumente, Prüfungen und Werkstattstatus",
   tracking: "Aktuelle Fahrzeugpositionen und operative Warnungen",
   planning: "Fahrer und Fahrzeuge konfliktfrei für die Woche einteilen",
   operations: "Tourstatus, Zustellung und Nachweise laufend aktualisieren",
-  messages: "Alle geschützten Tour-Chats zwischen Fahrern und Disposition",
+  messages: "Direkte Chats mit allen Fahrern, Disposition und Management sowie Tour-Chats",
   tachograph: "Fahrzeiten, Ruhezeiten und Verstöße kontrollieren",
   expenses: "Belege prüfen, Erstattungen freigeben und Kosten auswerten",
   checklists: "Fahrzeugkontrollen vor und nach jeder Tour dokumentieren",
   concerns: "Anliegen der Fahrer annehmen, bearbeiten und abschließen",
   documents: "Monatsabrechnungen berechnen, prüfen und sicher abschließen",
   personnel: "Verträge, Führerscheine und persönliche Dokumente schützen",
-  notifications: "Wichtige Meldungen aus allen Arbeitsbereichen bündeln",
-  analytics: "Auslastung, Qualität und Kosten der Logistik überblicken",
+  notifications: "Offene Aufgaben und alle Meldungen aus dem Betrieb an einem Ort",
 };
 
 export function Portal({ currentUser }: { currentUser: PortalUser }) {
@@ -178,10 +189,14 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     departureConfirmations: [],
     tripDocuments: [],
     tripMessages: [],
+    chatContacts: [],
+    directMessages: [],
     expenses: [],
     notifications: [],
     checklists: [],
     payrollPeriods: [],
+    workDays: [],
+    absences: [],
     year: 2026,
     kw: 32,
   });
@@ -194,9 +209,12 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const [editing, setEditing] = useState<Row | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
   const [notice, setNotice] = useState("");
+  const [chatTripId, setChatTripId] = useState<number | null>(null);
+  const [chatContactKey, setChatContactKey] = useState<string | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchSource, setSearchSource] = useState<"top" | "hero">("top");
   const globalSearchRef = useRef<HTMLInputElement | null>(null);
   const [locale, setLocale] = useState<DriverLocale>("de");
   const [pushState, setPushState] = useState<"default" | "granted" | "denied" | "unsupported">("default");
@@ -210,6 +228,28 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const [online, setOnline] = useState(true);
   const [renderedAt] = useState(() => new Date().getTime());
   const isDriver = currentUser.role === "driver";
+  const [lastSectionByGroup, setLastSectionByGroup] = useState<Record<string, Section>>({});
+  const sectionRestored = useRef(false);
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  // Slide the tab highlight to the active tab.
+  useLayoutEffect(() => {
+    const tabs = tabsRef.current;
+    const active = tabs?.querySelector<HTMLElement>("button.active");
+    if (!tabs || !active) return;
+    tabs.style.setProperty("--tab-x", `${active.offsetLeft}px`);
+    tabs.style.setProperty("--tab-w", `${active.offsetWidth}px`);
+    tabs.classList.add("section-tabs-ready");
+  });
+  useEffect(() => {
+    // Only save once the remembered section was restored, so the default "overview" never overwrites it.
+    if (!sectionRestored.current) return;
+    try { sessionStorage.setItem("logipay_section", section); } catch { /* storage unavailable */ }
+  }, [section]);
+  useEffect(() => {
+    const group = navGroups.find((item) => item.ids.includes(section));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (group) setLastSectionByGroup((current) => current[group.id] === section ? current : { ...current, [group.id]: section });
+  }, [section]);
   const t = useCallback((key: string, fallback?: string) => driverText(locale, key, fallback), [locale]);
   const load = useCallback(
     async (background = false) => {
@@ -231,7 +271,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
         void savePortalSnapshot(`portal-${currentUser.id}-${year}-${kw}`, parsed);
       } catch {
         const cached = await loadPortalSnapshot<Data>(`portal-${currentUser.id}-${year}-${kw}`);
-        if (cached) { setData(cached); setNotice(isDriver ? "Офлайн: показаны последние сохранённые данные." : "Offline: letzter gespeicherter Datenstand wird angezeigt."); }
+        if (cached) { setData({ ...cached, chatContacts: cached.chatContacts || [], directMessages: cached.directMessages || [] }); setNotice(isDriver ? "Офлайн: показаны последние сохранённые данные." : "Offline: letzter gespeicherter Datenstand wird angezeigt."); }
         else setNotice(isDriver ? t("loadError") : "Daten konnten nicht geladen werden. Bitte Seite neu laden.");
       } finally {
         if (!background) setLoading(false);
@@ -239,6 +279,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     },
     [year, kw, isDriver, t, currentUser.id],
   );
+  const reloadQuietly = useCallback(() => load(true), [load]);
   useEffect(() => {
     const initial = window.setTimeout(() => load(), 0);
     const refresh = window.setInterval(() => load(true), 15000);
@@ -250,10 +291,14 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     const supported = "serviceWorker" in navigator && "Notification" in window;
     const syncPreferences = window.setTimeout(() => {
       if (isDriver && savedLocale && driverLanguages.some((item) => item.code === savedLocale)) setLocale(savedLocale);
-      if (requestedSection && nav.some((item) => item.id === requestedSection && item.roles.includes(currentUser.role))) setSection(requestedSection);
-      if (isDriver) setPushState(supported ? Notification.permission : "unsupported");
+      let savedSection: Section | null = null;
+      try { savedSection = sessionStorage.getItem("logipay_section") as Section | null; } catch { /* storage unavailable */ }
+      const startSection = requestedSection || savedSection;
+      if (startSection && nav.some((item) => item.id === startSection && item.roles.includes(currentUser.role))) setSection(startSection);
+      sectionRestored.current = true;
+      setPushState(supported ? Notification.permission : "unsupported");
     }, 0);
-    if (isDriver && supported) void navigator.serviceWorker.register("/sw.js");
+    if (supported) void navigator.serviceWorker.register("/sw.js");
     return () => window.clearTimeout(syncPreferences);
   }, [currentUser.role, isDriver]);
   useEffect(() => {
@@ -278,6 +323,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     const openSearch = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
+        setSearchSource("top");
         globalSearchRef.current?.focus();
         setSearchOpen(true);
       }
@@ -339,7 +385,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     localStorage.setItem("logipay_driver_locale", nextLocale);
     document.documentElement.setAttribute("lang", nextLocale === "uk" ? "uk" : nextLocale);
   }
-  async function enablePush() {
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") void enablePush(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  async function enablePush(silent = false) {
     if (!("Notification" in window) || !("serviceWorker" in navigator)) {
       setPushState("unsupported");
       return;
@@ -348,8 +398,19 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
       const permission = await Notification.requestPermission();
       setPushState(permission);
       if (permission === "granted") {
-        await navigator.serviceWorker.register("/sw.js");
-        setNotice(t("pushReady"));
+        const registration = await navigator.serviceWorker.register("/sw.js");
+        await navigator.serviceWorker.ready;
+        try {
+          const { publicKey } = await (await fetch("/api/push")).json() as { publicKey?: string };
+          if (publicKey && "PushManager" in window) {
+            const padding = "=".repeat((4 - (publicKey.length % 4)) % 4);
+            const raw = atob((publicKey + padding).replace(/-/g, "+").replace(/_/g, "/"));
+            const key = Uint8Array.from(raw, (char) => char.charCodeAt(0));
+            const subscription = (await registration.pushManager.getSubscription()) || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+            await fetch("/api/push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subscription: subscription.toJSON() }) });
+          }
+        } catch { /* fallback: local notifications while the portal is open */ }
+        if (!silent) setNotice(isDriver ? t("pushReady") : "Push-Benachrichtigungen aktiviert");
       }
     } catch {
       setNotice(t("pushPermissionError"));
@@ -371,10 +432,16 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
       setNotice(e.error || "Aktion nicht erlaubt");
       return;
     }
+    const result = await r.json().catch(() => ({ ok: true })) as { message?: string };
+    if (quietActions.has(String(payload.action || ""))) {
+      await load(true);
+      return;
+    }
     setModal(null);
     setEditing(null);
-    setNotice(isDriver ? t("saved") : "Änderung gespeichert");
-    await load();
+    setNotice(result.message || (isDriver ? t("saved") : "Änderung gespeichert"));
+    // Refresh in the background so open forms, the chosen month and the selected person stay as they are.
+    await load(true);
   }
   function openModal(
     kind: "staff" | "vehicle" | "planning" | "concern",
@@ -442,7 +509,21 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
   const delayedTrips = data.tripOperations.filter((item) => item.status === "Problem" || Boolean(item.delay_reason) || (item.eta && new Date(String(item.eta)).getTime() < renderedAt && item.status !== "Zugestellt"));
   const pendingExpenses = data.expenses.filter((item) => ["Eingereicht", "In Prüfung"].includes(String(item.status)));
   const unreadNotificationCount = data.notifications.filter((item) => !item.read_at).length;
-  const unreadChatCount = data.tripMessages.filter((item) => !Number(item.read_by_me) && Number(item.sender_user_id) !== currentUser.id).length;
+  const unreadChatCount = [...data.tripMessages, ...data.directMessages].filter((item) => !Number(item.read_by_me) && Number(item.sender_user_id) !== currentUser.id).length;
+  const assistantContext = useMemo(() => {
+    const pick = (rows: Row[], keys: string[], limit = 60) => rows.slice(0, limit).map((row) => Object.fromEntries(keys.map((key) => [key, row[key]])));
+    return {
+      today: new Date().toISOString().slice(0, 10), year: data.year, kw: data.kw,
+      staff: pick(data.staff, ["full_name", "system_type", "location", "company", "status"]),
+      vehicles: pick(data.vehicles, ["license_plate", "status", "inspection_due", "location", "company"]),
+      planning: pick(data.planning, ["driver_name", "license_plate", "block_id", "work_days", "start_time", "status", "comments"]),
+      trips: pick(data.tripOperations, ["driver_name", "license_plate", "status", "eta", "delay_reason", "pickup_address", "delivery_address"]),
+      concerns: pick(data.concerns, ["item_name", "completion_status", "period", "notes"]),
+      expenses: pick(data.expenses, ["full_name", "category", "merchant", "gross_amount", "status", "expense_date"]),
+      payroll: pick(data.payroll, ["full_name", "period", "base_salary", "tour_count", "net_amount", "payment_status"]),
+      tachographViolations: pick(data.tachograph, ["driver_name", "license_plate", "violation", "status"], 30),
+    };
+  }, [data]);
   const unifiedTasks: PortalTask[] = [
     ...(["management", "dispatcher"].includes(currentUser.role) && delayedTrips.length ? [{ id: "delays", title: `${delayedTrips.length} verspätete oder problematische Touren`, detail: "ETA prüfen, Fahrer kontaktieren oder Ersatzfahrzeug einplanen", priority: "urgent" as const, section: "operations" as const, owner: "Disposition" }] : []),
     ...(["management", "dispatcher"].includes(currentUser.role) && unreadChatCount ? [{ id: "messages", title: `${unreadChatCount} Nachrichten beantworten`, detail: "Ungelesene Tour-Chats von Fahrern", priority: "urgent" as const, section: "messages" as const, owner: "Disposition" }] : []),
@@ -458,27 +539,73 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     ...(openConcernCount && currentUser.role !== "accountant" ? [{ id: "concerns", title: `${openConcernCount} Fahreranliegen bearbeiten`, detail: "Neue Anliegen, Bestellungen und Rückfragen", priority: "normal" as const, section: "concerns" as const, owner: "Disposition" }] : []),
   ];
   const globalResults = useMemo<SearchResult[]>(() => {
-    const query = globalSearch.trim().toLowerCase();
-    if (query.length < 2) return [];
-    const matches = (...values: unknown[]) => values.some((value) => String(value || "").toLowerCase().includes(query));
+    const normalize = (value: unknown) => String(value ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\s-]+/g, " ");
+    const words = normalize(globalSearch).trim().split(" ").filter(Boolean);
+    if (!words.length || words.join("").length < 2) return [];
+    const compact = (value: string) => value.replace(/ /g, "");
+    // Every typed word must appear somewhere; plates match with or without spaces/dashes.
+    const matches = (...values: unknown[]) => {
+      const haystack = normalize(values.filter((value) => value !== null && value !== undefined).join(" "));
+      return words.every((word) => haystack.includes(word) || compact(haystack).includes(word));
+    };
     const results: SearchResult[] = [];
+    nav.filter((item) => item.roles.includes(currentUser.role)).forEach((item) => {
+      const group = navGroups.find((entry) => entry.ids.includes(item.id));
+      const label = isDriver ? driverText(locale, item.id, item.label) : item.label;
+      if (matches(label, item.label, group?.title, sectionKeywords[item.id], sectionDescriptions[item.id]))
+        results.push({ id: `section-${item.id}`, kind: "Funktion", title: label, meta: group ? `${group.title} → ${label}` : label, section: item.id });
+    });
     data.staff.filter((row) => matches(row.full_name, row.company, row.location, row.login_email)).forEach((row) => results.push({ id: `staff-${row.id}`, kind: "Fahrer", title: String(row.full_name), meta: `${row.company || "Ohne Firma"} · ${row.location || "Kein Standort"}`, section: "staff", row }));
-    data.vehicles.filter((row) => matches(row.license_plate, row.company, row.location, row.status)).forEach((row) => results.push({ id: `vehicle-${row.id}`, kind: "Fahrzeug", title: String(row.license_plate), meta: `${row.company || "Ohne Firma"} · ${row.status || "—"}`, section: "vehicles", row }));
+    data.chatContacts.filter((row) => matches(row.full_name, row.license_plate, labels[String(row.role)], "chat nachricht schreiben")).forEach((row) => results.push({ id: `contact-${row.user_id || `s${row.staff_id}`}`, kind: "Chat", title: `Chat mit ${row.full_name}`, meta: row.role === "driver" ? `🚚 ${row.license_plate || "Ohne Kennzeichen"}` : labels[String(row.role)] || "", section: "messages", contactKey: row.user_id ? `user-${row.user_id}` : `staff-${row.staff_id}` }));
+    data.vehicles.filter((row) => matches(row.license_plate, row.company, row.location, row.status, row.notes)).forEach((row) => results.push({ id: `vehicle-${row.id}`, kind: "Fahrzeug", title: String(row.license_plate), meta: `${row.company || "Ohne Firma"} · ${row.status || "—"}`, section: "vehicles", row, plate: String(row.license_plate) }));
     data.planning.filter((row) => matches(row.driver_name, row.license_plate, row.block_id, row.company, row.location, row.comments)).forEach((row) => results.push({ id: `planning-${row.id}`, kind: "Planung", title: `${row.driver_name || "Ohne Fahrer"} · ${row.license_plate || "Ohne Fahrzeug"}`, meta: `${row.company || "—"} · Block ${row.block_id || "—"}`, section: "planning", row }));
     data.tripOperations.filter((row) => matches(row.driver_name, row.license_plate, row.block_id, row.pickup_address, row.delivery_address, row.delay_reason)).forEach((row) => results.push({ id: `trip-${row.id}`, kind: "Tour", title: `${row.license_plate || "Tour"} · ${row.driver_name || "Ohne Fahrer"}`, meta: `${row.status || "—"} · ${row.block_id || "Kein Block"}`, section: "operations", row }));
+    data.concerns.filter((row) => matches(row.item_name, row.truck_number, row.company, row.base, row.notes, row.completion_status)).forEach((row) => results.push({ id: `concern-${row.id}`, kind: "Anliegen", title: String(row.item_name || "Anliegen"), meta: `${row.truck_number || "—"} · ${row.completion_status || "Neu"}`, section: "concerns", row }));
     data.employeeDocuments.filter((row) => matches(row.full_name, row.category, row.file_name, row.document_number)).forEach((row) => results.push({ id: `employee-document-${row.id}`, kind: "Dokument", title: String(row.category || row.file_name || "Dokument"), meta: `${row.full_name || "Mitarbeiter"} · ${row.expires_at || "unbefristet"}`, section: "personnel", row }));
-    data.files.filter((row) => matches(row.driver_name, row.license_plate, row.category, row.file_name, row.notes)).forEach((row) => results.push({ id: `vehicle-file-${row.id}`, kind: "Foto / Datei", title: String(row.file_name || row.category || "Fahrzeugdatei"), meta: `${row.driver_name || "Fahrer"} · ${row.license_plate || "—"}`, section: "vehicles", row }));
-    data.tripMessages.filter((row) => matches(row.sender_name, row.body, row.file_name, row.license_plate, row.block_id)).forEach((row) => results.push({ id: `message-${row.id}`, kind: "Nachricht", title: String(row.sender_name || "Tour-Chat"), meta: String(row.body || row.file_name || "Anhang").slice(0, 90), section: "messages", row }));
-    data.expenses.filter((row) => matches(row.full_name, row.license_plate, row.block_id, row.merchant, row.receipt_number, row.cost_center)).forEach((row) => results.push({ id: `expense-${row.id}`, kind: "Ausgabe", title: `${row.merchant || row.category || "Ausgabe"} · ${Number(row.gross_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}`, meta: `${row.full_name || "Mitarbeiter"} · ${row.status || "—"}`, section: "expenses", row }));
-    return results.slice(0, 18);
-  }, [data, globalSearch]);
+    data.files.filter((row) => matches(row.driver_name, row.license_plate, row.category, row.file_name, row.notes)).forEach((row) => results.push({ id: `vehicle-file-${row.id}`, kind: "Foto / Datei", title: String(row.file_name || row.category || "Fahrzeugdatei"), meta: `${row.driver_name || "Fahrer"} · ${row.license_plate || "—"}`, section: "vehicles", row, plate: row.license_plate ? String(row.license_plate) : undefined }));
+    data.directMessages.filter((row) => matches(row.sender_name, row.body, row.file_name)).forEach((row) => results.push({ id: `direct-${row.id}`, kind: "Nachricht", title: String(row.sender_name || "Chat"), meta: String(row.body || row.file_name || "Anhang").slice(0, 90), section: "messages", contactKey: row.partner_user_id ? `user-${row.partner_user_id}` : `staff-${row.recipient_staff_id}` }));
+    data.tripMessages.filter((row) => matches(row.sender_name, row.body, row.file_name, row.license_plate, row.block_id)).forEach((row) => results.push({ id: `message-${row.id}`, kind: "Nachricht", title: String(row.sender_name || "Tour-Chat"), meta: String(row.body || row.file_name || "Anhang").slice(0, 90), section: "messages", row, tripId: Number(row.trip_operation_id) }));
+    data.expenses.filter((row) => matches(row.full_name, row.license_plate, row.block_id, row.merchant, row.receipt_number, row.cost_center, row.category)).forEach((row) => results.push({ id: `expense-${row.id}`, kind: "Ausgabe", title: `${row.merchant || row.category || "Ausgabe"} · ${Number(row.gross_amount || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}`, meta: `${row.full_name || "Mitarbeiter"} · ${row.status || "—"}`, section: "expenses", row }));
+    data.notifications.filter((row) => matches(row.title, row.message)).slice(0, 5).forEach((row) => results.push({ id: `notification-${row.id}`, kind: "Meldung", title: String(row.title || "Meldung"), meta: String(row.message || "").slice(0, 90), section: "notifications", row }));
+    return results.slice(0, 30);
+  }, [data, globalSearch, currentUser.role, isDriver, locale]);
   function openGlobalResult(result: SearchResult) {
     if (result.kind === "Fahrer" && result.row) setSelectedStaff(result.row);
+    else if (result.plate) openVehicleProfile(result.plate);
+    else if (result.contactKey || result.tripId) {
+      setChatTripId(result.tripId ?? null);
+      setChatContactKey(result.contactKey ?? null);
+      setSection("messages");
+    }
     else setSection(result.section);
     setSearchOpen(false);
     setGlobalSearch("");
   }
+  const renderSearchResults = () => (<div className="global-search-results" onMouseDown={(event) => event.preventDefault()}>
+              <header><span>Globale Suche</span><button type="button" onClick={() => setSearchOpen(false)}>Schließen</button></header>
+              {globalSearch.trim().length < 2 ? <div className="global-search-hint"><b>Alles an einem Ort finden</b><span>Name, Kennzeichen, Tour, Nachricht oder eine Funktion wie „Lohn“, „Urlaub“, „Chat“ eingeben.</span></div> : globalResults.length ? globalResults.map((result) => <button type="button" key={result.id} onClick={() => openGlobalResult(result)}><span>{result.kind.slice(0, 1)}</span><div><b>{result.title}</b><small>{result.meta}</small></div><em>{result.kind}</em></button>) : <div className="global-search-hint"><b>Keine Ergebnisse</b><span>Prüfen Sie die Schreibweise oder verwenden Sie einen kürzeren Suchbegriff.</span></div>}
+            </div>);
   const title = isDriver ? t(section, nav.find((n) => n.id === section)?.label) : nav.find((n) => n.id === section)?.label;
+  const sectionLabel = (item: (typeof nav)[number]) => isDriver ? t(item.id, item.label) : item.label;
+  const visibleGroups = navGroups.map((group) => ({
+    ...group,
+    items: group.ids
+      .map((id) => nav.find((item) => item.id === id))
+      .filter((item): item is (typeof nav)[number] => Boolean(item && item.roles.includes(currentUser.role))),
+  })).filter((group) => group.items.length);
+  const activeGroup = visibleGroups.find((group) => group.items.some((item) => item.id === section));
+  const groupTitle = (group: (typeof navGroups)[number]) => isDriver ? t(group.id, group.title) : group.title;
+  const openGroup = (group: (typeof visibleGroups)[number]) => {
+    const remembered = lastSectionByGroup[group.id];
+    setSection(remembered && group.items.some((item) => item.id === remembered) ? remembered : group.items[0].id);
+  };
+  const sectionCounter = (id: Section) => {
+    if (id === "messages") return unreadChatCount;
+    if (id === "notifications") return unreadNotificationCount;
+    if (id === "tracking") return trackingAlertCount;
+    if (id === "concerns" && ["management", "dispatcher"].includes(currentUser.role)) return openConcernCount;
+    return 0;
+  };
   return (
     <main className={`app-shell role-${currentUser.role} theme-${theme} density-${density} ${isDriver ? "driver-mobile-shell" : ""}`}>
       {mobileMenu ? <button className="backdrop" aria-label={isDriver ? t("menuClose") : "Menü schließen"} onClick={() => setMobileMenu(false)} /> : null}
@@ -502,63 +629,18 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           </div>
         </div>
         <nav>
-          <p>{isDriver ? t("workArea") : "ARBEITSBEREICH"}</p>
-          {nav
-            .filter((n) => n.roles.includes(currentUser.role))
-            .sort((left, right) => Number(pinnedSections.includes(right.id)) - Number(pinnedSections.includes(left.id)))
-            .map((n) => (
-              <button
-                key={n.id}
-                className={section === n.id ? "nav-active" : ""}
-                onClick={() => { setSection(n.id); setMobileMenu(false); }}
-              >
-                <span className="nav-icon">
-                  {
-                    (
-                      {
-                        overview: "⌂",
-                        tasks: "◆",
-                        driverFlow: "▶",
-                        staff: "◉",
-                        vehicles: "▣",
-                        tracking: "⌖",
-                        planning: "▦",
-                        operations: "➜",
-                        messages: "✉",
-                        tachograph: "◴",
-                        expenses: "◈",
-                        checklists: "✓",
-                        concerns: "!",
-                        documents: "€",
-                        personnel: "▤",
-                        notifications: "●",
-                        analytics: "▥",
-                        users: "◎",
-                        import: "⇧",
-                        security: "⌾",
-                        reports: "▥",
-                      } as Record<string, string>
-                    )[n.id]
-                  }
-                </span>
-                {isDriver ? t(n.id, n.label) : n.label}
-                {pinnedSections.includes(n.id) ? <span className="nav-pin">★</span> : null}
-                {n.id === "concerns" &&
-                ["management", "dispatcher"].includes(currentUser.role) &&
-                openConcernCount ? (
-                  <span className="nav-counter">{openConcernCount}</span>
-                ) : null}
-                {n.id === "tracking" && trackingAlertCount ? (
-                  <span className="nav-counter">{trackingAlertCount}</span>
-                ) : null}
-                {n.id === "notifications" && unreadNotificationCount ? (
-                  <span className="nav-counter">{unreadNotificationCount}</span>
-                ) : null}
-                {n.id === "messages" && unreadChatCount ? (
-                  <span className="nav-counter nav-counter-chat">{unreadChatCount}</span>
-                ) : null}
-              </button>
-            ))}
+          {visibleGroups.map((group) => {
+            const counter = group.items.reduce((sum, item) => sum + sectionCounter(item.id), 0);
+            return <button
+              key={group.id}
+              className={activeGroup?.id === group.id ? "nav-active" : ""}
+              onClick={() => { openGroup(group); setMobileMenu(false); }}
+            >
+              <span className="nav-icon">{group.icon}</span>
+              {groupTitle(group)}
+              {counter ? <span className={`nav-counter${group.id === "navPlan" && unreadChatCount ? " nav-counter-chat" : ""}`}>{Math.min(99, counter)}</span> : null}
+            </button>;
+          })}
         </nav>
         <div className="sidebar-bottom">
           <div className="profile">
@@ -582,9 +664,16 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
       <section className="workspace">
         <header className="topbar">
           <button className="menu-toggle" aria-label={isDriver ? t("menuOpen") : "Menü öffnen"} onClick={() => setMobileMenu(true)}>☰</button>
-          <div className="period-control">
-            <span>{isDriver ? t("planningPeriod") : "Planungszeitraum"}</span>
-            <select value={year} onChange={(e) => setYear(+e.target.value)}>
+          <div className="period-control" role="group" aria-label={isDriver ? t("planningPeriod") : "Planungszeitraum"}>
+            <button type="button" className="week-step" aria-label="Vorige Woche" title="Vorige Woche" onClick={() => { if (kw > 1) setKw(kw - 1); else { setKw(53); setYear(year - 1); } }}>‹</button>
+            <select value={kw} onChange={(e) => setKw(+e.target.value)} aria-label="Kalenderwoche">
+              {Array.from({ length: 53 }, (_, i) => i + 1).map((k) => (
+                <option key={k} value={k}>
+                  KW {k}
+                </option>
+              ))}
+            </select>
+            <select value={year} onChange={(e) => setYear(+e.target.value)} aria-label="Jahr">
               {Array.from(
                 { length: 5 },
                 (_, i) => new Date().getFullYear() - 1 + i,
@@ -592,67 +681,57 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                 <option key={y}>{y}</option>
               ))}
             </select>
-            <select value={kw} onChange={(e) => setKw(+e.target.value)}>
-              {Array.from({ length: 53 }, (_, i) => i + 1).map((k) => (
-                <option key={k} value={k}>
-                  KW {k}
-                </option>
-              ))}
-            </select>
-            <button
-              className="next-week"
-              onClick={() => {
-                if (kw < 53) setKw(kw + 1);
-                else {
-                  setKw(1);
-                  setYear(year + 1);
-                }
-              }}
-            >
-              {isDriver ? t("nextWeek") : "Nächste Woche"} →
-            </button>
+            <button type="button" className="week-step next-week" aria-label={isDriver ? t("nextWeek") : "Nächste Woche"} title={isDriver ? t("nextWeek") : "Nächste Woche"} onClick={() => { if (kw < 53) setKw(kw + 1); else { setKw(1); setYear(year + 1); } }}>›</button>
           </div>
-          <button className="mobile-global-search" type="button" aria-label="Globale Suche öffnen" onClick={() => { setSearchOpen(true); window.setTimeout(() => globalSearchRef.current?.focus(), 20); }}>⌕</button>
+          <button className="mobile-global-search" type="button" aria-label="Globale Suche öffnen" onClick={() => { setSearchSource("top"); setSearchOpen(true); window.setTimeout(() => globalSearchRef.current?.focus(), 20); }}>⌕</button>
           <div className={`global-search ${searchOpen ? "global-search-open" : ""}`}>
             <label>
               <span>⌕</span>
-              <input ref={globalSearchRef} value={globalSearch} onChange={(event) => { setGlobalSearch(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onBlur={() => window.setTimeout(() => setSearchOpen(false), 150)} placeholder="Fahrer, Kennzeichen, Block, Dokument …" aria-label="Portal durchsuchen" />
+              <input ref={globalSearchRef} value={globalSearch} onChange={(event) => { setGlobalSearch(event.target.value); setSearchSource("top"); setSearchOpen(true); }} onFocus={() => { setSearchSource("top"); setSearchOpen(true); }} onBlur={() => window.setTimeout(() => setSearchOpen(false), 150)} placeholder="Suchen: Fahrer, LKW, Funktion …" aria-label="Portal durchsuchen" />
               <kbd>⌘ K</kbd>
             </label>
-            {searchOpen ? <div className="global-search-results" onMouseDown={(event) => event.preventDefault()}>
-              <header><span>Globale Suche</span><button type="button" onClick={() => setSearchOpen(false)}>Schließen</button></header>
-              {globalSearch.trim().length < 2 ? <div className="global-search-hint"><b>Alles an einem Ort finden</b><span>Name, Kennzeichen, Block ID, Tour, Dokument oder Nachricht eingeben.</span></div> : globalResults.length ? globalResults.map((result) => <button type="button" key={result.id} onClick={() => openGlobalResult(result)}><span>{result.kind.slice(0, 1)}</span><div><b>{result.title}</b><small>{result.meta}</small></div><em>{result.kind}</em></button>) : <div className="global-search-hint"><b>Keine Ergebnisse</b><span>Prüfen Sie die Schreibweise oder verwenden Sie einen kürzeren Suchbegriff.</span></div>}
-            </div> : null}
+            {searchOpen && searchSource === "top" ? renderSearchResults() : null}
           </div>
           {isDriver ? <div className="driver-language-switch" role="group" aria-label={t("language")}>
             {driverLanguages.map((item) => <button key={item.code} type="button" className={locale === item.code ? "language-active" : ""} title={item.label} aria-label={item.label} onClick={() => changeLocale(item.code)}>{item.short}</button>)}
           </div> : null}
+          {isDriver ? <select className="driver-language-select" value={locale} onChange={(event) => changeLocale(event.target.value as DriverLocale)} aria-label={t("language")}>
+            {driverLanguages.map((item) => <option key={item.code} value={item.code}>{item.short}</option>)}
+          </select> : null}
           <div className="top-actions">
-            <button className="interface-settings-button" type="button" onClick={() => setSettingsOpen(true)} aria-label="Oberfläche anpassen">⚙ <b>Ansicht</b></button>
-            {["management", "dispatcher", "driver"].includes(currentUser.role) ? (
-              <button className="top-chat-button" type="button" onClick={() => setSection("messages")} aria-label={isDriver ? t("messages") : "Nachrichten"}>
-                <span>✉</span>
-                <b>{isDriver ? t("messages") : "Nachrichten"}</b>
-                {unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}
-              </button>
+            <span className={`status-dot ${online ? "" : "status-dot-offline"}`} title={online ? (isDriver ? t("connected") : "Datenbank verbunden") : (isDriver ? t("offline") : "Offline-Modus")} aria-label={online ? (isDriver ? t("connected") : "Datenbank verbunden") : (isDriver ? t("offline") : "Offline-Modus")}>
+              <i />{offlineUploadCount ? <b>{offlineUploadCount}</b> : null}
+            </span>
+            {pushState !== "granted" && pushState !== "unsupported" ? (
+              <button className="tb-icon" type="button" onClick={() => void enablePush()} title={pushState === "denied" ? t("notificationsDenied") : t("notificationsEnable")} aria-label={t("notificationsEnable")}>🔔</button>
             ) : null}
             {["management", "dispatcher"].includes(currentUser.role) ? (
-              <button className="pdf-button" onClick={downloadPlanningReport}>
-                ↓ Planning Report PDF
+              <button className="tb-icon tb-pdf" type="button" onClick={downloadPlanningReport} title="Planning Report als PDF herunterladen" aria-label="Planning Report PDF">PDF</button>
+            ) : null}
+            {["management", "dispatcher", "driver"].includes(currentUser.role) ? (
+              <button className="tb-icon tb-chat" type="button" onClick={() => setSection("messages")} title={isDriver ? t("messages") : "Nachrichten"} aria-label={isDriver ? t("messages") : "Nachrichten"}>
+                ✉{unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}
               </button>
             ) : null}
-            {isDriver ? <button className={`push-button push-${pushState}`} type="button" onClick={enablePush} disabled={pushState === "granted" || pushState === "unsupported"}>
-              {pushState === "granted" ? t("notificationsOn") : pushState === "denied" ? t("notificationsDenied") : pushState === "unsupported" ? t("notificationsUnsupported") : t("notificationsEnable")}
-            </button> : null}
-            <div className={`status-chip ${online ? "" : "status-offline"}`}>
-              <span /> {online ? (isDriver ? t("connected") : "Datenbank verbunden") : (isDriver ? t("offline") : "Offline-Modus")}{offlineUploadCount ? ` · ${offlineUploadCount} offen` : ""}
-            </div>
+            <button className="tb-icon" type="button" onClick={() => setSettingsOpen(true)} title="Oberfläche anpassen" aria-label="Oberfläche anpassen">⚙</button>
           </div>
         </header>
         <div className="content">
+          {activeGroup && activeGroup.items.length > 1 ? (
+            <div className="section-tabs" role="tablist" aria-label={groupTitle(activeGroup)} ref={tabsRef}>
+              <span className="section-tabs-indicator" aria-hidden="true" />
+              {activeGroup.items.map((item) => {
+                const counter = sectionCounter(item.id);
+                return <button key={item.id} type="button" role="tab" aria-selected={section === item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}>
+                  {sectionLabel(item)}{counter ? <i>{Math.min(99, counter)}</i> : null}
+                </button>;
+              })}
+            </div>
+          ) : null}
+          <div className="section-view" key={section}>
           <div className="page-heading">
             <div>
-              <p>{isDriver ? t("logistics") : "LOGISTIKVERWALTUNG"}</p>
+              <p>{activeGroup ? groupTitle(activeGroup) : isDriver ? t("logistics") : "LOGISTIKVERWALTUNG"}</p>
               <h1>{title}</h1>
               <span>{isDriver ? t("centralData") : sectionDescriptions[section] || "Zentrale Daten statt einzelner Excel-Tabellen"}</span>
             </div>
@@ -688,7 +767,11 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
             ) : null}
           </div>
           {loading ? (
-            <div className="empty-state">{isDriver ? t("loading") : "Daten werden geladen…"}</div>
+            <div className="skeleton-stack" role="status" aria-label={isDriver ? t("loading") : "Daten werden geladen…"}>
+              <div className="skeleton skeleton-hero" />
+              <div className="skeleton-row"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
+              <div className="skeleton skeleton-panel" />
+            </div>
           ) : (
             <>
               {section === "overview" &&
@@ -701,144 +784,54 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     kw={kw}
                     locale={locale}
                     pushState={pushState}
-                    enablePush={enablePush}
+                    enablePush={() => enablePush()}
                     unreadCount={unreadNotificationCount}
                     openSection={setSection}
                   />
                 ) : (
                   <>
-                    <div className="overview-command-card">
+                    <div className="overview-command-card overview-simple">
                       <div>
-                        <small>OPERATIVE ZENTRALE</small>
+                        <small>{new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "2-digit", month: "long" }).format(new Date()).toUpperCase()} · KW {kw}</small>
                         <h2>Guten Tag, {currentUser.fullName.split(" ")[0]}</h2>
-                        <p>{unreadChatCount ? `${unreadChatCount} neue Chat-Nachrichten benötigen Aufmerksamkeit.` : "Alle Tour-Chats sind gelesen."}</p>
                       </div>
-                      <div className="overview-quick-actions">
-                        <button type="button" onClick={() => setSection("messages")}><span>✉</span><b>Nachrichten</b><small>{unreadChatCount ? `${unreadChatCount} neu` : "Alles gelesen"}</small></button>
-                        <button type="button" onClick={() => setSection("planning")}><span>▦</span><b>Wochenplanung</b><small>KW {kw}</small></button>
-                        <button type="button" onClick={() => setSection("concerns")}><span>!</span><b>Fahreranliegen</b><small>{openConcernCount} offen</small></button>
-                        {currentUser.role === "management" ? <a href={`/api/reports/daily?date=${new Date().toISOString().slice(0, 10)}`}><span>▥</span><b>Tagesbericht</b><small>PDF für heute</small></a> : null}
+                      <div className="overview-search-box">
+                        <label className="overview-search"><span>⌕</span><input value={globalSearch} onChange={(event) => { setGlobalSearch(event.target.value); setSearchSource("hero"); setSearchOpen(true); }} onFocus={() => { setSearchSource("hero"); setSearchOpen(true); }} onBlur={() => window.setTimeout(() => setSearchOpen(false), 150)} placeholder="Fahrer, LKW, Tour, Nachricht oder Funktion suchen …" aria-label="Portal durchsuchen" /><kbd>⌘ K</kbd></label>
+                        {searchOpen && searchSource === "hero" ? renderSearchResults() : null}
                       </div>
-                    </div>
-                    <div className="smart-status-grid">
-                      <button type="button" onClick={() => setSection("planning")}><span className="smart-icon icon-route">➜</span><small>Heutige Touren</small><b>{todayPlanning.length}</b><em>{data.planning.length} in KW {kw}</em></button>
-                      <button type="button" className={delayedTrips.length ? "smart-alert" : ""} onClick={() => setSection("operations")}><span className="smart-icon icon-delay">◷</span><small>Verspätungen</small><b>{delayedTrips.length}</b><em>{delayedTrips.length ? "Sofort prüfen" : "Keine Probleme"}</em></button>
-                      <button type="button" className={unreadChatCount ? "smart-alert" : ""} onClick={() => setSection("messages")}><span className="smart-icon icon-chat">✉</span><small>Neue Nachrichten</small><b>{unreadChatCount}</b><em>{unreadChatCount ? "Antwort erforderlich" : "Alles gelesen"}</em></button>
-                      <button type="button" className={workshop.length ? "smart-warning" : ""} onClick={() => setSection("vehicles")}><span className="smart-icon icon-truck">▣</span><small>In der Werkstatt</small><b>{workshop.length}</b><em>{data.vehicles.length} Fahrzeuge gesamt</em></button>
-                      <button type="button" className={expiringDocuments30.length ? "smart-alert" : expiringDocuments.length ? "smart-warning" : ""} onClick={() => setSection("personnel")}><span className="smart-icon icon-doc">▤</span><small>Dokumente laufen ab</small><b>{expiringDocuments30.length || expiringDocuments.length}</b><em>{expiringDocuments30.length ? "Innerhalb 30 Tagen" : "Innerhalb 60 Tagen"}</em></button>
-                      <button type="button" className={expiringTuv30.length ? "smart-alert" : ""} onClick={() => setSection("vehicles")}><span className="smart-icon icon-truck">◎</span><small>TÜV in 30 Tagen</small><b>{expiringTuv30.length}</b><em>{expiringTuv30.length ? "Prüftermine prüfen" : "Keine fällig"}</em></button>
-                      <button type="button" className={tachographViolations.length ? "smart-alert" : ""} onClick={() => setSection("tachograph")}><span className="smart-icon icon-delay">◴</span><small>Tachograph</small><b>{tachographViolations.length}</b><em>{tachographViolations.length ? "Verstöße prüfen" : "Keine Warnungen"}</em></button>
-                      <button type="button" className={overdueDepartures.length ? "smart-alert" : pendingDepartures.length ? "smart-warning" : ""} onClick={() => setSection("planning")}><span className="smart-icon icon-route">✓</span><small>Abfahrt offen</small><b>{overdueDepartures.length || pendingDepartures.length}</b><em>{overdueDepartures.length ? "Ersatzfahrer suchen" : pendingDepartures.length ? "Bestätigung ausstehend" : "Alles bestätigt"}</em></button>
-                      <button type="button" className={pendingExpenses.length ? "smart-warning" : ""} onClick={() => setSection("expenses")}><span className="smart-icon icon-money">€</span><small>Ausgaben prüfen</small><b>{pendingExpenses.length}</b><em>{pendingExpenses.reduce((sum, item) => sum + Number(item.gross_amount || 0), 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" })}</em></button>
                     </div>
                     <div className="smart-dashboard-grid">
                       <section className="panel today-routes-panel">
                         <div className="panel-title"><div><h2>Heute im Einsatz</h2><p>{new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "2-digit", month: "long" }).format(new Date())} · KW {kw}</p></div><button type="button" onClick={() => setSection("planning")}>Alle öffnen →</button></div>
-                        <div className="today-route-list">{todayPlanning.length ? todayPlanning.slice(0, 6).map((item) => <button type="button" key={item.id} onClick={() => setSection("planning")}><span className="route-time">{item.start_time || "06:00"}</span><span className="route-driver"><b>{item.driver_name || "Kein Fahrer"}</b> {item.driver_name ? <DriverPlanningRating metrics={lookupDriverRating(driverRatingMap, item.driver_name)} /> : null}<small>{item.company || "—"} · {item.location || "—"}</small></span><span className="route-vehicle">{item.license_plate || "Ohne Fahrzeug"}<small>{item.block_id || "Kein Block"}</small></span><Badge value={String(item.status || "planned")} /></button>) : <div className="empty-state">Für heute sind noch keine Touren geplant.</div>}</div>
+                        <div className="today-route-list">{todayPlanning.length ? todayPlanning.slice(0, 6).map((item) => <button type="button" key={item.id} onClick={() => setSection("planning")}><span className="route-time">{item.start_time || "06:00"}</span><span className="route-driver"><b>{item.driver_name || "Kein Fahrer"}</b> {item.driver_name ? <DriverPlanningRating metrics={lookupDriverRating(driverRatingMap, item.driver_name)} /> : null}<small>{item.company || "—"} · {item.location || "—"}</small></span><span className="route-vehicle">{item.license_plate || "Ohne Fahrzeug"}<small>{item.block_id || "Kein Block"}</small></span><Badge value={String(item.status || "planned")} /></button>) : <EmptyState icon="▦" title="Heute ist nichts geplant" hint="Legen Sie in der KW-Planung einen Einsatz für heute an." actionLabel="Zur KW-Planung" onAction={() => setSection("planning")} />}</div>
                       </section>
                       <section className="panel attention-center-panel">
                         <div className="panel-title"><div><h2>Aufmerksamkeit erforderlich</h2><p>Priorisiert nach Dringlichkeit</p></div><button type="button" onClick={() => setSection("tasks")}>Alle {unifiedTasks.length} öffnen →</button></div>
                         <div className="attention-action-list">
-                          <button type="button" onClick={() => setSection("operations")}><i className="danger-dot" /><span><b>{delayedTrips.length} Touren mit Problem</b><small>Verspätung, Problemstatus oder überschrittene ETA</small></span><em>Öffnen</em></button>
-                          <button type="button" onClick={() => setSection("messages")}><i className="message-dot" /><span><b>{unreadChatCount} ungelesene Nachrichten</b><small>Direkte Tour-Chats von Fahrern</small></span><em>Antworten</em></button>
-                          <button type="button" onClick={() => setSection("personnel")}><i className="warning-dot" /><span><b>{expiringDocuments30.length || expiringDocuments.length} Dokumente prüfen</b><small>{expiringDocuments30.length ? "Ablauf innerhalb 30 Tagen" : "Führerschein, Fahrerkarte oder Aufenthaltstitel"}</small></span><em>Prüfen</em></button>
-                          <button type="button" onClick={() => setSection("vehicles")}><i className="warning-dot" /><span><b>{expiringTuv30.length} TÜV/HU/SP in 30 Tagen</b><small>Prüftermine und Werkstattplanung</small></span><em>Öffnen</em></button>
-                          <button type="button" onClick={() => setSection("tachograph")}><i className="danger-dot" /><span><b>{tachographViolations.length} Tachograph-Warnungen</b><small>Verstöße oder kritische Restlenkzeit</small></span><em>Prüfen</em></button>
-                          <button type="button" className={overdueDepartures.length ? "attention-danger" : ""} onClick={() => setSection("planning")}><i className="danger-dot" /><span><b>{overdueDepartures.length ? `${overdueDepartures.length} Abfahrten ohne Bestätigung` : `${pendingDepartures.length} Abfahrten warten auf Bestätigung`}</b><small>{overdueDepartures.length ? "12h-Frist überschritten — Ersatzfahrer suchen" : "Fahrer muss Abfahrt bestätigen"}</small></span><em>{overdueDepartures.length ? "Ersatz suchen" : "Planung"}</em></button>
-                          <button type="button" onClick={() => setSection("expenses")}><i className="money-dot" /><span><b>{pendingExpenses.length} Belege in Prüfung</b><small>Erstattungen und Firmenausgaben</small></span><em>Freigeben</em></button>
+                          {unifiedTasks.slice(0, 5).map((task) => (
+                            <button type="button" key={task.id} onClick={() => setSection(task.section)}><i className={task.priority === "urgent" ? "danger-dot" : "warning-dot"} /><span><b>{task.title}</b><small>{task.detail}</small></span><em>Öffnen</em></button>
+                          ))}
+                          {!unifiedTasks.length ? <EmptyState icon="✓" title="Alles erledigt" hint="Im Moment gibt es keine offenen Aufgaben." /> : null}
                         </div>
                       </section>
                     </div>
                   </>
                 ))}
-              {section === "tasks" && <TaskCenter tasks={unifiedTasks} open={setSection} />}
               {section === "driverFlow" && <DriverWorkflow planning={data.planning} operations={data.tripOperations} checklists={data.checklists} files={data.files} documents={data.tripDocuments} departureShifts={departureShifts} locale={locale} open={setSection} action={action} />}
               {section === "staff" && (
-                <div className="advanced-stack">
-                  {["management", "dispatcher"].includes(currentUser.role) ? <DriverControlCenter staff={data.staff} events={data.driverPerformance} openDriver={setSelectedStaff} action={action} /> : null}
-                  <Card title="Mitarbeiterstamm">
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>Systemart</th>
-                          {currentUser.role !== "dispatcher" ? <th>Vergütung</th> : null}
-                          <th>Standort</th>
-                          <th>Firma</th>
-                          <th>Status</th>
-                          <th />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.staff.map((s) => (
-                          <tr key={s.id}>
-                            <td>
-                              <button
-                                className="staff-link"
-                                onClick={() => setSelectedStaff(s)}
-                              >
-                                <strong>{s.full_name}</strong>
-                                <small>Dossier öffnen</small>
-                              </button>
-                            </td>
-                            <td>{s.system_type || "—"}</td>
-                            {currentUser.role !== "dispatcher" ? <td>{s.compensation || "—"}</td> : null}
-                            <td>{s.location || "—"}</td>
-                            <td>{s.company || "—"}</td>
-                            <td>
-                              <Badge value={String(s.status)} />
-                            </td>
-                            <td>
-                              {currentUser.role === "management" ? (
-                                <div className="row-buttons">
-                                  <button
-                                    className="edit-action"
-                                    onClick={() => openModal("staff", s)}
-                                  >
-                                    Bearbeiten
-                                  </button>
-                                  <button
-                                    className="row-action"
-                                    onClick={() =>
-                                      action({
-                                        action:
-                                          s.status === "active"
-                                            ? "archiveStaff"
-                                            : "restoreStaff",
-                                        id: s.id,
-                                      })
-                                    }
-                                  >
-                                    {s.status === "active"
-                                      ? "Ausscheiden"
-                                      : "Reaktivieren"}
-                                  </button>
-                                  {s.status === "archived" ? (
-                                    <button
-                                      className="delete-action"
-                                      onClick={() =>
-                                        confirm("Endgültig löschen?") &&
-                                        action({
-                                          action: "deleteStaff",
-                                          id: s.id,
-                                        })
-                                      }
-                                    >
-                                      Löschen
-                                    </button>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  </Card>
-                </div>
+                <StaffList
+                  rows={data.staff}
+                  events={data.driverPerformance}
+                  canRate={["management", "dispatcher"].includes(currentUser.role)}
+                  showPay={currentUser.role !== "dispatcher"}
+                  isManager={currentUser.role === "management"}
+                  open={setSelectedStaff}
+                  edit={(row) => openModal("staff", row)}
+                  add={() => openModal("staff")}
+                  action={action}
+                />
               )}
+              {section === "absences" && <AbsenceCalendar staff={data.staff} absences={data.absences} canEdit={["management", "dispatcher"].includes(currentUser.role)} action={action} />}
               {section === "vehicles" && (
                 <div className="advanced-stack">
                   <VehicleFiles vehicles={data.vehicles} files={data.files} planning={data.planning} maintenance={data.maintenance} tracking={data.tracking} comments={data.vehicleComments} fuelCodes={data.fuelCodes} fuelStops={data.fuelStops} role={currentUser.role} locale={locale} reload={load} action={action} />
@@ -877,7 +870,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                     </div>
                   ) : null}
                   {currentUser.role !== "driver" ? <DepartureConfirmPanel shifts={departureShifts} /> : null}
-                  {currentUser.role !== "driver" ? <PlanningAlerts rows={data.planning} staff={data.staff} vehicles={data.vehicles} employeeDocuments={data.employeeDocuments} tachograph={data.tachograph} departureShifts={departureShifts} /> : null}
+                  {currentUser.role !== "driver" ? <PlanningAlerts rows={data.planning} staff={data.staff} vehicles={data.vehicles} employeeDocuments={data.employeeDocuments} tachograph={data.tachograph} departureShifts={departureShifts} absences={data.absences} year={year} kw={kw} /> : null}
                   {currentUser.role !== "driver" ? (
                     <DispatchBoard
                       rows={data.planning}
@@ -885,6 +878,9 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                       vehicles={data.vehicles}
                       driverRatingMap={driverRatingMap}
                       departureShifts={departureShifts}
+                      absences={data.absences}
+                      year={year}
+                      kw={kw}
                       assign={(row, type, value) =>
                         action({
                           action: "updatePlanning",
@@ -934,83 +930,53 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
                   />
                 </Card>
               )}
-              {section === "operations" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} chatModerator={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} reload={load} />}
-              {section === "messages" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} chatModerator={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} reload={load} view="chat" />}
+              {section === "operations" && <TripExecutionCenter openChat={(row) => { setChatTripId(Number(row.id)); setChatContactKey(null); setSection("messages"); }} rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} chatModerator={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} reload={load} />}
+              {section === "messages" && <TripExecutionCenter rows={data.tripOperations} documents={data.tripDocuments} messages={data.tripMessages} contacts={data.chatContacts} directMessages={data.directMessages} driver={currentUser.role === "driver"} currentUserId={currentUser.id} chatModerator={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} reload={reloadQuietly} view="chat" initialTripId={chatTripId} initialContactKey={chatContactKey} key={`${chatTripId ?? ""}-${chatContactKey ?? "inbox"}`} />}
               {section === "tachograph" && <TachographCenter rows={data.tachograph} staff={active} vehicles={data.vehicles} canEdit={["management", "dispatcher"].includes(currentUser.role)} locale={locale} action={action} />}
               {section === "expenses" && <ExpenseCenter rows={data.expenses} staff={active} vehicles={data.vehicles} audit={data.audit} driver={currentUser.role === "driver"} canApprove={["management", "accountant"].includes(currentUser.role)} locale={locale} action={action} reload={load} />}
               {section === "checklists" && <ChecklistCenter rows={data.checklists} staff={active} vehicles={data.vehicles} planning={data.planning} driver={currentUser.role === "driver"} locale={locale} action={action} />}
-              {section === "concerns" &&
-                (currentUser.role === "driver" ? (
-                  <DriverConcerns
-                    rows={data.concerns}
-                    year={year}
-                    kw={kw}
-                    locale={locale}
-                    voiceMessages={data.voiceMessages}
-                    planning={data.planning}
-                    reload={load}
-                    submit={action}
-                  />
-                ) : (
-                  <div className="advanced-stack">
-                    <Concerns rows={data.concerns} canEdit={currentUser.role !== "accountant"} edit={(r) => openModal("concern", r)} remove={(id) => action({ action: "deleteConcern", id })} />
-                    {["management", "dispatcher"].includes(currentUser.role) ? <VoiceMessagesCenter rows={data.voiceMessages} action={action} /> : null}
-                  </div>
-                ))}
+              {section === "concerns" && (currentUser.role === "driver" ? (
+                <DriverConcerns
+                  rows={data.concerns}
+                  year={year}
+                  kw={kw}
+                  locale={locale}
+                  voiceMessages={data.voiceMessages}
+                  planning={data.planning}
+                  reload={load}
+                  submit={action}
+                />
+              ) : (
+                <div className="advanced-stack">
+                  <Concerns rows={data.concerns} canEdit={currentUser.role !== "accountant"} edit={(r) => openModal("concern", r)} remove={(id) => action({ action: "deleteConcern", id })} />
+                  {["management", "dispatcher"].includes(currentUser.role) ? <VoiceMessagesCenter rows={data.voiceMessages} action={action} /> : null}
+                </div>
+              ))}
               {section === "documents" && (
                 <div className="advanced-stack">
-                  <PayrollCenter rows={data.payroll} periods={data.payrollPeriods} staff={active} driver={currentUser.role === "driver"} management={currentUser.role === "management"} locale={locale} action={action} />
+                  <PayrollCenter rows={data.payroll} periods={data.payrollPeriods} workDays={data.workDays} staff={active} driver={currentUser.role === "driver"} management={currentUser.role === "management"} locale={locale} action={action} reload={load} />
                   <Documents rows={data.documents} staff={active} driver={currentUser.role === "driver"} locale={locale} canUpload={["management", "accountant"].includes(currentUser.role)} reload={load} />
                 </div>
               )}
               {section === "personnel" && <EmployeeDocuments rows={data.employeeDocuments} staff={data.staff} audit={data.audit} driver={currentUser.role === "driver"} locale={locale} action={action} reload={load} />}
+              {section === "tasks" && <TaskCenter tasks={unifiedTasks} open={setSection} />}
               {section === "notifications" && <NotificationsCenter rows={data.notifications} driver={currentUser.role === "driver"} locale={locale} action={action} />}
-              {section === "analytics" && <AnalyticsCenter staff={data.staff} vehicles={data.vehicles} operations={data.tripOperations} expenses={data.expenses} tachograph={data.tachograph} concerns={data.concerns} checklists={data.checklists} />}
               {section === "users" && <UserManagement rows={data.portalUsers} staff={data.staff} resetRequests={data.resetRequests} action={action} />}
-              {section === "import" && <ExcelImporter staff={data.staff} vehicles={data.vehicles} planning={data.planning} year={year} kw={kw} reload={load} />}
               {section === "security" && <SecurityCenter loginAudit={data.loginAudit} resetRequests={data.resetRequests} audit={data.audit} action={action} />}
-              {section === "reports" && (
-                <div className="report-grid">
-                  <Report
-                    title={`Planning Report KW ${kw}`}
-                    text="Block-Rejections, offene Fälle und Hinweise aus der Wochenplanung."
-                    action={
-                      ["management", "dispatcher"].includes(currentUser.role)
-                        ? downloadPlanningReport
-                        : undefined
-                    }
-                    actionLabel={
-                      ["management", "dispatcher"].includes(currentUser.role)
-                        ? "Planning Report PDF →"
-                        : "Nur für Disposition"
-                    }
-                  />
-                  <Report
-                    title="Mitarbeiterliste"
-                    text="Aktive und ausgeschiedene Mitarbeiter mit Firma, Standort und Systemart."
-                  />
-                  <Report
-                    title="Kennzeichenliste"
-                    text="Fahrzeuge, Werkstattstatus, TÜV/SP und Zuordnung."
-                  />
-                  <Report
-                    title="Lohnabrechnungsübersicht"
-                    text="Dokumentenstatus je Mitarbeiter und Abrechnungsmonat."
-                  />
-                </div>
-              )}
+              {section === "reports" && <ReportsCenter role={currentUser.role} year={year} kw={kw} staff={data.staff} vehicles={data.vehicles} payroll={data.payroll} />}
             </>
           )}
+          </div>
         </div>
       </section>
+      <AssistantWidget context={assistantContext} locale={locale} section={nav.find((item) => item.id === section)?.label || section} />
       {isDriver ? <nav className="driver-bottom-nav" aria-label={t("workArea")}>
         {([
           ["driverFlow", "▶", "home"],
-          ["operations", "➜", "operations"],
           ["messages", "✉", "messages"],
           ["expenses", "◈", "receipts"],
-          ["notifications", "!", "alerts"],
-        ] as Array<[Section, string, string]>).map(([id, icon, key]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id)}><span>{icon}</span><b>{t(key)}</b>{id === "notifications" && unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}{id === "messages" && unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}</button>)}
+        ] as Array<[Section, string, string]>).map(([id, icon, key]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id)}><span>{icon}</span><b>{t(key)}</b>{id === "messages" && unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}</button>)}
+        <button type="button" onClick={() => setMobileMenu(true)}><span>☰</span><b>{t("more", "Mehr")}</b>{unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}</button>
       </nav> : null}
       {settingsOpen ? <InterfaceSettings theme={theme} density={density} pinned={pinnedSections} sections={nav.filter((item) => item.roles.includes(currentUser.role))} setTheme={setTheme} setDensity={setDensity} setPinned={setPinnedSections} close={() => setSettingsOpen(false)} /> : null}
       {modal && (
@@ -1414,7 +1380,15 @@ type DriverMetrics = {
   rating: number;
   ratingCount: number;
   lastRating: Row | undefined;
+  criteria?: Record<string, number>;
 };
+
+const ratingCriteria: { key: string; label: string }[] = [
+  { key: "punctuality", label: "Pünktlichkeit" },
+  { key: "care", label: "Sorgfalt & Ladung" },
+  { key: "communication", label: "Kommunikation" },
+  { key: "vehicle", label: "Zustand des Fahrzeugs" },
+];
 
 function computeDriverMetrics(staffId: string | number, events: Row[]): DriverMetrics {
   const ratingEvents = events.filter(
@@ -1422,10 +1396,20 @@ function computeDriverMetrics(staffId: string | number, events: Row[]): DriverMe
   );
   const ratingCount = ratingEvents.length;
   const rating = ratingCount ? ratingEvents.reduce((sum, event) => sum + Number(event.rating), 0) / ratingCount : 0;
+  const sums: Record<string, { total: number; count: number }> = {};
+  for (const event of ratingEvents) {
+    try {
+      const parsed = JSON.parse(String(event.criteria || "null")) as Record<string, number> | null;
+      if (!parsed) continue;
+      for (const { key } of ratingCriteria) if (parsed[key]) { sums[key] ??= { total: 0, count: 0 }; sums[key].total += Number(parsed[key]); sums[key].count += 1; }
+    } catch { /* älteres Format ohne Kriterien */ }
+  }
+  const criteria = Object.keys(sums).length ? Object.fromEntries(Object.entries(sums).map(([key, value]) => [key, value.total / value.count])) : undefined;
   return {
     rating,
     ratingCount,
     lastRating: ratingEvents[0],
+    criteria,
   };
 }
 
@@ -1458,212 +1442,6 @@ function DriverPlanningRating({ metrics }: { metrics: DriverMetrics }) {
       {metrics.rating.toFixed(1)} ★
     </span>
   );
-}
-
-function DriverControlCenter({ staff, events, openDriver, action }: {
-  staff: Row[];
-  events: Row[];
-  openDriver: (row: Row) => void;
-  action: (payload: Record<string, unknown>) => Promise<void>;
-}) {
-  const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Row | null>(null);
-  const [ratingValue, setRatingValue] = useState(5);
-  const [showArchived, setShowArchived] = useState(false);
-  const today = new Date().toISOString().slice(0, 10);
-
-  const rows = useMemo(() => staff
-    .map((person) => ({ person, ...computeDriverMetrics(person.id, events) }))
-    .filter((row) => showArchived || row.person.status === "active")
-    .filter((row) => [row.person.full_name, row.person.company, row.person.location, row.lastRating?.notes]
-      .join(" ")
-      .toLowerCase()
-      .includes(query.trim().toLowerCase()))
-    .sort((left, right) =>
-      Number(right.person.status === "active") - Number(left.person.status === "active")
-      || right.rating - left.rating
-      || right.ratingCount - left.ratingCount
-      || String(left.person.full_name).localeCompare(String(right.person.full_name)),
-    ), [staff, events, showArchived, query]);
-
-  const rankedRows = useMemo(() => rows
-    .filter((row) => row.person.status === "active" && row.ratingCount)
-    .sort((left, right) => right.rating - left.rating || right.ratingCount - left.ratingCount), [rows]);
-  const rankByStaff = new Map(rankedRows.map((row, index) => [String(row.person.id), index + 1]));
-  const leaders = rankedRows.slice(0, 3);
-  const ratingEvents = events.filter((event) => event.event_type === "rating");
-
-  return <section className="driver-control-center">
-    <header className="driver-control-hero">
-      <div>
-        <small>DISPOSITION · FAHRERBEWERTUNG</small>
-        <h2>Fahrerbewertung</h2>
-        <p>Dispatcher sendet eine Sternebewertung mit Kommentar — daraus entsteht die Rangliste aller Fahrer.</p>
-      </div>
-      <div className="driver-control-kpis">
-        <span><b>{staff.filter((person) => person.status === "active").length}</b> Fahrer aktiv</span>
-        <span><b>{rankedRows.length}</b> bewertet</span>
-        <span><b>{rows.filter((row) => row.person.status === "active" && !row.ratingCount).length}</b> noch offen</span>
-        <span><b>{ratingEvents.length}</b> Bewertungen gesendet</span>
-      </div>
-    </header>
-
-    <div className={`driver-leaderboard ${leaders.length ? "" : "driver-leaderboard-empty"}`}>
-      {leaders.length ? leaders.map((row, index) => (
-        <button type="button" key={row.person.id} onClick={() => openDriver(row.person)}>
-          <span>{index + 1}</span>
-          <div>
-            <small>RANG {index + 1} · {row.ratingCount} BEWERTUNG(EN)</small>
-            <b>{row.person.full_name}</b>
-            <em>{row.lastRating?.notes || `${row.person.company || "Ohne Firma"} · ${row.person.location || "—"}`}</em>
-          </div>
-          <strong>{row.rating.toFixed(1)}<small>/5 ★</small></strong>
-        </button>
-      )) : (
-        <div>
-          <span>☆</span>
-          <div>
-            <b>Noch kein Fahrer bewertet</b>
-            <small>Die Rangliste entsteht aus gesendeten Bewertungen — klicken Sie bei einem Fahrer auf „Bewertung senden“.</small>
-          </div>
-        </div>
-      )}
-    </div>
-
-    <div className="driver-control-toolbar">
-      <div>
-        <h3>Alle Fahrer</h3>
-        <p>Name, aktuelle Bewertung und Button „Bewertung senden“</p>
-      </div>
-      <div className="driver-toolbar-actions">
-        <button type="button" className={showArchived ? "active" : ""} onClick={() => setShowArchived((value) => !value)}>
-          Archiv {showArchived ? "ausblenden" : `(${staff.filter((person) => person.status === "archived").length})`}
-        </button>
-        <label><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Fahrer suchen …" /></label>
-      </div>
-    </div>
-
-    <div className="driver-rating-table table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Rang</th>
-            <th>Fahrer</th>
-            <th>Bewertung</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const rank = rankByStaff.get(String(row.person.id));
-            return (
-              <tr key={row.person.id} className={row.person.status === "archived" ? "roster-archived" : ""}>
-                <td>{rank ? <span className="driver-rank-badge">#{rank}</span> : "—"}</td>
-                <td>
-                  <button type="button" className="staff-link" onClick={() => openDriver(row.person)}>
-                    <strong>{row.person.full_name}</strong>
-                  </button>
-                  <small>{row.person.company || "Ohne Firma"} · {row.person.location || "—"} · System {row.person.system_type || "—"}</small>
-                </td>
-                <td>
-                  <div className={`driver-list-rating ${row.ratingCount ? "has-rating" : ""}`}>
-                    <div>
-                      <b>{row.ratingCount ? row.rating.toFixed(1) : "—"}</b>
-                      <StarRatingDisplay value={row.rating} count={row.ratingCount} />
-                      <small>{row.ratingCount ? `${row.ratingCount} Bewertung(en)` : "Noch nicht bewertet"}</small>
-                    </div>
-                    {row.lastRating?.notes ? <p className="driver-rating-comment">{row.lastRating.notes}</p> : null}
-                  </div>
-                </td>
-                <td className="driver-actions-cell">
-                  {row.person.status === "active" ? (
-                    <button type="button" className="driver-rate-button" onClick={() => { setSelected(row.person); setRatingValue(5); }}>
-                      Bewertung senden
-                    </button>
-                  ) : (
-                    <button type="button" className="driver-open-profile" onClick={() => openDriver(row.person)}>Fahrerakte</button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      {!rows.length ? (
-        <div className="driver-roster-empty"><span>⌕</span><b>Keine Fahrer gefunden</b><p>Suchbegriff ändern oder Archiv einblenden.</p></div>
-      ) : null}
-    </div>
-
-    <div className="driver-event-history">
-      <div className="panel-title">
-        <div><h3>Letzte gesendete Bewertungen</h3><p>Rangliste wird aus dem Durchschnitt aller Bewertungen berechnet</p></div>
-        <span>{ratingEvents.length}</span>
-      </div>
-      {ratingEvents.length ? ratingEvents.slice(0, 12).map((event) => (
-        <article key={event.id} className="event-rating">
-          <span>★</span>
-          <div>
-            <header>
-              <button type="button" onClick={() => { const person = staff.find((item) => String(item.id) === String(event.staff_id)); if (person) openDriver(person); }}>{event.full_name}</button>
-              <Badge value="Bewertung" />
-            </header>
-            <p>{event.notes || "Ohne Kommentar"}</p>
-            <small>{event.event_date} · {event.created_by_name}</small>
-          </div>
-          <b>{event.rating}/5 ★</b>
-        </article>
-      )) : (
-        <div className="vehicle-record-empty"><span>☆</span><strong>Noch keine Bewertungen</strong><small>Klicken Sie bei einem Fahrer auf „Bewertung senden“.</small></div>
-      )}
-    </div>
-
-    {selected ? (
-      <div className="driver-event-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
-        <form className="driver-event-modal driver-rating-modal" onSubmit={(event) => {
-          event.preventDefault();
-          const form = new FormData(event.currentTarget);
-          void action({
-            action: "addDriverPerformance",
-            staffId: selected.id,
-            eventType: "rating",
-            eventDate: form.get("eventDate"),
-            rating: ratingValue,
-            minutesLate: 0,
-            notes: form.get("notes"),
-          }).then(() => setSelected(null));
-        }}>
-          <header>
-            <div>
-              <small>BEWERTUNG SENDEN</small>
-              <h3>{selected.full_name}</h3>
-              <p>{selected.company || "—"} · {selected.location || "—"}</p>
-            </div>
-            <button type="button" onClick={() => setSelected(null)}>×</button>
-          </header>
-          <label>Datum<input name="eventDate" type="date" defaultValue={today} required /></label>
-          <div className="star-rating-field">
-            <span>Sternebewertung</span>
-            <div className="star-rating-input" role="radiogroup" aria-label="Fahrerbewertung">
-              {[1, 2, 3, 4, 5].map((value) => (
-                <button type="button" key={value} className={value <= ratingValue ? "active" : ""} onClick={() => setRatingValue(value)} role="radio" aria-checked={ratingValue === value} aria-label={`${value} Sterne`}>★</button>
-              ))}
-            </div>
-            <strong>{ratingValue} von 5 · {ratingValue === 5 ? "Sehr gut" : ratingValue === 4 ? "Gut" : ratingValue === 3 ? "Befriedigend" : ratingValue === 2 ? "Verbesserungsbedarf" : "Kritisch"}</strong>
-          </div>
-          <label className="event-comment">
-            Kommentar zur Bewertung*
-            <textarea name="notes" minLength={2} required placeholder="z. B. zuverlässig, pünktlich, gute Kommunikation …" />
-          </label>
-          <div className="driver-event-impact">
-            <span>Nach dem Senden wird der Durchschnitt neu berechnet und die Rangliste aktualisiert.</span>
-            <b>{ratingValue}/5 ★</b>
-          </div>
-          <button className="primary-button">Bewertung senden</button>
-          <small className="event-visibility">Sichtbar für Management und alle Dispatcher</small>
-        </form>
-      </div>
-    ) : null}
-  </section>;
 }
 
 function DriverDossier({
@@ -1948,6 +1726,84 @@ function Card({
     </article>
   );
 }
+function StaffList({ rows, events, canRate, showPay, isManager, open, edit, add, action }: { rows: Row[]; events: Row[]; canRate: boolean; showPay: boolean; isManager: boolean; open: (row: Row) => void; edit: (row: Row) => void; add: () => void; action: (payload: Record<string, unknown>) => Promise<void> }) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<"active" | "archived" | "all">("active");
+  const [sortByRating, setSortByRating] = useState(false);
+  const [rating, setRating] = useState<Row | null>(null);
+  const [scores, setScores] = useState<Record<string, number>>({ punctuality: 5, care: 5, communication: 5, vehicle: 5 });
+  const [formPerson, setFormPerson] = useState<Row | null>(null);
+  const [formType, setFormType] = useState("certificate");
+  const [formReason, setFormReason] = useState("");
+  const stars = Math.round(ratingCriteria.reduce((sum, { key }) => sum + scores[key], 0) / ratingCriteria.length);
+  const activeCount = rows.filter((row) => row.status === "active").length;
+  const metricsOf = (person: Row) => computeDriverMetrics(person.id, events);
+  const visible = rows.filter((row) => (status === "all" || (status === "active" ? row.status === "active" : row.status !== "active")) && `${row.full_name} ${row.company || ""} ${row.location || ""} ${row.system_type || ""}`.toLowerCase().includes(query.trim().toLowerCase())).sort((left, right) => sortByRating ? metricsOf(right).rating - metricsOf(left).rating || metricsOf(right).ratingCount - metricsOf(left).ratingCount : 0);
+  const today = new Date().toISOString().slice(0, 10);
+  return <div className="list-page">
+    <div className="list-toolbar">
+      <label className="list-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, Firma oder Standort suchen …" /></label>
+      <div className="view-switch">
+        <button type="button" className={status === "active" ? "active" : ""} onClick={() => setStatus("active")}>Aktiv ({activeCount})</button>
+        <button type="button" className={status === "archived" ? "active" : ""} onClick={() => setStatus("archived")}>Ausgeschieden</button>
+        <button type="button" className={status === "all" ? "active" : ""} onClick={() => setStatus("all")}>Alle</button>
+      </div>
+      {canRate ? <button type="button" className={`sort-toggle${sortByRating ? " active" : ""}`} onClick={() => setSortByRating(!sortByRating)}>★ Beste Bewertung zuerst</button> : null}
+    </div>
+    {visible.length ? <div className="card-list">{visible.map((person) => (
+      <article key={String(person.id)} className="person-card">
+        <button type="button" className="person-main" onClick={() => open(person)}>
+          <span className="person-avatar">{String(person.full_name || "?").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span>
+          <span className="person-text"><b>{person.full_name}</b><small>{[person.company, person.location, person.system_type ? `System ${person.system_type}` : ""].filter(Boolean).join(" · ") || "Keine Angaben"}</small></span>
+        </button>
+        {canRate ? (() => { const metrics = metricsOf(person); return <span className="person-rating" title={metrics.ratingCount ? `${metrics.ratingCount} Bewertung(en)` : "Noch nicht bewertet"}>{metrics.ratingCount ? <><b>{metrics.rating.toFixed(1)}</b><StarRatingDisplay value={metrics.rating} count={metrics.ratingCount} />{metrics.criteria ? (() => { const weakest = ratingCriteria.map(({ key, label }) => ({ label, value: metrics.criteria?.[key] ?? 5 })).sort((left, right) => left.value - right.value)[0]; return weakest.value < 4 ? <em className="person-weak" title="Schwächster Bereich">⚠ {weakest.label} {weakest.value.toFixed(1)}</em> : null; })() : null}</> : <small>Nicht bewertet</small>}</span>; })() : null}
+        {showPay ? <span className="person-pay">{person.compensation || "—"}</span> : null}
+        <Badge value={String(person.status)} />
+        {isManager || canRate ? <div className="person-actions">
+          {isManager ? <button type="button" className="edit-action" onClick={() => edit(person)}>Bearbeiten</button> : null}
+          <details><summary aria-label="Mehr">⋯</summary><div>
+            {canRate && person.status === "active" ? <button type="button" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); setRating(person); setScores({ punctuality: 5, care: 5, communication: 5, vehicle: 5 }); }}>★ Bewertung senden</button> : null}
+            {isManager ? <button type="button" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); setFormPerson(person); setFormReason(""); }}>📄 Dokument erstellen</button> : null}
+            {isManager ? <button type="button" onClick={() => action({ action: person.status === "active" ? "archiveStaff" : "restoreStaff", id: person.id })}>{person.status === "active" ? "Ausscheiden" : "Reaktivieren"}</button> : null}
+            {isManager && person.status === "archived" ? <button type="button" className="delete-action" onClick={() => confirm("Endgültig löschen?") && action({ action: "deleteStaff", id: person.id })}>Löschen</button> : null}
+          </div></details>
+        </div> : null}
+      </article>
+    ))}</div> : rows.length ? <EmptyState icon="⌕" title="Niemand gefunden" hint="Suchbegriff ändern oder oben einen anderen Filter wählen." /> : <EmptyState icon="◉" title="Noch keine Mitarbeiter" hint="Legen Sie den ersten Mitarbeiter an, um Touren zu planen und Löhne zu berechnen." actionLabel={isManager ? "＋ Mitarbeiter einstellen" : undefined} onAction={add} />}
+    {rating ? <div className="driver-event-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setRating(null); }}>
+      <form className="driver-event-modal driver-rating-modal" onSubmit={(event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        void action({ action: "addDriverPerformance", staffId: rating.id, eventType: "rating", eventDate: form.get("eventDate"), rating: stars, criteria: scores, minutesLate: 0, notes: form.get("notes") }).then(() => setRating(null));
+      }}>
+        <header><div><small>BEWERTUNG SENDEN</small><h3>{rating.full_name}</h3><p>{rating.company || "—"} · {rating.location || "—"}</p></div><button type="button" onClick={() => setRating(null)}>×</button></header>
+        <label>Datum<input name="eventDate" type="date" defaultValue={today} required /></label>
+        <div className="criteria-list">
+          {ratingCriteria.map(({ key, label }) => <div key={key} className="criteria-row"><span>{label}</span><div className="star-rating-input" role="radiogroup" aria-label={label}>{[1, 2, 3, 4, 5].map((value) => <button type="button" key={value} className={value <= scores[key] ? "active" : ""} onClick={() => setScores({ ...scores, [key]: value })} role="radio" aria-checked={scores[key] === value} aria-label={`${value} Sterne`}>★</button>)}</div></div>)}
+          <div className="criteria-total">Gesamt: <b>{stars} von 5</b> · {stars === 5 ? "Sehr gut" : stars === 4 ? "Gut" : stars === 3 ? "Befriedigend" : stars === 2 ? "Verbesserungsbedarf" : "Kritisch"}</div>
+        </div>
+        <label className="event-comment">Kommentar zur Bewertung*<textarea name="notes" minLength={2} required placeholder="z. B. zuverlässig, pünktlich, gute Kommunikation …" /></label>
+        <button className="primary-button">Bewertung senden</button>
+        <small className="event-visibility">Sichtbar für Management und alle Dispatcher</small>
+      </form>
+    </div> : null}
+    {formPerson ? <div className="driver-event-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormPerson(null); }}>
+      <form className="driver-event-modal" onSubmit={(event) => {
+        event.preventDefault();
+        if (formType === "warning" && formReason.trim().length < 5) return;
+        window.open(`/api/staff/${formPerson.id}/forms?type=${formType}${formType === "warning" ? `&reason=${encodeURIComponent(formReason)}` : ""}`, "_blank");
+        setFormPerson(null);
+      }}>
+        <header><div><small>DOKUMENT ERSTELLEN</small><h3>{formPerson.full_name}</h3><p>PDF wird aus den Mitarbeiterdaten erzeugt</p></div><button type="button" onClick={() => setFormPerson(null)}>×</button></header>
+        <label>Vorlage<select value={formType} onChange={(event) => setFormType(event.target.value)}><option value="certificate">Arbeitsbescheinigung</option><option value="contract">Arbeitsvertrag (Vorlage)</option><option value="warning">Abmahnung</option></select></label>
+        {formType === "warning" ? <label className="event-comment">Grund der Abmahnung*<textarea value={formReason} onChange={(event) => setFormReason(event.target.value)} minLength={5} required placeholder="Was ist wann passiert? Sachlich und konkret beschreiben." /></label> : null}
+        <button className="primary-button">PDF erstellen</button>
+        <small className="event-visibility">Vorlagen bitte vor Verwendung rechtlich prüfen.</small>
+      </form>
+    </div> : null}
+  </div>;
+}
+
 function Badge({ value }: { value: string }) {
   const map: Record<string, string> = {
     active: "Aktiv",
@@ -1995,72 +1851,50 @@ function Planning({
   openVehicle?: (plate: unknown) => void;
   driverRatingMap?: Map<string, DriverMetrics>;
 }) {
+  const groups = new Map<string, Row[]>();
+  for (const row of rows) {
+    const key = String(row.company || "Ohne Firma");
+    groups.set(key, [...(groups.get(key) || []), row]);
+  }
+  if (!rows.length) return <EmptyState icon="▦" title="Für diese Woche gibt es noch keine Planung" hint="Oben „Planung anlegen“ wählen oder die vorige Woche als Vorlage übernehmen." />;
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Firma</th>
-            <th>Fahrer</th>
-            <th>Standort</th>
-            <th>Kennzeichen</th>
-            <th>Tage</th>
-            <th>Beginn</th>
-            <th>Block ID</th>
-            <th>Status</th>
-            <th>Kommentar</th>
-            {canEdit ? <th /> : null}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.map((r) => (
-              <tr key={r.id}>
-                <td>
-                  <strong>{r.company}</strong>
-                </td>
-                <td>{r.driver_name ? <span className="planning-driver-cell"><button type="button" className="staff-link planning-person-link" onClick={() => openDriver?.(r)} disabled={!openDriver}>{r.driver_name}</button>{driverRatingMap ? <DriverPlanningRating metrics={lookupDriverRating(driverRatingMap, r.driver_name)} /> : null}</span> : "NO DRIVER"}</td>
-                <td>{r.location || "—"}</td>
-                <td>{r.license_plate ? <button type="button" className="plate-link planning-plate-link" onClick={() => openVehicle?.(r.license_plate)} disabled={!openVehicle}>{r.license_plate}</button> : "—"}</td>
-                <td>
-                  {Array.from(rowDays(r))
-                    .map((day) => weekDayNames[day - 1].slice(0, 2))
-                    .join(", ")}
-                </td>
-                <td>{r.start_time || "06:00"}</td>
-                <td>{r.block_id || "—"}</td>
-                <td>
-                  <Badge value={String(r.status)} />
-                </td>
-                <td>{r.comments || "—"}</td>
-                {canEdit ? (
-                  <td>
-                    <div className="row-buttons">
-                      <button className="edit-action" onClick={() => edit?.(r)}>
-                        Bearbeiten
-                      </button>
-                      <button
-                        className="delete-action"
-                        onClick={() =>
-                          confirm("Planung löschen?") && remove?.(Number(r.id))
-                        }
-                      >
-                        Löschen
-                      </button>
+    <div className="plan-board">
+      {Array.from(groups.entries()).map(([company, items]) => (
+        <section key={company} className="plan-group">
+          <header><h3>{company}</h3><span>{items.length} {items.length === 1 ? "Einsatz" : "Einsätze"}</span></header>
+          <div className="plan-list">
+            {items.map((r) => {
+              const days = rowDays(r);
+              return (
+                <article key={r.id} className={`plan-card${r.driver_name ? "" : " plan-card-open"}`}>
+                  <div className="plan-time"><b>{r.start_time || "06:00"}</b><small>Beginn</small></div>
+                  <div className="plan-main">
+                    <div className="plan-driver">
+                      {r.driver_name ? <span className="planning-driver-cell"><button type="button" className="staff-link planning-person-link" onClick={() => openDriver?.(r)} disabled={!openDriver}>{r.driver_name}</button>{driverRatingMap ? <DriverPlanningRating metrics={lookupDriverRating(driverRatingMap, r.driver_name)} /> : null}</span> : <span className="plan-nodriver">Kein Fahrer zugeteilt</span>}
+                      <Badge value={String(r.status)} />
                     </div>
-                  </td>
-                ) : null}
-              </tr>
-            ))
-          ) : (
-            <tr>
-              <td colSpan={canEdit ? 10 : 9}>
-                Keine Einträge für diese Woche.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+                    <div className="plan-meta">
+                      {r.license_plate ? <button type="button" className="plate-link planning-plate-link" onClick={() => openVehicle?.(r.license_plate)} disabled={!openVehicle}>{String(r.license_plate)}</button> : <span>Kein Kennzeichen</span>}
+                      {r.location ? <span>📍 {r.location}</span> : null}
+                      {r.block_id ? <span>Block {r.block_id}</span> : null}
+                    </div>
+                    {r.comments ? <p className="plan-comment">{r.comments}</p> : null}
+                  </div>
+                  <div className="plan-days" aria-label="Arbeitstage">
+                    {weekDayNames.map((name, index) => <i key={name} className={days.has(index + 1) ? "on" : ""} title={name}>{name.slice(0, 2)}</i>)}
+                  </div>
+                  {canEdit ? (
+                    <div className="row-buttons plan-actions">
+                      <button className="edit-action" onClick={() => edit?.(r)}>Bearbeiten</button>
+                      <button className="delete-action" onClick={() => confirm("Planung löschen?") && remove?.(Number(r.id))}>Löschen</button>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -2106,6 +1940,16 @@ function isoWeekDates(year: number, week: number, locale: DriverLocale = "de") {
   });
 }
 
+function planDate(year: number, week: number, day: number) {
+  const monday = new Date(Date.UTC(year, 0, 4));
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7) + (week - 1) * 7 + day - 1);
+  return monday.toISOString().slice(0, 10);
+}
+
+function absenceOn(absences: Row[], staffId: unknown, date: string) {
+  return absences.find((item) => String(item.staff_id) === String(staffId) && String(item.start_date) <= date && String(item.end_date) >= date);
+}
+
 function rowDays(row: Row) {
   const parsed = String(row.work_days || "1,2,3,4,5,6,7")
     .split(",")
@@ -2121,6 +1965,9 @@ function PlanningAlerts({
   employeeDocuments,
   tachograph,
   departureShifts,
+  absences,
+  year,
+  kw,
 }: {
   rows: Row[];
   staff: Row[];
@@ -2128,6 +1975,9 @@ function PlanningAlerts({
   employeeDocuments: Row[];
   tachograph: Row[];
   departureShifts: DepartureShift[];
+  absences: Row[];
+  year: number;
+  kw: number;
 }) {
   const alerts: { key: string; level: "danger" | "warning"; text: string }[] =
     [];
@@ -2159,6 +2009,18 @@ function PlanningAlerts({
         const driver = staff.find(
           (person) => person.full_name === row.driver_name,
         );
+        const planDay = planDate(year, kw, day);
+        const absent = driver ? absenceOn(absences, driver.id, planDay) : undefined;
+        if (absent)
+          add(
+            `absent-${row.driver_name}-${day}`,
+            "danger",
+            `${weekDayNames[day - 1]} ${planDay.slice(8)}.${planDay.slice(5, 7)}.: ${row.driver_name} ist im ${absent.absence_type === "sick" ? "Krankenstand" : "Urlaub"} und trotzdem eingeplant.`,
+          );
+        for (const doc of employeeDocuments) {
+          if (driver && String(doc.staff_id) === String(driver.id) && doc.expires_at && String(doc.expires_at) < planDay)
+            add(`docplan-${doc.id}-${day}`, "danger", `${row.driver_name}: ${String(doc.category || "Dokument")} ist am ${planDay.slice(8)}.${planDay.slice(5, 7)}. bereits abgelaufen.`);
+        }
         if (!driver || driver.status !== "active")
           add(
             `inactive-${row.driver_name}`,
@@ -2188,6 +2050,8 @@ function PlanningAlerts({
         const vehicle = vehicles.find(
           (item) => item.license_plate === row.license_plate,
         );
+        if (vehicle?.inspection_due && String(vehicle.inspection_due) < planDate(year, kw, day))
+          add(`tuvplan-${row.license_plate}-${day}`, "danger", `${row.license_plate}: TÜV/HU ist am ${planDate(year, kw, day).slice(8)}.${planDate(year, kw, day).slice(5, 7)}. bereits abgelaufen.`);
         if (vehicle?.status === "workshop")
           add(
             `workshop-${row.license_plate}`,
@@ -2298,9 +2162,15 @@ function DispatchBoard({
   vehicles,
   driverRatingMap,
   departureShifts,
+  absences,
+  year,
+  kw,
   assign,
   moveResource,
 }: {
+  absences: Row[];
+  year: number;
+  kw: number;
   rows: Row[];
   staff: Row[];
   vehicles: Row[];
@@ -2358,7 +2228,8 @@ function DispatchBoard({
             {activeStaff.map((person) => {
               const useCount = driverUse(String(person.full_name));
               const rating = lookupDriverRating(driverRatingMap, person.full_name);
-              return <button type="button" draggable onDragStart={(event) => startDrag(event, "driver", String(person.full_name))} onDragEnd={() => setDragging(null)} className={useCount ? "pool-used" : "pool-free"} key={person.id}><span>{String(person.full_name || "F").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><div><b>{person.full_name}</b><small>{person.company || "—"} · {useCount ? `${useCount}× eingeplant` : "frei"}{rating.ratingCount ? ` · ${rating.rating.toFixed(1)} ★` : ""}</small></div><i>⋮⋮</i></button>;
+              const weekAbsence = [1, 2, 3, 4, 5, 6, 7].map((day) => absenceOn(absences, person.id, planDate(year, kw, day))).find(Boolean);
+              return <button type="button" draggable onDragStart={(event) => startDrag(event, "driver", String(person.full_name))} onDragEnd={() => setDragging(null)} className={`${useCount ? "pool-used" : "pool-free"}${weekAbsence ? " pool-absent" : ""}`} key={person.id}><span>{String(person.full_name || "F").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><div><b>{person.full_name}</b><small>{weekAbsence ? `⚠ ${weekAbsence.absence_type === "sick" ? "Krank" : "Urlaub"} in dieser KW · ` : ""}{person.company || "—"} · {useCount ? `${useCount}× eingeplant` : "frei"}{rating.ratingCount ? ` · ${rating.rating.toFixed(1)} ★` : ""}</small></div><i>⋮⋮</i></button>;
             })}
             {staff.filter((person) => person.status !== "active").slice(0, 3).map((person) => <div className="pool-disabled" key={person.id}><span>×</span><div><b>{person.full_name}</b><small>Nicht aktiv</small></div></div>)}
           </div>
@@ -2921,12 +2792,13 @@ function Documents({
   }[locale];
   async function upload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const form = e.currentTarget;
     const r = await fetch("/api/documents", {
       method: "POST",
-      body: new FormData(e.currentTarget),
+      body: new FormData(form),
     });
     if (r.ok) {
-      e.currentTarget.reset();
+      form.reset();
       await reload();
     } else alert((await r.json()).error);
   }
@@ -2988,33 +2860,65 @@ function Documents({
     </Card>
   );
 }
-function Report({
-  title,
-  text,
-  action,
-  actionLabel = "Bericht vorbereiten →",
-}: {
-  title: string;
-  text: string;
-  action?: () => void;
-  actionLabel?: string;
-}) {
-  return (
-    <article className="report-card">
-      <div>▥</div>
-      <h2>{title}</h2>
-      <p>{text}</p>
-      <button
-        onClick={
-          action ||
-          (() => alert("Bericht wird aus den aktuellen Daten erzeugt."))
-        }
-      >
-        {actionLabel}
-      </button>
-    </article>
-  );
+function downloadCsv(name: string, header: string[], rows: (string | number | null)[][]) {
+  const escape = (value: string | number | null) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const text = "\uFEFF" + [header, ...rows].map((row) => row.map(escape).join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = name; link.click();
+  URL.revokeObjectURL(url);
 }
+
+function ReportCard({ icon, title, text, children }: { icon: string; title: string; text: string; children: React.ReactNode }) {
+  return <article className="report-card2"><div className="report-icon">{icon}</div><div className="report-body"><h3>{title}</h3><p>{text}</p><div className="report-controls">{children}</div></div></article>;
+}
+
+function ReportsCenter({ role, year, kw, staff, vehicles, payroll }: { role: string; year: number; kw: number; staff: Row[]; vehicles: Row[]; payroll: Row[] }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [day, setDay] = useState(today);
+  const [planYear, setPlanYear] = useState(String(year));
+  const [planKw, setPlanKw] = useState(String(kw));
+  const [from, setFrom] = useState(`${today.slice(0, 4)}-01-01`);
+  const [to, setTo] = useState(today);
+  const [audience, setAudience] = useState("finanzamt");
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const canPlan = ["management", "dispatcher"].includes(role);
+  const canFinance = ["management", "accountant"].includes(role);
+  const monthPayroll = payroll.filter((row) => row.period === month);
+  return <div className="reports-center">
+    {canPlan ? <section><h2>Planung & Betrieb</h2>
+      <ReportCard icon="▦" title="Wochenplan (PDF)" text="Alle Einsätze einer Kalenderwoche mit Fahrern, Fahrzeugen und offenen Punkten.">
+        <label>Jahr<input type="number" value={planYear} onChange={(event) => setPlanYear(event.target.value)} /></label>
+        <label>KW<input type="number" min="1" max="53" value={planKw} onChange={(event) => setPlanKw(event.target.value)} /></label>
+        <a className="primary-button" href={`/api/reports/planning?year=${planYear}&kw=${planKw}`} target="_blank" rel="noreferrer">PDF öffnen</a>
+      </ReportCard>
+      {role === "management" ? <ReportCard icon="▥" title="Tagesbericht (PDF)" text="Was an einem Tag passiert ist: Touren, Probleme, Nachrichten.">
+        <label>Datum<input type="date" value={day} onChange={(event) => setDay(event.target.value)} /></label>
+        <a className="primary-button" href={`/api/reports/daily?date=${day}`} target="_blank" rel="noreferrer">PDF öffnen</a>
+      </ReportCard> : null}
+      <ReportCard icon="◉" title="Mitarbeiterliste (CSV)" text="Alle Mitarbeiter mit Firma, Standort, System und Status – für Excel.">
+        <button type="button" className="primary-button" onClick={() => downloadCsv(`mitarbeiter-${today}.csv`, ["Name", "System", "Firma", "Standort", "Status"], staff.map((row) => [row.full_name, row.system_type, row.company, row.location, row.status]))}>CSV herunterladen</button>
+      </ReportCard>
+      <ReportCard icon="▣" title="Fahrzeugliste (CSV)" text="Kennzeichen, Status, TÜV-Termin und Standort aller Fahrzeuge.">
+        <button type="button" className="primary-button" onClick={() => downloadCsv(`fahrzeuge-${today}.csv`, ["Kennzeichen", "Firma", "Standort", "Status", "TÜV/HU"], vehicles.map((row) => [row.license_plate, row.company, row.location, row.status, row.inspection_due]))}>CSV herunterladen</button>
+      </ReportCard>
+    </section> : null}
+    {canFinance ? <section><h2>Finanzen</h2>
+      <ReportCard icon="€" title="Ausgabenbericht" text="Belege und Ausgaben für Finanzamt oder Amazon in einem Zeitraum.">
+        <label>Von<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
+        <label>Bis<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
+        <label>Für<select value={audience} onChange={(event) => setAudience(event.target.value)}><option value="finanzamt">Finanzamt</option><option value="amazon">Amazon</option></select></label>
+        <a className="primary-button" href={`/api/reports/expenses?from=${from}&to=${to}&audience=${audience}&format=pdf`} target="_blank" rel="noreferrer">PDF</a>
+        <a href={`/api/reports/expenses?from=${from}&to=${to}&audience=${audience}&format=csv`}>CSV</a>
+      </ReportCard>
+      <ReportCard icon="▤" title="Lohnübersicht (CSV)" text={monthPayroll.length ? `${monthPayroll.length} Abrechnungen im gewählten Monat. Einzelne PDF-Lohnzettel finden Sie unter „Lohn & Abrechnung“.` : "Für diesen Monat gibt es noch keine Abrechnungen. Zuerst unter „Lohn & Abrechnung“ berechnen."}>
+        <label>Monat<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
+        <button type="button" className="primary-button" disabled={!monthPayroll.length} onClick={() => downloadCsv(`lohn-${month}.csv`, ["Mitarbeiter", "Monat", "Grundgehalt", "Arbeitstage", "Spesen", "Nacht", "Sonntag", "Feiertag", "Erstattungen", "Abzüge", "Auszahlung", "Status"], monthPayroll.map((row) => [row.full_name, row.period, row.base_salary, row.tour_count, row.expenses, row.night_bonus, row.sunday_bonus, row.holiday_bonus, row.reimbursements, row.deductions, row.net_amount, row.payment_status]))}>CSV herunterladen</button>
+      </ReportCard>
+    </section> : null}
+  </div>;
+}
+
 function Modal({
   title,
   close,

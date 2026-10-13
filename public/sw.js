@@ -1,4 +1,4 @@
-const SHELL_CACHE = "logipay-shell-v2";
+const SHELL_CACHE = "logipay-shell-v3";
 const SHELL_FILES = ["/", "/favicon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -23,6 +23,9 @@ self.addEventListener("fetch", (event) => {
     }).catch(async () => (await caches.match(request)) || (await caches.match("/"))));
     return;
   }
+  // Only immutable build assets and a few static files are cached; source modules (dev server, HMR) always come from the network.
+  const cacheable = url.pathname.startsWith("/assets/") || SHELL_FILES.includes(url.pathname);
+  if (!cacheable) return;
   event.respondWith(caches.match(request).then((cached) => cached || fetch(request).then((response) => {
     if (response.ok) caches.open(SHELL_CACHE).then((cache) => cache.put(request, response.clone()));
     return response;

@@ -384,6 +384,28 @@ export const tripMessageReads = sqliteTable("trip_message_reads", {
   index("idx_trip_message_reads_user").on(table.userId, table.readAt),
 ]);
 
+export const directMessages = sqliteTable("direct_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  senderUserId: integer("sender_user_id").notNull().references(() => users.id),
+  recipientUserId: integer("recipient_user_id").references(() => users.id),
+  recipientStaffId: integer("recipient_staff_id").references(() => staff.id),
+  messageType: text("message_type").notNull().default("text"),
+  body: text("body"),
+  originalLanguage: text("original_language").notNull().default("de"),
+  translationsJson: text("translations_json").notNull().default("{}"),
+  fileName: text("file_name"),
+  objectKey: text("object_key").unique(),
+  contentType: text("content_type"),
+  sizeBytes: integer("size_bytes"),
+  durationSeconds: integer("duration_seconds").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+  readAt: text("read_at"),
+}, (table) => [
+  index("idx_direct_messages_pair_created").on(table.senderUserId, table.recipientUserId, table.createdAt),
+  index("idx_direct_messages_recipient_read").on(table.recipientUserId, table.readAt),
+  index("idx_direct_messages_staff").on(table.recipientStaffId),
+]);
+
 export const expenses = sqliteTable("expenses", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   staffId: integer("staff_id").notNull().references(() => staff.id),

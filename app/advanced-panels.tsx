@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { DriverLocale } from "./driver-i18n";
 import { queueOfflineUpload } from "../lib/offline-client";
+import { mapPayrollRows, parseCsv, type PayrollRecord } from "../lib/payroll-import";
 
 type Row = Record<string, string | number | null>;
 type Action = (payload: Record<string, string | number | null>) => Promise<void>;
@@ -81,45 +82,68 @@ export function EmployeeDocuments({ rows, staff, audit, driver, locale, action, 
   </section>;
 }
 
-export function PayrollCenter({ rows, periods, staff, driver, management, locale, action }: { rows: Row[]; periods: Row[]; staff: Row[]; driver: boolean; management: boolean; locale: DriverLocale; action: Action }) {
+export function PayrollCenter({ rows, periods, workDays, staff, driver, management, locale, action, reload }: { rows: Row[]; periods: Row[]; workDays: Row[]; staff: Row[]; driver: boolean; management: boolean; locale: DriverLocale; action: Action; reload: () => Promise<void> }) {
   const [selected, setSelected] = useState<Row | null>(null);
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
   const [reopenReason, setReopenReason] = useState("");
+  const [calcBusy, setCalcBusy] = useState(false);
+  const [calcDone, setCalcDone] = useState("");
   const c = {
-    de: { title: "Meine Abrechnung", help: "Monatliche Lohnwerte, Zahlungsstatus und PDF", month: "Monat", base: "Grundgehalt", tours: "Touren", night: "Nacht", sunday: "Sonntag", holiday: "Feiertag", expenses: "Spesen", reimbursements: "Erstattungen", deductions: "Abzüge", net: "Netto", status: "Status", empty: "Noch keine Monatsabrechnung" },
-    pl: { title: "Moje rozliczenie", help: "Miesięczne wynagrodzenie, status płatności i PDF", month: "Miesiąc", base: "Podstawa", tours: "Trasy", night: "Noc", sunday: "Niedziela", holiday: "Święta", expenses: "Diety", reimbursements: "Zwroty", deductions: "Potrącenia", net: "Netto", status: "Status", empty: "Brak rozliczenia" },
-    uk: { title: "Мій розрахунок", help: "Місячна зарплата, статус виплати та PDF", month: "Місяць", base: "Основна зарплата", tours: "Рейси", night: "Нічні", sunday: "Неділя", holiday: "Свята", expenses: "Добові", reimbursements: "Повернення витрат", deductions: "Відрахування", net: "Нетто", status: "Статус", empty: "Розрахунку ще немає" },
-    ru: { title: "Мой расчёт", help: "Месячная зарплата, статус выплаты и PDF", month: "Месяц", base: "Основная зарплата", tours: "Рейсы", night: "Ночные", sunday: "Воскресенье", holiday: "Праздники", expenses: "Суточные", reimbursements: "Возврат расходов", deductions: "Удержания", net: "Нетто", status: "Статус", empty: "Расчёта пока нет" },
+    de: { title: "Meine Abrechnung", help: "Monatliche Lohnwerte, Zahlungsstatus und PDF", month: "Monat", base: "Grundgehalt", tours: "Arbeitstage", night: "Nacht", sunday: "Sonntag", holiday: "Feiertag", expenses: "Spesen", reimbursements: "Erstattungen", deductions: "Abzüge", net: "Netto", status: "Status", empty: "Noch keine Monatsabrechnung" },
+    pl: { title: "Moje rozliczenie", help: "Miesięczne wynagrodzenie, status płatności i PDF", month: "Miesiąc", base: "Podstawa", tours: "Dni pracy", night: "Noc", sunday: "Niedziela", holiday: "Święta", expenses: "Diety", reimbursements: "Zwroty", deductions: "Potrącenia", net: "Netto", status: "Status", empty: "Brak rozliczenia" },
+    uk: { title: "Мій розрахунок", help: "Місячна зарплата, статус виплати та PDF", month: "Місяць", base: "Основна зарплата", tours: "Робочі дні", night: "Нічні", sunday: "Неділя", holiday: "Свята", expenses: "Добові", reimbursements: "Повернення витрат", deductions: "Відрахування", net: "Нетто", status: "Статус", empty: "Розрахунку ще немає" },
+    ru: { title: "Мой расчёт", help: "Месячная зарплата, статус выплаты и PDF", month: "Месяц", base: "Основная зарплата", tours: "Рабочие дни", night: "Ночные", sunday: "Воскресенье", holiday: "Праздники", expenses: "Суточные", reimbursements: "Возврат расходов", deductions: "Удержания", net: "Нетто", status: "Статус", empty: "Расчёта пока нет" },
   }[locale];
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
     await action({ action: "savePayroll", id: selected?.id || null, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) });
-    setSelected(null); event.currentTarget.reset();
+    setSelected(null); form.reset();
   }
   const periodRow = periods.find((row) => row.period === period);
   const isClosed = periodRow?.status === "closed";
+  const monthRows = rows.filter((row) => row.period === period);
+  useEffect(() => {
+    if (!selected) return;
+    const fresh = rows.find((row) => row.id === selected.id);
+    if (fresh && JSON.stringify(fresh) !== JSON.stringify(selected)) setSelected(fresh);
+  }, [rows, selected]);
   async function calculate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    setCalcBusy(true); setCalcDone("");
     await action({ action: "calculatePayrollPeriod", ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) });
+    setCalcBusy(false); setCalcDone(`Berechnung für ${String(values.period)} abgeschlossen – Ergebnis unten.`);
+    setTimeout(() => document.getElementById("payroll-results")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
   }
   async function reopen() {
     await action({ action: "reopenPayrollPeriod", period, reason: reopenReason }); setReopenReason("");
   }
   return <div className="advanced-stack payroll-workspace">
-    {!driver ? <div className="panel payroll-automation"><div className="panel-title"><div><h2>Monat automatisch abrechnen</h2><p>Abgeschlossene Touren, Spesen, Nacht-/Sonntag-/Feiertagszuschläge und freigegebene Erstattungen werden zusammengeführt.</p></div><span className={`period-state state-${String(periodRow?.status || "open")}`}>{periodRow?.status === "closed" ? "Geschlossen" : periodRow?.status === "review" ? "In Prüfung" : "Offen"}</span></div><form className="payroll-auto-form" onSubmit={calculate}>
+    {!driver ? <WorkTimeSheet staff={staff} workDays={workDays} period={period} setPeriod={setPeriod} closed={periods.some((item) => item.period === period && item.status === "closed")} action={action} /> : null}
+    {!driver ? <div className="panel payroll-automation"><div className="panel-title"><div><h2>2 · Abrechnung berechnen</h2><p>Grundlage sind die tatsächlichen Arbeitstage aus der Wochenplanung (nur Tage im gewählten Monat, Tour gestartet oder abgeschlossen). Pro Arbeitstag: Spesen; dazu Zuschläge für Nachtschicht, Sonntag und Feiertag und freigegebene Erstattungen. Das Grundgehalt kommt aus „Vergütung“ im Mitarbeiterstamm: „1750 € Netto“ = Monatsbetrag, „14 €/h“ = Stundenlohn × Stunden × Arbeitstage, „90 €/Tag“ = Tagessatz × Arbeitstage. Abzüge (Vorschuss, Bußgeld, Schaden) trägst du je Monat unten ein; Brutto-Vergütungen werden ohne Steuern und Sozialabgaben ausgewiesen.</p></div><span className={`period-state state-${String(periodRow?.status || "open")}`}>{periodRow?.status === "closed" ? "Geschlossen" : periodRow?.status === "review" ? "In Prüfung" : "Offen"}</span></div><form className="payroll-auto-form" onSubmit={calculate}>
       <label>Abrechnungsmonat<input name="period" type="month" required value={period} onChange={(event) => setPeriod(event.target.value)} /></label>
-      <label>Spesen je Tour €<input name="spesenRate" type="number" min="0" step="0.01" defaultValue="14" /></label>
-      <label>Nacht je Tour €<input name="nightRate" type="number" min="0" step="0.01" defaultValue="25" /></label>
-      <label>Sonntag je Tour €<input name="sundayRate" type="number" min="0" step="0.01" defaultValue="50" /></label>
-      <label>Feiertag je Tour €<input name="holidayRate" type="number" min="0" step="0.01" defaultValue="100" /></label>
-      <button className="primary-button" disabled={isClosed}>Automatisch berechnen</button>
-    </form><div className="payroll-period-actions"><span>Die Sätze sind Firmenregeln und können vor jeder Berechnung angepasst werden.</span>{!isClosed ? <><button onClick={() => action({ action: "setPayrollPeriodStatus", period, status: "review" })}>Zur Prüfung</button><button className="close-period-button" onClick={() => action({ action: "setPayrollPeriodStatus", period, status: "closed" })}>Monat schließen</button></> : management ? <><input value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Begründung für Wiederöffnung" /><button className="reopen-period-button" disabled={reopenReason.trim().length < 5} onClick={reopen}>Mit Management-Freigabe öffnen</button></> : <strong>Nur Management kann diesen Monat wieder öffnen.</strong>}</div>{periodRow?.closed_at ? <div className="period-audit">Geschlossen am {dateText(periodRow.closed_at)} von {periodRow.closed_by_name || "Buchhaltung"}{periodRow.reopen_reason ? ` · Letzte Wiederöffnung: ${periodRow.reopen_reason}` : ""}</div> : null}</div> : null}
-    {!driver ? <div className="panel"><div className="panel-title"><div><h2>Abrechnung prüfen und korrigieren</h2><p>Automatische Werte können vor dem Monatsabschluss nachvollziehbar angepasst werden.</p></div></div><form className="payroll-form" onSubmit={submit} key={String(selected?.id || "new")}>
+      <label>Spesen je Arbeitstag €<input name="spesenRate" type="number" min="0" step="0.01" defaultValue="14" /></label>
+      <label>Nachtzuschlag je Nachtschicht €<input name="nightRate" type="number" min="0" step="0.01" defaultValue="25" /></label>
+      <label>Sonntagszuschlag je Tag €<input name="sundayRate" type="number" min="0" step="0.01" defaultValue="50" /></label>
+      <label>Feiertagszuschlag je Tag €<input name="holidayRate" type="number" min="0" step="0.01" defaultValue="100" /></label>
+      <label>Stunden je Arbeitstag<input name="hoursPerDay" type="number" min="1" max="24" step="0.5" defaultValue="8" /></label>
+      <label className="payroll-check"><input name="countPlanned" type="checkbox" defaultChecked /> Geplante Tage ohne Tourstart mitzählen</label>
+      <label className="payroll-check"><input name="overwriteManual" type="checkbox" /> Manuell korrigierte Abrechnungen neu berechnen</label>
+      <button className="primary-button" disabled={isClosed || calcBusy}>{calcBusy ? "Wird berechnet …" : "Automatisch berechnen"}</button>
+    </form>{calcDone ? <div className="inline-notice" style={{ margin: "0 20px 12px" }}>{calcDone}</div> : null}<div className="payroll-period-actions"><span>Beim „Monat schließen“ wird die Abrechnung gesperrt und jeder Mitarbeiter automatisch benachrichtigt („Ihr Lohn ist bereit“).</span>{!isClosed ? <><button onClick={() => action({ action: "setPayrollPeriodStatus", period, status: "review" })}>Zur Prüfung</button><button className="close-period-button" onClick={() => action({ action: "setPayrollPeriodStatus", period, status: "closed" })}>Monat schließen</button></> : management ? <><input value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Begründung für Wiederöffnung" /><button className="reopen-period-button" disabled={reopenReason.trim().length < 5} onClick={reopen}>Mit Management-Freigabe öffnen</button></> : <strong>Nur Management kann diesen Monat wieder öffnen.</strong>}</div>{periodRow?.closed_at ? <div className="period-audit">Geschlossen am {dateText(periodRow.closed_at)} von {periodRow.closed_by_name || "Buchhaltung"}{periodRow.reopen_reason ? ` · Letzte Wiederöffnung: ${periodRow.reopen_reason}` : ""}</div> : null}</div> : null}
+    {!driver ? <div className="panel" id="payroll-results"><div className="panel-title"><div><h2>3 · Abrechnungen {period}</h2><p>{monthRows.length ? `${monthRows.length} Mitarbeiter · Summe Netto ${euro(monthRows.reduce((sum, row) => sum + Number(row.net_amount || 0), 0))}` : "Für diesen Monat gibt es noch keine Abrechnung. Oben automatisch berechnen oder eine Datei übernehmen."}</p></div>{monthRows.length ? <a className="primary-button" href={`/api/payroll/period/${period}`} target="_blank" rel="noreferrer">Alle Lohnzettel (PDF)</a> : null}</div>
+      {monthRows.length && monthRows.every((row) => !Number(row.tour_count)) ? <div className="inline-notice" style={{ margin: "0 20px 12px" }}>Keine Arbeitstage gefunden: In {period} gibt es keine passende Wochenplanung (oder keine gestartete Tour). Prüfen Sie den Monat und die KW-Planung; „Geplante Tage mitzählen“ muss angehakt sein.</div> : null}
+      {monthRows.length ? <div className="table-wrap"><table><thead><tr><th>Mitarbeiter</th><th>Grundgehalt</th><th>Arbeitstage</th><th>Spesen</th><th>Zuschläge</th><th>Erstattung</th><th>Abzüge</th><th>Auszahlung</th><th>Status</th><th /></tr></thead><tbody>
+        {monthRows.map((row) => <tr key={row.id} className={selected?.id === row.id ? "payroll-row-editing" : undefined}><td><strong>{row.full_name}</strong>{String(row.calculation_details || "").includes('"source":"manual-adjustment"') ? <small className="manual-badge" title="Von Hand korrigiert – wird beim automatischen Berechnen nicht überschrieben">✎ manuell</small> : null}</td><td>{euro(row.base_salary)}</td><td>{row.tour_count}</td><td>{euro(row.expenses)}</td><td>{euro(Number(row.night_bonus || 0) + Number(row.sunday_bonus || 0) + Number(row.holiday_bonus || 0))}</td><td>{euro(row.reimbursements)}</td><td>{euro(row.deductions)}</td><td><strong>{euro(row.net_amount)}</strong></td><td><span className="status-pill">{row.payment_status}</span></td><td><a href={`/api/payroll/${row.id}/pdf`} target="_blank">PDF ↓</a>{!isClosed ? <> <button className="edit-action" onClick={() => { setSelected(row); setTimeout(() => document.getElementById("payroll-edit")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }}>Bearbeiten</button></> : null}</td></tr>)}
+      </tbody></table></div> : null}
+    </div> : null}
+    {!driver ? <PayrollFileImport staff={staff} period={period} reload={reload} /> : null}
+    {!driver ? <div className="panel" id="payroll-edit"><div className="panel-title"><div><h2>Abrechnung prüfen und korrigieren</h2><p>Automatische Werte können vor dem Monatsabschluss nachvollziehbar angepasst werden.</p></div></div><form className="payroll-form" onSubmit={submit} key={`${String(selected?.id || "new")}-${String(selected?.updated_at || selected?.calculated_at || "")}`}>
       <select name="staffId" required defaultValue={String(selected?.staff_id || "")}><option value="">Mitarbeiter</option>{staff.map((person) => <option key={person.id} value={String(person.id)}>{person.full_name}</option>)}</select>
       <label>Monat<input name="period" type="month" required defaultValue={String(selected?.period || new Date().toISOString().slice(0, 7))} /></label>
       <label>Grundgehalt<input name="baseSalary" type="number" step="0.01" min="0" defaultValue={String(selected?.base_salary || 0)} /></label>
-      <label>Anzahl Touren<input name="tourCount" type="number" min="0" defaultValue={String(selected?.tour_count || 0)} /></label>
+      <label>Arbeitstage<input name="tourCount" type="number" min="0" defaultValue={String(selected?.tour_count || 0)} /></label>
       <label>Spesen<input name="expenses" type="number" step="0.01" defaultValue={String(selected?.expenses || 0)} /></label>
       <label>Nachtzuschläge<input name="nightBonus" type="number" step="0.01" defaultValue={String(selected?.night_bonus || 0)} /></label>
       <label>Sonntagszuschläge<input name="sundayBonus" type="number" step="0.01" defaultValue={String(selected?.sunday_bonus || 0)} /></label>
@@ -129,16 +153,176 @@ export function PayrollCenter({ rows, periods, staff, driver, management, locale
       <label>Zahlungsstatus<select name="paymentStatus" defaultValue={String(selected?.payment_status || "draft")}><option value="draft">Entwurf</option><option value="review">Prüfung</option><option value="approved">Freigegeben</option><option value="paid">Bezahlt</option></select></label>
       <button className="primary-button">Abrechnung speichern</button>{selected ? <button type="button" onClick={() => setSelected(null)}>Abbrechen</button> : null}
     </form></div> : null}
-    <div className="panel"><div className="panel-title"><div><h2>{driver ? c.title : "Lohnjournal"}</h2><p>{driver ? c.help : "Monatliche Lohnwerte, Zahlungsstatus, Berechnungsquelle und PDF"}</p></div></div><div className="table-wrap"><table className="payroll-ledger"><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>{driver ? c.month : "Monat"}</th><th>{driver ? c.base : "Grundgehalt"}</th><th>{driver ? c.tours : "Touren"}</th><th>{c.expenses}</th><th>{c.night}</th><th>{c.sunday}</th><th>{c.holiday}</th><th>{c.reimbursements}</th><th>{c.deductions}</th><th>{c.net}</th><th>{c.status}</th><th>PDF</th>{!driver ? <th /> : null}</tr></thead><tbody>{rows.length ? rows.map((row) => { const closed = periods.some((item) => item.period === row.period && item.status === "closed"); return <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td><strong>{row.period}</strong>{closed ? <small className="locked-note">🔒 geschlossen</small> : null}</td><td>{euro(row.base_salary)}</td><td>{row.tour_count}</td><td>{euro(row.expenses)}</td><td>{euro(row.night_bonus)}</td><td>{euro(row.sunday_bonus)}</td><td>{euro(row.holiday_bonus)}</td><td>{euro(row.reimbursements)}</td><td>{euro(row.deductions)}</td><td><strong>{euro(row.net_amount)}</strong></td><td><span className="status-pill">{row.payment_status}</span></td><td><a href={`/api/payroll/${row.id}/pdf`} target="_blank">PDF ↓</a></td>{!driver ? <td>{closed ? <span className="locked-note">Gesperrt</span> : <button className="edit-action" onClick={() => setSelected(row)}>Bearbeiten</button>}</td> : null}</tr>; }) : <tr><td colSpan={14}>{driver ? c.empty : "Noch keine Monatsabrechnung"}</td></tr>}</tbody></table></div></div>
+    {driver ? <div className="panel"><div className="panel-title"><div><h2>{c.title}</h2><p>{c.help}</p></div></div><div className="table-wrap"><table className="payroll-ledger"><thead><tr>{!driver ? <th>Mitarbeiter</th> : null}<th>{driver ? c.month : "Monat"}</th><th>{driver ? c.base : "Grundgehalt"}</th><th>{driver ? c.tours : "Touren"}</th><th>{c.expenses}</th><th>{c.night}</th><th>{c.sunday}</th><th>{c.holiday}</th><th>{c.reimbursements}</th><th>{c.deductions}</th><th>{c.net}</th><th>{c.status}</th><th>PDF</th>{!driver ? <th /> : null}</tr></thead><tbody>{rows.length ? rows.map((row) => { const closed = periods.some((item) => item.period === row.period && item.status === "closed"); return <tr key={row.id}>{!driver ? <td>{row.full_name}</td> : null}<td><strong>{row.period}</strong>{closed ? <small className="locked-note">🔒 geschlossen</small> : null}</td><td>{euro(row.base_salary)}</td><td>{row.tour_count}</td><td>{euro(row.expenses)}</td><td>{euro(row.night_bonus)}</td><td>{euro(row.sunday_bonus)}</td><td>{euro(row.holiday_bonus)}</td><td>{euro(row.reimbursements)}</td><td>{euro(row.deductions)}</td><td><strong>{euro(row.net_amount)}</strong></td><td><span className="status-pill">{row.payment_status}</span></td><td><a href={`/api/payroll/${row.id}/pdf`} target="_blank">PDF ↓</a></td>{!driver ? <td>{closed ? <span className="locked-note">Gesperrt</span> : <button className="edit-action" onClick={() => setSelected(row)}>Bearbeiten</button>}</td> : null}</tr>; }) : <tr><td colSpan={14}>{driver ? c.empty : "Noch keine Monatsabrechnung"}</td></tr>}</tbody></table></div></div> : null}
+  </div>;
+}
+
+const monthDays = (period: string) => {
+  const [year, month] = period.split("-").map(Number);
+  const count = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(Date.UTC(year, month - 1, index + 1));
+    return { key: date.toISOString().slice(0, 10), day: index + 1, weekday: (date.getUTCDay() + 6) % 7 };
+  });
+};
+type DayEntry = { type: "work" | "vacation" | "sick"; hours: number; night: boolean };
+// Same federal holidays the payroll calculation uses for the holiday bonus.
+const federalHoliday = (key: string) => {
+  const year = Number(key.slice(0, 4));
+  if (["01-01", "05-01", "10-03", "12-25", "12-26"].includes(key.slice(5))) return true;
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const easter = Date.UTC(year, Math.floor((h + l - 7 * m + 114) / 31) - 1, ((h + l - 7 * m + 114) % 31) + 1);
+  const day = Date.parse(`${key}T00:00:00Z`);
+  return [-2, 1, 39, 50].some((offset) => day === easter + offset * 86400000);
+};
+const dayLabels: Record<DayEntry["type"], string> = { work: "Arbeit", vacation: "Urlaub", sick: "Krank" };
+
+function WorkTimeSheet({ staff, workDays, period, setPeriod, closed, action }: { staff: Row[]; workDays: Row[]; period: string; setPeriod: (value: string) => void; closed: boolean; action: Action }) {
+  const [staffId, setStaffId] = useState(String(staff[0]?.id || ""));
+  const [days, setDays] = useState<Record<string, DayEntry>>({});
+  const [hoursPerDay, setHoursPerDay] = useState("8");
+  const [busy, setBusy] = useState(false);
+  const stored = useMemo(() => workDays.filter((row) => String(row.staff_id) === staffId && String(row.work_date).startsWith(period)), [workDays, staffId, period]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDays(Object.fromEntries(stored.map((row) => [String(row.work_date), { type: String(row.day_type) as DayEntry["type"], hours: Number(row.hours), night: Boolean(Number(row.night)) }])));
+  }, [stored]);
+  const calendar = monthDays(period);
+  const storedDays = useMemo(() => Object.fromEntries(stored.map((row) => [String(row.work_date), { type: String(row.day_type), hours: Number(row.hours), night: Boolean(Number(row.night)) }])), [stored]);
+  const dirty = JSON.stringify(Object.entries(days).sort()) !== JSON.stringify(Object.entries(storedDays).sort());
+  const leaveUnsaved = () => !dirty || window.confirm("Änderungen für diesen Mitarbeiter sind nicht gespeichert. Trotzdem wechseln?");
+  const summary = { work: 0, hours: 0, vacation: 0, sick: 0 };
+  for (const entry of Object.values(days)) { if (entry.type === "work") { summary.work += 1; summary.hours += Number(entry.hours || 0); } else summary[entry.type] += 1; }
+  const perStaff = (id: unknown) => {
+    const list = workDays.filter((row) => String(row.staff_id) === String(id) && String(row.work_date).startsWith(period));
+    return { days: list.filter((row) => row.day_type === "work").length, hours: list.reduce((sum, row) => sum + (row.day_type === "work" ? Number(row.hours || 0) : 0), 0) };
+  };
+  function cycle(key: string) {
+    if (closed) return;
+    setDays((current) => {
+      const next = { ...current }; const entry = next[key];
+      if (!entry) next[key] = { type: "work", hours: Number(hoursPerDay) || 8, night: false };
+      else if (entry.type === "work") next[key] = { ...entry, type: "vacation" };
+      else if (entry.type === "vacation") next[key] = { ...entry, type: "sick" };
+      else delete next[key];
+      return next;
+    });
+  }
+  function patch(key: string, change: Partial<DayEntry>) { setDays((current) => current[key] ? { ...current, [key]: { ...current[key], ...change } } : current); }
+  function weekdays() {
+    setDays((current) => ({ ...current, ...Object.fromEntries(calendar.filter((item) => item.weekday < 5 && !current[item.key]).map((item) => [item.key, { type: "work" as const, hours: Number(hoursPerDay) || 8, night: false }])) }));
+  }
+  async function save() {
+    if (!staffId) return;
+    setBusy(true);
+    await action({ action: "saveWorkDays", staffId, period, days: Object.entries(days).map(([date, entry]) => ({ date, ...entry })) } as never);
+    setBusy(false);
+  }
+  async function fillFromPlan() {
+    setBusy(true);
+    await action({ action: "fillWorkDaysFromPlan", period, hoursPerDay });
+    setBusy(false);
+  }
+  const person = staff.find((item) => String(item.id) === staffId);
+  return <div className="panel timesheet">
+    <div className="panel-title"><div><h2>1 · Arbeitszeit erfassen</h2><p>Wie in der Lohnbuchhaltung: pro Mitarbeiter und Monat die Arbeitstage eintragen. Tag anklicken: Arbeit → Urlaub → Krank → leer. Danach unter „2 · Berechnen“ die Abrechnung erstellen.</p></div></div>
+    <div className="timesheet-controls">
+      <label>Monat<input type="month" value={period} onChange={(event) => { if (leaveUnsaved()) setPeriod(event.target.value); }} /></label>
+      <label>Stunden je Arbeitstag<input type="number" min="1" max="24" step="0.5" value={hoursPerDay} onChange={(event) => setHoursPerDay(event.target.value)} /></label>
+      <button type="button" disabled={busy || closed} onClick={fillFromPlan}>Aus KW-Planung übernehmen (alle)</button>
+      {closed ? <span className="locked-note">🔒 Monat geschlossen</span> : null}
+    </div>
+    <div className="timesheet-layout">
+      <aside className="timesheet-people">{staff.map((item) => { const info = perStaff(item.id); return <button type="button" key={String(item.id)} className={String(item.id) === staffId ? "active" : ""} onClick={() => { if (String(item.id) !== staffId && leaveUnsaved()) setStaffId(String(item.id)); }}><b>{String(item.full_name)}</b><small>{info.days ? `${info.days} Tage · ${info.hours} h` : "nicht erfasst"}</small></button>; })}</aside>
+      <div className="timesheet-main">
+        <div className="timesheet-head"><strong>{person ? String(person.full_name) : "—"}</strong><span>{person?.compensation ? `Vergütung: ${String(person.compensation)}` : "Keine Vergütung im Mitarbeiterstamm hinterlegt"}</span></div>
+        <div className="timesheet-grid">
+          {["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].map((name) => <em key={name}>{name}</em>)}
+          {Array.from({ length: calendar[0].weekday }, (_, index) => <i key={`pad-${index}`} />)}
+          {calendar.map((item) => { const entry = days[item.key]; return <div key={item.key} className={`ts-day${entry ? ` ts-${entry.type}` : ""}${item.weekday === 6 ? " ts-sunday" : ""}${federalHoliday(item.key) ? " ts-holiday" : ""}`} title={federalHoliday(item.key) ? "Gesetzlicher Feiertag – Feiertagszuschlag" : undefined}>
+            <button type="button" onClick={() => cycle(item.key)}><b>{item.day}</b><span>{entry ? dayLabels[entry.type] : ""}</span></button>
+            {entry?.type === "work" ? <div className="ts-extra"><input type="number" min="0" max="24" step="0.5" value={entry.hours} onChange={(event) => patch(item.key, { hours: Number(event.target.value) })} aria-label="Stunden" /><label title="Nachtschicht"><input type="checkbox" checked={entry.night} onChange={(event) => patch(item.key, { night: event.target.checked })} />🌙</label></div> : null}
+          </div>; })}
+        </div>
+        <div className="timesheet-footer"><span><b>{summary.work}</b> Arbeitstage</span><span><b>{summary.hours}</b> Stunden</span><span><b>{summary.vacation}</b> Urlaub</span><span><b>{summary.sick}</b> Krank</span>
+          <div>{dirty ? <span className="ts-unsaved">● Nicht gespeichert</span> : null}<button type="button" onClick={weekdays} disabled={closed}>Mo–Fr eintragen</button><button type="button" onClick={() => setDays({})} disabled={closed}>Leeren</button><button type="button" className="primary-button" disabled={busy || closed} onClick={save}>Speichern</button></div></div>
+      </div>
+    </div>
+  </div>;
+}
+
+function PayrollFileImport({ staff, period, reload }: { staff: Row[]; period: string; reload: () => Promise<void> }) {
+  const [records, setRecords] = useState<PayrollRecord[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [problems, setProblems] = useState<string[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const known = useMemo(() => new Set(staff.map((person) => String(person.full_name).trim().toLowerCase().replace(/\s+/g, " "))), [staff]);
+  const isKnown = (record: PayrollRecord) => known.has(record.name.trim().toLowerCase().replace(/\s+/g, " "));
+  async function readFile(file: File) {
+    setBusy(true); setMessage(""); setProblems([]); setRecords([]); setFileName(file.name);
+    try {
+      const lower = file.name.toLowerCase();
+      let found: PayrollRecord[] = [];
+      if (lower.endsWith(".xlsx")) {
+        const { default: readWorkbook } = await import("read-excel-file/browser");
+        const workbook = await readWorkbook(file) as { sheet: string; data: unknown[][] }[];
+        for (const sheet of workbook) {
+          const matrix = sheet.data.filter((row) => row.some((cell) => String(cell ?? "").trim()));
+          const headerIndex = matrix.findIndex((row) => row.filter((cell) => String(cell ?? "").trim()).length >= 2);
+          if (headerIndex < 0) continue;
+          const headers = matrix[headerIndex].map((cell, index) => String(cell ?? "").trim() || `Spalte ${index + 1}`);
+          const parsed = matrix.slice(headerIndex + 1).map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""])));
+          found = found.concat(mapPayrollRows(parsed, period));
+        }
+      } else if (lower.endsWith(".csv")) {
+        found = mapPayrollRows(parseCsv(await file.text()), period);
+      } else if (file.type === "application/pdf" || file.type.startsWith("image/")) {
+        const form = new FormData(); form.set("file", file); form.set("period", period);
+        const response = await fetch("/api/payroll-import", { method: "POST", body: form });
+        const result = await response.json() as { records?: PayrollRecord[]; error?: string };
+        if (!response.ok) throw new Error(result.error || "Datei konnte nicht gelesen werden");
+        found = result.records || [];
+      } else throw new Error("Unterstützt: Excel (.xlsx), CSV, PDF oder Foto");
+      if (!found.length) throw new Error("Keine Mitarbeiter-Zeilen erkannt. Die Datei braucht Spalten wie Name, Grundgehalt, Spesen, Netto.");
+      setRecords(found);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Fehler beim Lesen"); }
+    setBusy(false);
+  }
+  async function commit() {
+    setBusy(true); setMessage("");
+    const response = await fetch("/api/payroll-import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ records: records.filter(isKnown) }) });
+    const result = await response.json() as { imported?: number; problems?: string[]; error?: string };
+    setBusy(false);
+    if (!response.ok) return setMessage(result.error || "Import fehlgeschlagen");
+    setMessage(`${result.imported} Abrechnungen übernommen.`); setProblems(result.problems || []); setRecords([]); setFileName(""); await reload();
+  }
+  const matched = records.filter(isKnown).length;
+  return <div className="panel payroll-import">
+    <div className="panel-title"><div><h2>Abrechnung aus Datei übernehmen</h2><p>Datei hochladen – Mitarbeiter, Beträge und Monat werden automatisch erkannt und ins Portal übertragen.</p></div></div>
+    <label className={`import-dropzone${dragging ? " import-dropzone-active" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); const file = event.dataTransfer.files[0]; if (file) void readFile(file); }}>
+      <span>⇪</span><strong>{busy ? "Wird verarbeitet …" : fileName || "Datei hierher ziehen oder auswählen"}</strong><small>Excel · CSV · PDF · Foto</small>
+      <input type="file" accept=".xlsx,.csv,application/pdf,image/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readFile(file); event.target.value = ""; }} />
+    </label>
+    {message ? <div className="inline-notice">{message}</div> : null}
+    {records.length ? <>
+      <div className="table-wrap"><table><thead><tr><th>Mitarbeiter</th><th>Monat</th><th>Grundgehalt</th><th>Arbeitstage</th><th>Zuschläge</th><th>Spesen</th><th>Erstattung</th><th>Abzüge</th><th>Netto</th><th /></tr></thead><tbody>
+        {records.map((record, index) => <tr key={index}><td><strong>{record.name}</strong></td><td>{record.period}</td><td>{euro(record.baseSalary)}</td><td>{record.tourCount}</td><td>{euro(record.nightBonus + record.sundayBonus + record.holidayBonus)}</td><td>{euro(record.expenses)}</td><td>{euro(record.reimbursements)}</td><td>{euro(record.deductions)}</td><td><strong>{euro(record.netAmount)}</strong></td><td>{isKnown(record) ? <span className="ok-chip">Zugeordnet</span> : <span className="danger-chip">Unbekannt</span>}</td></tr>)}
+      </tbody></table></div>
+      <div className="import-toolbar"><button className="primary-button" disabled={busy || !matched} onClick={commit}>{matched} Abrechnungen übernehmen</button><button type="button" onClick={() => { setRecords([]); setFileName(""); }}>Verwerfen</button>{matched < records.length ? <span className="locked-note">{records.length - matched} Zeilen ohne passenden Mitarbeiter werden übersprungen.</span> : null}</div>
+    </> : null}
+    {problems.length ? <ul className="import-problems">{problems.map((item) => <li key={item}>{item}</li>)}</ul> : null}
   </div>;
 }
 
 export function MaintenanceCenter({ rows, vehicles, canEdit, action }: { rows: Row[]; vehicles: Row[]; canEdit: boolean; action: Action }) {
   const [editing, setEditing] = useState<Row | null>(null);
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    event.preventDefault(); const form = event.currentTarget; const values = Object.fromEntries(new FormData(form).entries());
     await action({ action: editing ? "updateMaintenance" : "addMaintenance", id: editing?.id || null, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) });
-    setEditing(null); event.currentTarget.reset();
+    setEditing(null); form.reset();
   }
   return <div className="panel maintenance-panel"><div className="panel-title"><div><h2>Wartung & Schadensverlauf</h2><p>TÜV/HU/SP, Versicherung, Reparatur, Kosten und Freigabe</p></div></div>{canEdit ? <form className="advanced-form" onSubmit={submit} key={String(editing?.id || "new")}>
     <select name="licensePlate" required defaultValue={String(editing?.license_plate || "")} disabled={Boolean(editing)}><option value="">Kennzeichen</option>{vehicles.map((vehicle) => <option key={vehicle.id}>{vehicle.license_plate}</option>)}</select>
@@ -152,44 +336,33 @@ export function MaintenanceCenter({ rows, vehicles, canEdit, action }: { rows: R
   </form> : null}<div className="table-wrap"><table><thead><tr><th>Kennzeichen</th><th>Kategorie</th><th>Beschreibung</th><th>Verantwortlich</th><th>Termin</th><th>Kosten</th><th>Status</th>{canEdit ? <th /> : null}</tr></thead><tbody>{rows.length ? rows.map((row) => <tr key={row.id}><td><strong>{row.license_plate}</strong></td><td>{row.category}</td><td>{row.description}</td><td>{row.responsible || "—"}</td><td>{dateText(row.due_date)}</td><td>{euro(row.cost)}</td><td><span className="status-pill">{row.status}</span></td>{canEdit ? <td><button className="edit-action" onClick={() => setEditing(row)}>Bearbeiten</button></td> : null}</tr>) : <tr><td colSpan={8}>Keine Wartungsvorgänge</td></tr>}</tbody></table></div></div>;
 }
 
-export function ExcelImporter({ staff, vehicles, planning, year, kw, reload }: { staff: Row[]; vehicles: Row[]; planning: Row[]; year: number; kw: number; reload: () => Promise<void> }) {
-  const [type, setType] = useState("staff"); const [rows, setRows] = useState<Record<string, unknown>[]>([]); const [fileName, setFileName] = useState(""); const [result, setResult] = useState(""); const [sheets, setSheets] = useState<{ sheet: string; data: unknown[][] }[]>([]); const [selectedSheet, setSelectedSheet] = useState("");
-  function prepareMatrix(source: unknown[][]) {
-    const matrix = source.filter((row) => row.some((cell) => String(cell ?? "").trim()));
-    const headerIndex = matrix.findIndex((row) => row.filter((cell) => String(cell ?? "").trim()).length >= 2);
-    if (headerIndex < 0) return setResult("Keine Tabellenüberschrift erkannt");
-    const headers = matrix[headerIndex].map((cell, index) => String(cell ?? "").trim() || `Spalte ${index + 1}`);
-    const parsed = matrix.slice(headerIndex + 1).map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]))).filter((row) => Object.values(row).some((item) => String(item).trim()));
-    setRows(parsed.slice(0, 2000)); setResult("");
-  }
-  async function readFile(file: File) {
-    const { default: readWorkbook } = await import("read-excel-file/browser");
-    const workbook = await readWorkbook(file) as { sheet: string; data: unknown[][] }[];
-    setSheets(workbook); setFileName(file.name); setSelectedSheet(workbook[0]?.sheet || "");
-    if (workbook[0]) prepareMatrix(workbook[0].data);
-  }
-  const duplicateCount = useMemo(() => rows.filter((row) => {
-    const flat = Object.values(row).map(String).map((v) => v.trim().toLowerCase());
-    if (type === "staff") return staff.some((item) => flat.includes(String(item.full_name).toLowerCase()));
-    if (type === "vehicles") return vehicles.some((item) => flat.includes(String(item.license_plate).toLowerCase()));
-    return planning.some((item) => flat.includes(String(item.driver_name || "").toLowerCase()) && flat.includes(String(item.license_plate || "").toLowerCase()));
-  }).length, [rows, type, staff, vehicles, planning]);
-  async function confirmImport() {
-    const response = await fetch("/api/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, rows, year, kw }) });
-    const value = await response.json() as { error?: string; inserted?: number; skipped?: number; errors?: string[] };
-    if (!response.ok) return setResult(value.error || "Import fehlgeschlagen");
-    setResult(`${value.inserted} Datensätze importiert, ${value.skipped} Duplikate/Leerzeilen übersprungen${value.errors?.length ? `, ${value.errors.length} Fehler` : ""}.`); await reload();
-  }
-  const headers = Object.keys(rows[0] || {}).slice(0, 8);
-  return <div className="panel"><div className="panel-title"><div><h2>Excel importieren</h2><p>Voransicht und Duplikatprüfung vor dem Speichern in die Datenbank</p></div></div><div className="import-toolbar"><select value={type} onChange={(event) => { setType(event.target.value); setRows([]); }}><option value="staff">Mitarbeiter / Fahrer im System</option><option value="vehicles">Licence Plate Table</option><option value="planning">Planning Sheet für {year} / KW {kw}</option></select><input type="file" accept=".xlsx" onChange={(event) => event.target.files?.[0] && readFile(event.target.files[0])} />{sheets.length > 1 ? <select value={selectedSheet} onChange={(event) => { const name = event.target.value; setSelectedSheet(name); const sheet = sheets.find((item) => item.sheet === name); if (sheet) prepareMatrix(sheet.data); }}>{sheets.map((sheet) => <option key={sheet.sheet}>{sheet.sheet}</option>)}</select> : null}<button className="primary-button" disabled={!rows.length} onClick={confirmImport}>Import bestätigen</button></div>{fileName ? <div className="import-summary"><strong>{fileName}</strong><span>Blatt: {selectedSheet || "—"}</span><span>{rows.length} Zeilen erkannt</span><span className={duplicateCount ? "danger-chip" : "ok-chip"}>{duplicateCount} mögliche Duplikate</span></div> : null}{result ? <div className="inline-notice">{result}</div> : null}{rows.length ? <div className="table-wrap preview-table"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.slice(0, 25).map((row, index) => <tr key={index}>{headers.map((header) => <td key={header}>{String(row[header] ?? "")}</td>)}</tr>)}</tbody></table></div> : <div className="empty-state">Excel-Datei auswählen — die Daten werden zuerst nur als Vorschau gezeigt.</div>}</div>;
+const auditLabels: Record<string, string> = {
+  savePayroll: "Abrechnung gespeichert", calculatePayrollPeriod: "Monat berechnet", setPayrollPeriodStatus: "Abrechnungsmonat Status geändert", reopenPayrollPeriod: "Abrechnungsmonat wieder geöffnet",
+  saveWorkDays: "Arbeitszeit gespeichert", fillWorkDaysFromPlan: "Arbeitszeit aus Planung übernommen", payrollFileImport: "Lohn aus Datei importiert", downloadPayrollPdf: "Lohnzettel geöffnet", downloadPayrollBulkPdf: "Alle Lohnzettel geöffnet",
+  addAbsence: "Abwesenheit eingetragen", deleteAbsence: "Abwesenheit gelöscht", addDriverPerformance: "Fahrerbewertung / Ereignis", createStaffForm: "Personaldokument (PDF) erstellt", backupExport: "Backup heruntergeladen",
+  saveStaff: "Mitarbeiter gespeichert", archiveStaff: "Mitarbeiter ausgeschieden", restoreStaff: "Mitarbeiter reaktiviert", deleteStaff: "Mitarbeiter gelöscht", saveVehicle: "Fahrzeug gespeichert", updateVehicle: "Fahrzeug geändert",
+  savePlanning: "Planung gespeichert", updatePlanning: "Planung geändert", deletePlanning: "Planung gelöscht", saveTripOperation: "Tourstatus geändert", sendTripMessage: "Chat-Nachricht gesendet", deleteTripMessage: "Chat-Nachricht gelöscht", sendDirectMessage: "Direktnachricht gesendet", deleteDirectMessage: "Direktnachricht gelöscht", markDirectMessagesRead: "Direktnachrichten gelesen",
+};
+const humanAction = (action: unknown) => auditLabels[String(action)] || String(action).replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase());
+
+function ChangeLog({ audit }: { audit: Row[] }) {
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(30);
+  const rows = audit.filter((row) => `${humanAction(row.action)} ${row.user_name || row.full_name || ""} ${row.entity_id || ""}`.toLowerCase().includes(query.trim().toLowerCase()));
+  return <div className="panel"><div className="panel-title"><div><h2>Änderungsprotokoll</h2><p>Wer hat wann was geändert – die letzten Einträge zuerst</p></div><input className="month-input" placeholder="Suchen …" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+    <div className="changelog">{rows.slice(0, limit).map((row) => <article key={String(row.id)}><time>{String(row.created_at).slice(0, 16).replace("T", " ")}</time><div><b>{humanAction(row.action)}</b><small>{String(row.user_name || row.full_name || row.user_email || `Benutzer ${row.user_id ?? "—"}`)}{row.entity_id ? ` · Objekt ${row.entity_id}` : ""}</small></div></article>)}
+      {!rows.length ? <div className="empty-state">Keine Einträge gefunden</div> : null}
+      {rows.length > limit ? <button type="button" className="sort-toggle" onClick={() => setLimit(limit + 50)}>Mehr anzeigen ({rows.length - limit})</button> : null}
+    </div></div>;
 }
 
 export function SecurityCenter({ loginAudit, resetRequests, audit, action }: { loginAudit: Row[]; resetRequests: Row[]; audit: Row[]; action: Action }) {
   function backup() { window.open("/api/admin/backup", "_blank"); }
-  return <div className="advanced-stack"><div className="security-grid"><div className="security-card"><strong>2FA geschützt</strong><span>Management und Buchhaltung bestätigen den Login mit einem Einmalcode.</span></div><div className="security-card"><strong>5 Fehlversuche</strong><span>Danach wird der Zugang automatisch 15 Minuten gesperrt.</span></div><div className="security-card"><strong>DSGVO-Export</strong><span>Personalbezogene Daten sind je Mitarbeiter exportierbar.</span></div><button className="security-card security-action" onClick={backup}><strong>Backup exportieren</strong><span>Strukturierte Datenbank-Sicherung als JSON herunterladen.</span></button></div>
+  return <div className="advanced-stack"><div className="security-grid"><div className="security-card"><strong>2FA geschützt</strong><span>Management und Buchhaltung bestätigen den Login mit einem Einmalcode.</span></div><div className="security-card"><strong>5 Fehlversuche</strong><span>Danach wird der Zugang automatisch 15 Minuten gesperrt.</span></div><div className="security-card"><strong>DSGVO-Export</strong><span>Personalbezogene Daten sind je Mitarbeiter exportierbar.</span></div><button className="security-card security-action" onClick={backup}><strong>⬇ Alle Daten herunterladen</strong><span>Komplette Sicherung (Mitarbeiter, Touren, Lohn, Abwesenheiten …) als Datei speichern – am besten einmal pro Woche.</span></button></div>
     {resetRequests.length ? <div className="panel"><div className="panel-title"><div><h2>Offene Passwortanfragen</h2><p>Neuen Startcode im Mitarbeiterprofil vergeben und Anfrage schließen</p></div></div><div className="table-wrap"><table><thead><tr><th>Email</th><th>Anfrage</th><th /></tr></thead><tbody>{resetRequests.map((row) => <tr key={row.id}><td>{row.email}</td><td>{dateText(row.created_at)}</td><td><button className="edit-action" onClick={() => action({ action: "resolveResetRequest", id: row.id })}>Als erledigt markieren</button></td></tr>)}</tbody></table></div></div> : null}
     <div className="panel"><div className="panel-title"><div><h2>Login-Journal</h2><p>Erfolgreiche und fehlgeschlagene Anmeldeversuche</p></div></div><div className="table-wrap"><table><thead><tr><th>Zeit</th><th>Email</th><th>Ergebnis</th><th>IP</th></tr></thead><tbody>{loginAudit.map((row) => <tr key={row.id}><td>{String(row.created_at).slice(0, 16).replace("T", " ")}</td><td>{row.email}</td><td>{Number(row.success) ? <span className="ok-chip">Erfolgreich</span> : <span className="danger-chip">Fehlgeschlagen</span>}</td><td>{row.ip_address || "—"}</td></tr>)}</tbody></table></div></div>
-    <div className="panel"><div className="panel-title"><div><h2>Änderungshistorie</h2><p>Wer, wann und welche Daten geändert hat</p></div></div><div className="table-wrap"><table><thead><tr><th>Zeit</th><th>Benutzer</th><th>Aktion</th><th>Objekt</th><th>Details</th></tr></thead><tbody>{audit.map((row) => <tr key={row.id}><td>{String(row.created_at).slice(0, 16).replace("T", " ")}</td><td>{row.user_name || row.user_id}</td><td>{row.action}</td><td>{row.entity_id || "—"}</td><td><details><summary>Anzeigen</summary><pre>{String(row.details || "{}").slice(0, 1200)}</pre></details></td></tr>)}</tbody></table></div></div></div>;
+    <ChangeLog audit={audit} />
+  </div>;
 }
 
 function trackerStatus(row: Row, clock: number) {

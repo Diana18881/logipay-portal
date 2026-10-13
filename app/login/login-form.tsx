@@ -15,6 +15,8 @@ export function LoginForm() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
+    setTwoFactor(null);
+    setTwoFactorCode("");
     setLoading(true);
     const response = await fetch("/api/auth/login", {
       method: "POST",

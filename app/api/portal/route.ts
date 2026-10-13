@@ -1,7 +1,9 @@
 import { env } from "@logipay/env";
 import { ensureDomainDatabase } from "../../../lib/domain";
 import { hashPassword, requirePortalUser } from "../../../lib/auth";
+import { deleteDirectMessage, loadChatContacts, loadDirectMessages, markDirectMessagesRead, requireChatRecipient } from "../../../lib/direct-chat";
 import { deleteTripMessage } from "../../../lib/trip-chat";
+import { pushNewNotifications } from "../../../lib/push";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const normalizeDays = (value: unknown) => {
@@ -16,10 +18,15 @@ const daySetsOverlap = (left: string, right: string) => {
   return left.split(",").some((day) => rightDays.has(day));
 };
 
+// First amount in "Vergütung": "1.750 €" and "1,750 €" = 1750, "14,50 €/h" and "14.50 €/h" = 14.5; ranges use the lower bound.
 const parseCompensation = (value: unknown) => {
-  const normalized = String(value || "").replaceAll(".", "").replace(",", ".");
-  const match = normalized.match(/\d+(?:\.\d{1,2})?/);
-  return match ? Number(match[0]) : 0;
+  const match = String(value || "").match(/\d[\d.,]*/);
+  if (!match) return 0;
+  let text = match[0].replace(/[.,]+$/, "");
+  if (/,\d{1,2}$/.test(text)) text = text.replace(/\./g, "").replace(",", ".");
+  else if (/^\d{1,3}(\.\d{3})+$/.test(text)) text = text.replace(/\./g, "");
+  else text = text.replace(/,/g, "");
+  return Number(text) || 0;
 };
 
 const easterSunday = (year: number) => {
@@ -49,19 +56,17 @@ const isGermanFederalHoliday = (date: Date) => {
   return [-2, 1, 39, 50].some((offset) => day === easter + offset * 86400000);
 };
 
-const berlinTripTime = (value: string) => {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Berlin",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-    hour: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(value)).map((part) => [part.type, part.value]));
-  const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
-  return { hour: Number(parts.hour), sunday: parts.weekday === "Sun", holiday: isGermanFederalHoliday(date) };
+// A monthly base typed in by hand survives recalculation; otherwise it follows "Vergütung" in the staff record.
+const keepsManualBase = (existing: Record<string, string | number | null> | null) => {
+  if (!existing) return false;
+  try {
+    const details = JSON.parse(String(existing.calculation_details || "{}")) as { source?: string; manualBase?: boolean };
+    return details.source === "manual-adjustment" || details.manualBase === true;
+  }
+  catch { return false; }
 };
+
+const payrollEligibleStatuses = ["Gestartet", "Beladen", "Unterwegs", "Zugestellt", "Problem"] as const;
 
 export async function GET(request: Request) {
   const user = await requirePortalUser();
@@ -258,6 +263,8 @@ export async function GET(request: Request) {
         .bind(user.id, year, kw, driverStaffId || -1, user.fullName).all()
       : await env.DB.prepare(`${tripMessagesSql} WHERE p.planning_year=? AND p.calendar_week=? ORDER BY m.created_at, m.id`)
         .bind(user.id, year, kw).all();
+  const chatContacts = await loadChatContacts(user);
+  const directMessages = await loadDirectMessages(user);
   const expenses = user.role === "driver"
     ? await env.DB.prepare("SELECT e.*, s.full_name FROM expenses e JOIN staff s ON s.id=e.staff_id WHERE e.staff_id=? ORDER BY e.expense_date DESC, e.id DESC").bind(driverStaffId || -1).all()
     : await env.DB.prepare("SELECT e.*, s.full_name FROM expenses e JOIN staff s ON s.id=e.staff_id ORDER BY e.expense_date DESC, e.id DESC LIMIT 500").all();
@@ -274,10 +281,20 @@ export async function GET(request: Request) {
   const payrollPeriods = user.role === "dispatcher"
     ? { results: [] }
     : await env.DB.prepare("SELECT pp.*, closer.full_name AS closed_by_name, opener.full_name AS reopened_by_name FROM payroll_periods pp LEFT JOIN users closer ON closer.id=pp.closed_by LEFT JOIN users opener ON opener.id=pp.reopened_by ORDER BY pp.period DESC LIMIT 36").all();
+  const absences = user.role === "driver"
+    ? await env.DB.prepare("SELECT a.*, s.full_name FROM absences a JOIN staff s ON s.id=a.staff_id WHERE a.staff_id=? AND a.end_date >= date('now','-400 day')").bind(driverStaffId || -1).all()
+    : await env.DB.prepare("SELECT a.*, s.full_name FROM absences a JOIN staff s ON s.id=a.staff_id WHERE a.end_date >= date('now','-400 day') ORDER BY a.start_date").all();
+  const workDays = user.role === "dispatcher"
+    ? { results: [] }
+    : user.role === "driver"
+      ? await env.DB.prepare("SELECT * FROM work_days WHERE staff_id=? AND work_date >= date('now','-400 day')").bind(driverStaffId || -1).all()
+      : await env.DB.prepare("SELECT * FROM work_days WHERE work_date >= date('now','-400 day')").all();
   return json({
     user,
     year,
     kw,
+    workDays: workDays.results,
+    absences: absences.results,
     staff: staffResult.results,
     vehicles: vehicles.results,
     planning: planning.results,
@@ -302,6 +319,8 @@ export async function GET(request: Request) {
     departureConfirmations: departureConfirmations.results,
     tripDocuments: tripDocuments.results,
     tripMessages: tripMessages.results,
+    chatContacts,
+    directMessages,
     expenses: expenses.results,
     notifications: notifications.results,
     checklists: checklists.results,
@@ -316,6 +335,7 @@ export async function POST(request: Request) {
   const action = String(body.action || "");
   const now = new Date().toISOString();
   let auditDetails: Record<string, unknown> = {};
+  let responseBody: Record<string, unknown> | null = null;
   if (action === "markTripMessagesRead" && ["management", "dispatcher", "driver"].includes(user.role)) {
     const tripOperationId = Number(body.tripOperationId || 0);
     if (!tripOperationId) return json({ error: "Tour fehlt" }, 400);
@@ -332,6 +352,18 @@ export async function POST(request: Request) {
       "INSERT OR IGNORE INTO trip_message_reads (message_id, user_id, read_at) VALUES (?, ?, ?)",
     ).bind(message.id, user.id, now)));
     auditDetails = { oldValue: null, newValue: { tripOperationId, readMessages: unread.results.length } };
+  } else if (action === "markDirectMessagesRead" && ["management", "dispatcher", "driver"].includes(user.role)) {
+    const access = await requireChatRecipient(user, Number(body.partnerUserId || 0), 0);
+    if ("error" in access) return json({ error: access.error }, access.status);
+    const partnerUserId = Number(access.recipient.userId);
+    const readMessages = await markDirectMessagesRead(user, partnerUserId, now);
+    auditDetails = { oldValue: null, newValue: { partnerUserId, readMessages } };
+  } else if (action === "deleteDirectMessage" && ["management", "dispatcher", "driver"].includes(user.role)) {
+    const messageId = Number(body.id || 0);
+    if (!messageId) return json({ error: "Nachricht fehlt" }, 400);
+    const result = await deleteDirectMessage(user, messageId);
+    if ("error" in result) return json({ error: result.error }, result.status);
+    auditDetails = { oldValue: null, newValue: { messageId } };
   } else if (action === "deleteTripMessage" && ["management", "dispatcher", "driver"].includes(user.role)) {
     const messageId = Number(body.id || 0);
     if (!messageId) return json({ error: "Nachricht fehlt" }, 400);
@@ -563,7 +595,12 @@ export async function POST(request: Request) {
     const eventDate = String(body.eventDate || now.slice(0, 10));
     const notes = String(body.notes || "").trim();
     const minutesLate = Number(body.minutesLate || 0);
-    const rating = body.rating == null || body.rating === "" ? null : Number(body.rating);
+    const criteriaInput = (body.criteria && typeof body.criteria === "object" ? body.criteria : null) as Record<string, unknown> | null;
+    const criteriaKeys = ["punctuality", "care", "communication", "vehicle"];
+    const criteria = criteriaInput ? Object.fromEntries(criteriaKeys.map((key) => [key, Math.min(5, Math.max(1, Math.round(Number(criteriaInput[key]) || 0)))])) : null;
+    const rating = criteria
+      ? Math.round(Object.values(criteria).reduce((sum, value) => sum + value, 0) / criteriaKeys.length)
+      : body.rating == null || body.rating === "" ? null : Number(body.rating);
     const allowedTypes = ["rating", "late", "no_show", "accident", "positive", "comment"];
     if (!staffId || !allowedTypes.includes(eventType) || !/^\d{4}-\d{2}-\d{2}$/.test(eventDate))
       return json({ error: "Fahrer, Ereignis und Datum prüfen" }, 400);
@@ -577,8 +614,8 @@ export async function POST(request: Request) {
     if (!person) return json({ error: "Fahrer wurde nicht gefunden" }, 404);
     const scoreDelta = ({ late: -3, no_show: -10, accident: -12, positive: 5, rating: 0, comment: 0 } as Record<string, number>)[eventType];
     const result = await env.DB.prepare(
-      "INSERT INTO driver_performance_events (staff_id, event_date, event_type, rating, score_delta, minutes_late, notes, created_by, created_by_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).bind(staffId, eventDate, eventType, rating, scoreDelta, eventType === "late" ? minutesLate : 0, notes, user.id, user.fullName, now).run();
+      "INSERT INTO driver_performance_events (staff_id, event_date, event_type, rating, score_delta, minutes_late, notes, created_by, created_by_name, created_at, criteria) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(staffId, eventDate, eventType, rating, scoreDelta, eventType === "late" ? minutesLate : 0, notes, user.id, user.fullName, now, criteria && eventType === "rating" ? JSON.stringify(criteria) : null).run();
     if (["late", "no_show", "accident"].includes(eventType))
       await env.DB.prepare("INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('management', 'driver_performance', ?, ?, 'driver_performance', ?, ?, ?)")
         .bind(eventType === "late" ? "Fahrerverspätung" : eventType === "no_show" ? "Fahrer nicht erschienen" : "Fahrerunfall", `${person.full_name}${eventType === "late" ? ` · ${minutesLate} Min.` : ""}${notes ? ` · ${notes}` : ""}`, String(result.meta.last_row_id), eventType === "accident" || eventType === "no_show" ? "urgent" : "warning", now).run();
@@ -1179,34 +1216,84 @@ export async function POST(request: Request) {
     const nightRate = Math.max(0, Number(body.nightRate || 0));
     const sundayRate = Math.max(0, Number(body.sundayRate || 0));
     const holidayRate = Math.max(0, Number(body.holidayRate || 0));
+    const hoursPerDay = Math.min(24, Math.max(1, Number(body.hoursPerDay || 8)));
+    const countPlanned = body.countPlanned === "on" || body.countPlanned === "true";
+    const overwriteManual = body.overwriteManual === "on" || body.overwriteManual === "true";
     if (![spesenRate, nightRate, sundayRate, holidayRate].every(Number.isFinite))
       return json({ error: "Zuschlagssätze sind ungültig" }, 400);
     const people = await env.DB.prepare("SELECT id, full_name, compensation FROM staff WHERE status='active' ORDER BY full_name").all<{ id: number; full_name: string; compensation: string | null }>();
+    const periodYear = Number(period.slice(0, 4));
     let calculated = 0;
+    let totalTours = 0;
+    let plannedDaysInPeriod = 0;
+    const keptManual: string[] = [];
+    let timesheetPeople = 0;
     for (const person of people.results) {
-      const tours = await env.DB.prepare(
-        `SELECT o.id, o.started_at, o.delivered_at, o.updated_at
-         FROM trip_operations o JOIN weekly_planning p ON p.id=o.planning_id
-         WHERE o.status='Zugestellt' AND (p.staff_id=? OR p.driver_name=?)
-         AND substr(COALESCE(o.delivered_at,o.updated_at),1,7)=?`,
-      ).bind(person.id, person.full_name, period).all<{ id: number; started_at: string | null; delivered_at: string | null; updated_at: string }>();
+      const manualRow = await env.DB.prepare("SELECT calculation_details FROM payroll_calculations WHERE staff_id=? AND period=?")
+        .bind(person.id, period).first<Record<string, string | number | null>>();
+      // Hand-corrected payslips are only replaced when explicitly requested.
+      if (!overwriteManual && manualRow && String(manualRow.calculation_details || "").includes('"source":"manual-adjustment"')) {
+        keptManual.push(person.full_name);
+        continue;
+      }
+      // Arbeitstage kalendergenau: jede Planung gilt für ihre Wochentage (work_days) in der ISO-Woche.
+      const planned = await env.DB.prepare(
+        `SELECT p.id, p.planning_year, p.calendar_week, p.work_days, p.start_time, o.status AS trip_status
+         FROM weekly_planning p LEFT JOIN trip_operations o ON o.planning_id=p.id
+         WHERE (p.staff_id=? OR p.driver_name=?) AND p.planning_year BETWEEN ? AND ?`,
+      ).bind(person.id, person.full_name, periodYear - 1, periodYear + 1).all<{ id: number; planning_year: number; calendar_week: number; work_days: string | null; start_time: string | null; trip_status: string | null }>();
+      const workedDates = new Map<string, { night: boolean }>();
+      for (const row of planned.results) {
+        const eligible = row.trip_status && row.trip_status !== "Geplant" ? (payrollEligibleStatuses as readonly string[]).includes(row.trip_status) : countPlanned;
+        const monday = new Date(Date.UTC(row.planning_year, 0, 4));
+        monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7) + (Number(row.calendar_week) - 1) * 7);
+        const startHour = Number(String(row.start_time || "06:00").slice(0, 2));
+        const night = startHour >= 22 || startHour < 6;
+        for (const dayNumber of String(row.work_days || "1,2,3,4,5,6,7").split(",").map(Number).filter((day) => day >= 1 && day <= 7)) {
+          const date = new Date(monday);
+          date.setUTCDate(monday.getUTCDate() + dayNumber - 1);
+          const key = date.toISOString().slice(0, 10);
+          if (key.slice(0, 7) !== period) continue;
+          plannedDaysInPeriod += 1;
+          if (!eligible) continue;
+          workedDates.set(key, { night: night || Boolean(workedDates.get(key)?.night) });
+        }
+      }
+      const sheet = (await env.DB.prepare("SELECT work_date, day_type, hours, night FROM work_days WHERE staff_id=? AND substr(work_date,1,7)=?").bind(person.id, period).all<{ work_date: string; day_type: string; hours: number; night: number }>()).results;
+      let hoursTotal = workedDates.size * hoursPerDay;
+      let leaveDays = 0;
+      const source = sheet.length ? "timesheet" : "planning";
+      if (sheet.length) timesheetPeople += 1;
+      if (sheet.length) {
+        workedDates.clear();
+        hoursTotal = 0;
+        for (const day of sheet) {
+          if (day.day_type === "work") { workedDates.set(day.work_date, { night: Boolean(day.night) }); hoursTotal += Number(day.hours || 0); }
+          else if (day.day_type === "vacation" || day.day_type === "sick") leaveDays += 1;
+        }
+      }
       const existing = await env.DB.prepare("SELECT * FROM payroll_calculations WHERE staff_id=? AND period=?")
         .bind(person.id, period).first<Record<string, string | number | null>>();
-      const previous = existing || await env.DB.prepare("SELECT base_salary, deductions FROM payroll_calculations WHERE staff_id=? ORDER BY period DESC LIMIT 1")
-        .bind(person.id).first<Record<string, string | number | null>>();
-      const baseSalary = Number(previous?.base_salary || parseCompensation(person.compensation));
-      const deductions = Number(existing?.deductions || previous?.deductions || 0);
+      const compensation = String(person.compensation || "");
+      const payKind = /\/\s*(h\b|std|stunde)|pro\s*stunde|per\s*hour/i.test(compensation) ? "hourly" : /\/\s*(tag|day)|pro\s*tag|per\s*day/i.test(compensation) ? "daily" : "monthly";
+      const payBasis = /brutto/i.test(compensation) ? "Brutto" : "Netto";
+      const rate = parseCompensation(compensation);
+      const workedCount = workedDates.size;
+      const baseSalary = payKind === "hourly" ? Math.round(rate * (hoursTotal + leaveDays * hoursPerDay) * 100) / 100
+        : payKind === "daily" ? Math.round(rate * (workedCount + leaveDays) * 100) / 100
+        : keepsManualBase(existing) ? Number(existing?.base_salary || 0) : rate;
+      const deductions = Number(existing?.deductions || 0);
       let nightCount = 0;
       let sundayCount = 0;
       let holidayCount = 0;
-      for (const tour of tours.results) {
-        const stamp = tour.started_at || tour.delivered_at || tour.updated_at;
-        const details = berlinTripTime(stamp);
-        if (details.hour >= 22 || details.hour < 6) nightCount += 1;
-        if (details.sunday) sundayCount += 1;
-        if (details.holiday) holidayCount += 1;
+      for (const [key, info] of workedDates) {
+        const date = new Date(`${key}T00:00:00Z`);
+        if (info.night) nightCount += 1;
+        if (date.getUTCDay() === 0) sundayCount += 1;
+        if (isGermanFederalHoliday(date)) holidayCount += 1;
       }
-      const tourCount = tours.results.length;
+      const tourCount = workedCount;
+      totalTours += tourCount;
       const expensesAmount = Math.round(tourCount * spesenRate * 100) / 100;
       const nightBonus = Math.round(nightCount * nightRate * 100) / 100;
       const sundayBonus = Math.round(sundayCount * sundayRate * 100) / 100;
@@ -1218,9 +1305,11 @@ export async function POST(request: Request) {
       const reimbursements = Math.round(Number(reimbursement?.total || 0) * 100) / 100;
       const netAmount = Math.round((baseSalary + expensesAmount + bonuses + reimbursements - deductions) * 100) / 100;
       const calculationDetails = JSON.stringify({
-        source: "completed-trips-and-approved-expenses",
-        tourIds: tours.results.map((tour) => tour.id),
-        counts: { tours: tourCount, night: nightCount, sunday: sundayCount, holiday: holidayCount },
+        source, hoursTotal, leaveDays,
+        workedDays: [...workedDates.keys()].sort(),
+        payKind, payBasis, hoursPerDay, countPlanned,
+        manualBase: payKind === "monthly" && keepsManualBase(existing),
+        counts: { workedDays: tourCount, night: nightCount, sunday: sundayCount, holiday: holidayCount },
         rates: { spesen: spesenRate, night: nightRate, sunday: sundayRate, holiday: holidayRate },
       });
       await env.DB.prepare(`INSERT INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, night_bonus, sunday_bonus, holiday_bonus, reimbursements, deductions, net_amount, payment_status, calculation_details, calculated_at, calculated_by, locked_at, locked_by, created_at, updated_at)
@@ -1231,7 +1320,107 @@ export async function POST(request: Request) {
     }
     await env.DB.prepare("INSERT INTO payroll_periods (period, status, updated_at) VALUES (?, 'open', ?) ON CONFLICT(period) DO UPDATE SET updated_at=excluded.updated_at")
       .bind(period, now).run();
-    auditDetails = { oldValue: periodState || null, newValue: { period, calculated, spesenRate, nightRate, sundayRate, holidayRate } };
+    auditDetails = { oldValue: periodState || null, newValue: { period, calculated, totalTours, spesenRate, nightRate, sundayRate, holidayRate, keptManual } };
+    responseBody = {
+      ok: true,
+      calculated,
+      tours: totalTours,
+      message: `${calculated} Abrechnungen berechnet · ${totalTours} Arbeitstage erfasst für ${period}${keptManual.length ? ` · ${keptManual.length} manuell korrigierte beibehalten (${keptManual.join(", ")})` : ""}${totalTours === 0 && !timesheetPeople && !keptManual.length ? (plannedDaysInPeriod === 0 ? ` – ACHTUNG: In ${period} gibt es keine Wochenplanung. Bitte den richtigen Monat wählen oder zuerst KW-Planung anlegen.` : " – ACHTUNG: Es gibt geplante Tage, aber keine Tour wurde gestartet. Häkchen „Geplante Tage mitzählen“ setzen.") : ""}`,
+    };
+  } else if (
+    action === "addAbsence" &&
+    ["management", "dispatcher"].includes(user.role)
+  ) {
+    const staffId = Number(body.staffId);
+    const start = String(body.startDate || "");
+    const end = String(body.endDate || start);
+    const type = String(body.absenceType || "vacation");
+    if (!staffId || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end < start || !["vacation", "sick"].includes(type))
+      return json({ error: "Mitarbeiter, Zeitraum und Art prüfen" }, 400);
+    const overlap = await env.DB.prepare("SELECT id FROM absences WHERE staff_id=? AND start_date<=? AND end_date>=?").bind(staffId, end, start).first();
+    if (overlap) return json({ error: "Für diesen Zeitraum gibt es bereits eine Abwesenheit" }, 409);
+    await env.DB.prepare("INSERT INTO absences (staff_id, start_date, end_date, absence_type, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(staffId, start, end, type, String(body.note || "").slice(0, 300), user.id, now).run();
+    auditDetails = { newValue: { staffId, start, end, type } };
+    responseBody = { ok: true, message: `${type === "sick" ? "Krankmeldung" : "Urlaub"} eingetragen` };
+  } else if (
+    action === "deleteAbsence" &&
+    ["management", "dispatcher"].includes(user.role)
+  ) {
+    await env.DB.prepare("DELETE FROM absences WHERE id=?").bind(Number(body.id)).run();
+    responseBody = { ok: true, message: "Abwesenheit gelöscht" };
+  } else if (
+    action === "saveWorkDays" &&
+    ["management", "accountant"].includes(user.role)
+  ) {
+    const staffId = Number(body.staffId);
+    const period = String(body.period || "");
+    if (!staffId || !/^\d{4}-\d{2}$/.test(period)) return json({ error: "Mitarbeiter und Monat wählen" }, 400);
+    const state = await env.DB.prepare("SELECT status FROM payroll_periods WHERE period=?").bind(period).first<{ status: string }>();
+    if (state?.status === "closed") return json({ error: "Monat ist geschlossen" }, 409);
+    const days = (Array.isArray(body.days) ? body.days : []) as { date?: string; type?: string; hours?: number; night?: boolean }[];
+    await env.DB.prepare("DELETE FROM work_days WHERE staff_id=? AND substr(work_date,1,7)=?").bind(staffId, period).run();
+    let saved = 0;
+    for (const day of days) {
+      const date = String(day.date || "");
+      const type = String(day.type || "");
+      if (date.slice(0, 7) !== period || !["work", "vacation", "sick"].includes(type)) continue;
+      await env.DB.prepare("INSERT INTO work_days (staff_id, work_date, day_type, hours, night, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(staffId, date, type, Math.min(24, Math.max(0, Number(day.hours ?? 8))), day.night ? 1 : 0, now).run();
+      saved += 1;
+    }
+    auditDetails = { newValue: { staffId, period, saved } };
+    responseBody = { ok: true, message: `Arbeitszeit gespeichert (${saved} Tage)` };
+  } else if (
+    action === "fillWorkDaysFromPlan" &&
+    ["management", "accountant"].includes(user.role)
+  ) {
+    const period = String(body.period || "");
+    if (!/^\d{4}-\d{2}$/.test(period)) return json({ error: "Monat wählen" }, 400);
+    const state = await env.DB.prepare("SELECT status FROM payroll_periods WHERE period=?").bind(period).first<{ status: string }>();
+    if (state?.status === "closed") return json({ error: "Monat ist geschlossen" }, 409);
+    const hours = Math.min(24, Math.max(1, Number(body.hoursPerDay || 8)));
+    const periodYear = Number(period.slice(0, 4));
+    const rows = (await env.DB.prepare(
+      `SELECT s.id AS staff_id, p.planning_year, p.calendar_week, p.work_days, p.start_time
+       FROM weekly_planning p JOIN staff s ON (s.id=p.staff_id OR (p.staff_id IS NULL AND s.full_name=p.driver_name))
+       WHERE s.status='active' AND p.planning_year BETWEEN ? AND ?`,
+    ).bind(periodYear - 1, periodYear + 1).all<{ staff_id: number; planning_year: number; calendar_week: number; work_days: string | null; start_time: string | null }>()).results;
+    const wanted = new Map<string, { staffId: number; date: string; night: boolean }>();
+    for (const row of rows) {
+      const monday = new Date(Date.UTC(row.planning_year, 0, 4));
+      monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7) + (Number(row.calendar_week) - 1) * 7);
+      const startHour = Number(String(row.start_time || "06:00").slice(0, 2));
+      for (const dayNumber of String(row.work_days || "1,2,3,4,5,6,7").split(",").map(Number).filter((day) => day >= 1 && day <= 7)) {
+        const date = new Date(monday);
+        date.setUTCDate(monday.getUTCDate() + dayNumber - 1);
+        const key = date.toISOString().slice(0, 10);
+        if (key.slice(0, 7) !== period) continue;
+        const id = `${row.staff_id}:${key}`;
+        wanted.set(id, { staffId: row.staff_id, date: key, night: (startHour >= 22 || startHour < 6) || Boolean(wanted.get(id)?.night) });
+      }
+    }
+    const absenceRows = (await env.DB.prepare("SELECT staff_id, start_date, end_date, absence_type FROM absences WHERE start_date<=? AND end_date>=?").bind(`${period}-31`, `${period}-01`).all<{ staff_id: number; start_date: string; end_date: string; absence_type: string }>()).results;
+    let filled = 0;
+    for (const absence of absenceRows) {
+      const cursor = new Date(`${absence.start_date}T00:00:00Z`);
+      const last = new Date(`${absence.end_date}T00:00:00Z`);
+      for (; cursor <= last; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+        const key = cursor.toISOString().slice(0, 10);
+        if (key.slice(0, 7) !== period) continue;
+        wanted.delete(`${absence.staff_id}:${key}`);
+        await env.DB.prepare("INSERT OR REPLACE INTO work_days (staff_id, work_date, day_type, hours, night, updated_at) VALUES (?, ?, ?, 0, 0, ?)").bind(absence.staff_id, key, absence.absence_type === "sick" ? "sick" : "vacation", now).run();
+        filled += 1;
+      }
+    }
+    for (const item of wanted.values()) {
+      // vorhandene manuelle Einträge (Urlaub/Krank/Stunden) bleiben erhalten
+      const result = await env.DB.prepare("INSERT OR IGNORE INTO work_days (staff_id, work_date, day_type, hours, night, updated_at) VALUES (?, ?, 'work', ?, ?, ?)")
+        .bind(item.staffId, item.date, hours, item.night ? 1 : 0, now).run();
+      filled += Number(result.meta?.changes || 0);
+    }
+    auditDetails = { newValue: { period, filled } };
+    responseBody = { ok: true, message: filled ? `${filled} Arbeitstage aus der Planung übernommen` : `Keine Planung für ${period} gefunden – Arbeitstage bitte manuell eintragen` };
   } else if (
     action === "setPayrollPeriodStatus" &&
     ["management", "accountant"].includes(user.role)
@@ -1250,6 +1439,12 @@ export async function POST(request: Request) {
           ON CONFLICT(period) DO UPDATE SET status='closed', closed_by=excluded.closed_by, closed_at=excluded.closed_at, updated_at=excluded.updated_at`).bind(period, user.id, now, now),
         env.DB.prepare("UPDATE payroll_calculations SET locked_at=?, locked_by=?, payment_status=CASE WHEN payment_status='paid' THEN 'paid' ELSE 'approved' END, updated_at=? WHERE period=?").bind(now, user.id, now, period),
       ]);
+      const notified = await env.DB.prepare(
+        `INSERT INTO notifications (user_id, category, title, message, entity_type, entity_id, severity, created_at)
+         SELECT s.user_id, 'payroll', 'Ihr Lohn ist bereit', 'Die Lohnabrechnung für ' || p.period || ' liegt unter „Lohn & Abrechnung“ als PDF bereit.', 'payroll', CAST(p.id AS TEXT), 'info', ?
+         FROM payroll_calculations p JOIN staff s ON s.id=p.staff_id WHERE p.period=? AND s.user_id IS NOT NULL`,
+      ).bind(now, period).run();
+      responseBody = { ok: true, message: `Monat ${period} geschlossen · ${Number(notified.meta?.changes || 0)} Mitarbeiter benachrichtigt` };
     } else {
       await env.DB.batch([
         env.DB.prepare(`INSERT INTO payroll_periods (period, status, updated_at) VALUES (?, 'review', ?)
@@ -1295,7 +1490,14 @@ export async function POST(request: Request) {
     if (!["draft", "review", "approved", "paid"].includes(paymentStatus)) return json({ error: "Ungültiger Zahlungsstatus" }, 400);
     const oldValue = await env.DB.prepare("SELECT * FROM payroll_calculations WHERE staff_id=? AND period=?").bind(staffId, period).first<Record<string, unknown>>();
     if (oldValue?.locked_at) return json({ error: "Abrechnung ist gesperrt. Monat muss ausdrücklich wieder geöffnet werden." }, 409);
-    const details = JSON.stringify({ source: "manual-adjustment", previousCalculation: oldValue?.calculation_details || null });
+    // Only a real change of amounts marks the payslip as hand-corrected; a pure status change keeps the automatic calculation.
+    const amountsUnchanged = Boolean(oldValue) && [
+      [oldValue?.base_salary, baseSalary], [oldValue?.tour_count, tourCount], [oldValue?.expenses, expenses], [oldValue?.night_bonus, nightBonus],
+      [oldValue?.sunday_bonus, sundayBonus], [oldValue?.holiday_bonus, holidayBonus], [oldValue?.reimbursements, reimbursements], [oldValue?.deductions, deductions],
+    ].every(([before, after]) => Math.abs(Number(before || 0) - Number(after || 0)) < 0.005);
+    const details = amountsUnchanged
+      ? String(oldValue?.calculation_details || "{}")
+      : JSON.stringify({ source: "manual-adjustment", previousCalculation: oldValue?.calculation_details || null });
     await env.DB.prepare(`INSERT INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, night_bonus, sunday_bonus, holiday_bonus, reimbursements, deductions, net_amount, payment_status, calculation_details, calculated_at, calculated_by, locked_at, locked_by, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
       ON CONFLICT(staff_id, period) DO UPDATE SET base_salary=excluded.base_salary, tour_count=excluded.tour_count, bonuses=excluded.bonuses, expenses=excluded.expenses, night_bonus=excluded.night_bonus, sunday_bonus=excluded.sunday_bonus, holiday_bonus=excluded.holiday_bonus, reimbursements=excluded.reimbursements, deductions=excluded.deductions, net_amount=excluded.net_amount, payment_status=excluded.payment_status, calculation_details=excluded.calculation_details, calculated_at=excluded.calculated_at, calculated_by=excluded.calculated_by, updated_at=excluded.updated_at`)
@@ -1387,5 +1589,6 @@ export async function POST(request: Request) {
       now,
     )
     .run();
-  return json({ ok: true });
+  await pushNewNotifications(now);
+  return json(responseBody || { ok: true });
 }

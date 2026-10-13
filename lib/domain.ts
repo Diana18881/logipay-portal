@@ -2,6 +2,14 @@ import { env } from "@logipay/env";
 
 const drivers = [
   [
+    "Михаил Козлов",
+    "2/2",
+    "2000 € Netto",
+    "HAJ1",
+    "NAL LOGISTIK",
+    "",
+  ],
+  [
     "Marcin Krawczyk",
     "2/2",
     "1750 € Netto",
@@ -123,6 +131,13 @@ export async function ensureDomainDatabase() {
       `CREATE TABLE IF NOT EXISTS payroll_calculations (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, period TEXT NOT NULL, base_salary REAL NOT NULL DEFAULT 0, tour_count INTEGER NOT NULL DEFAULT 0, bonuses REAL NOT NULL DEFAULT 0, expenses REAL NOT NULL DEFAULT 0, deductions REAL NOT NULL DEFAULT 0, net_amount REAL NOT NULL DEFAULT 0, payment_status TEXT NOT NULL DEFAULT 'draft', locked_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(staff_id, period))`,
     ),
     env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS work_days (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, work_date TEXT NOT NULL, day_type TEXT NOT NULL DEFAULT 'work', hours REAL NOT NULL DEFAULT 8, night INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, UNIQUE(staff_id, work_date))`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS absences (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL, absence_type TEXT NOT NULL DEFAULT 'vacation', note TEXT, created_by INTEGER, created_at TEXT NOT NULL)`,
+    ),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_absences_staff_dates ON absences(staff_id, start_date, end_date)`),
+    env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS payroll_periods (id INTEGER PRIMARY KEY AUTOINCREMENT, period TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'open', closed_by INTEGER, closed_at TEXT, reopened_by INTEGER, reopened_at TEXT, reopen_reason TEXT, updated_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
@@ -192,6 +207,15 @@ export async function ensureDomainDatabase() {
       `CREATE INDEX IF NOT EXISTS idx_trip_message_reads_user ON trip_message_reads(user_id, read_at)`,
     ),
     env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS direct_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, sender_user_id INTEGER NOT NULL, recipient_user_id INTEGER, recipient_staff_id INTEGER, message_type TEXT NOT NULL DEFAULT 'text', body TEXT, original_language TEXT NOT NULL DEFAULT 'de', translations_json TEXT NOT NULL DEFAULT '{}', file_name TEXT, object_key TEXT UNIQUE, content_type TEXT, size_bytes INTEGER, duration_seconds INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, read_at TEXT)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_direct_messages_pair_created ON direct_messages(sender_user_id, recipient_user_id, created_at)`,
+    ),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_direct_messages_recipient_read ON direct_messages(recipient_user_id, read_at)`,
+    ),
+    env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, license_plate TEXT NOT NULL, expense_date TEXT NOT NULL, category TEXT NOT NULL, merchant TEXT, gross_amount REAL NOT NULL DEFAULT 0, vat_amount REAL NOT NULL DEFAULT 0, liters REAL, odometer_km REAL, payment_method TEXT NOT NULL DEFAULT 'Privatauslage', reimbursable INTEGER NOT NULL DEFAULT 1, reimbursement_amount REAL NOT NULL DEFAULT 0, amazon_site TEXT, block_id TEXT, tour_reference TEXT, cost_center TEXT, receipt_number TEXT, status TEXT NOT NULL DEFAULT 'Eingereicht', receipt_file_name TEXT, receipt_object_key TEXT UNIQUE, receipt_content_type TEXT, recognition_status TEXT NOT NULL DEFAULT 'Prüfen', payment_reference TEXT, reviewed_by INTEGER, reviewed_at TEXT, paid_at TEXT, rejection_reason TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     ),
     env.DB.prepare(
@@ -234,6 +258,20 @@ export async function ensureDomainDatabase() {
       `CREATE INDEX IF NOT EXISTS idx_vehicle_checklists_plate_created ON vehicle_checklists(license_plate, created_at)`,
     ),
   ]);
+  // Early builds of direct_messages required a recipient login; rebuild so drivers without one can be addressed by staff id.
+  const directColumns = await env.DB.prepare("PRAGMA table_info(direct_messages)").all<{ name: string }>();
+  if (!directColumns.results.some((column) => column.name === "recipient_staff_id")) await env.DB.batch([
+    env.DB.prepare("ALTER TABLE direct_messages RENAME TO direct_messages_old"),
+    env.DB.prepare(`CREATE TABLE direct_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, sender_user_id INTEGER NOT NULL, recipient_user_id INTEGER, recipient_staff_id INTEGER, message_type TEXT NOT NULL DEFAULT 'text', body TEXT, original_language TEXT NOT NULL DEFAULT 'de', translations_json TEXT NOT NULL DEFAULT '{}', file_name TEXT, object_key TEXT UNIQUE, content_type TEXT, size_bytes INTEGER, duration_seconds INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, read_at TEXT)`),
+    env.DB.prepare("INSERT INTO direct_messages (id, sender_user_id, recipient_user_id, message_type, body, original_language, translations_json, file_name, object_key, content_type, size_bytes, duration_seconds, created_at, read_at) SELECT id, sender_user_id, recipient_user_id, message_type, body, original_language, translations_json, file_name, object_key, content_type, size_bytes, duration_seconds, created_at, read_at FROM direct_messages_old"),
+    env.DB.prepare("DROP TABLE direct_messages_old"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_direct_messages_pair_created ON direct_messages(sender_user_id, recipient_user_id, created_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_direct_messages_recipient_read ON direct_messages(recipient_user_id, read_at)"),
+  ]);
+  await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_direct_messages_staff ON direct_messages(recipient_staff_id)").run();
+  const perfColumns = await env.DB.prepare("PRAGMA table_info(driver_performance_events)").all<{ name: string }>();
+  if (!perfColumns.results.some((column) => column.name === "criteria"))
+    await env.DB.prepare("ALTER TABLE driver_performance_events ADD COLUMN criteria TEXT").run();
   const expenseColumns = await env.DB.prepare(
     "PRAGMA table_info(expenses)",
   ).all<{ name: string }>();
@@ -372,11 +410,11 @@ export async function ensureDomainDatabase() {
       [
         32,
         "NAL LOGISTIK",
-        "Marcin Krawczyk",
+        "Михаил Козлов",
         "HAJ1",
         "B-ML 4182",
-        "vacation",
-        "Urlaub 20.07–31.07",
+        "planned",
+        "Demo-Einsatz",
       ],
     ];
     await env.DB.batch(
@@ -387,9 +425,7 @@ export async function ensureDomainDatabase() {
       ),
     );
   }
-  await env.DB.prepare(
-    "UPDATE staff SET user_id=(SELECT id FROM users WHERE email='driver@logipay.demo') WHERE full_name='Marcin Krawczyk' AND user_id IS NULL",
-  ).run();
+  await ensureDemoDriverSetup();
   const concerns = await env.DB.prepare(
     "SELECT COUNT(*) AS count FROM driver_concerns",
   ).first<{ count: number }>();
@@ -631,4 +667,102 @@ export async function ensureDomainDatabase() {
     ).bind(syncNow),
   ]);
   await env.DB.prepare("PRAGMA optimize").run();
+}
+
+async function ensureDemoDriverSetup() {
+  const now = new Date().toISOString();
+  const driver = await env.DB.prepare("SELECT id, full_name FROM users WHERE email='driver@logipay.demo'").first<{ id: number; full_name: string }>();
+  if (!driver) return;
+
+  const demoPlate = "B-ML 4182";
+  const demoBlock = "HAJ1-B042";
+  const demoCompany = "NAL LOGISTIK";
+  const demoLocation = "HAJ1";
+  const demoWeek = 32;
+  const demoYear = 2026;
+  const manager = await env.DB.prepare("SELECT id FROM users WHERE role='management' ORDER BY id LIMIT 1").first<{ id: number }>();
+
+  let staff = await env.DB.prepare("SELECT id, full_name FROM staff WHERE user_id=?").bind(driver.id).first<{ id: number; full_name: string }>();
+  if (staff && staff.full_name !== driver.full_name) {
+    const marcin = await env.DB.prepare("SELECT id FROM staff WHERE full_name='Marcin Krawczyk' AND user_id IS NULL").first<{ id: number }>();
+    if (!marcin) {
+      await env.DB.prepare(
+        "INSERT INTO staff (full_name, system_type, compensation, location, company, vacation, status, created_at, updated_at) VALUES ('Marcin Krawczyk', '2/2', '1750 € Netto', 'HAJ1', 'NAL LOGISTIK', '20.07–31.07', 'active', ?, ?)",
+      ).bind(now, now).run();
+    }
+    await env.DB.prepare("UPDATE staff SET full_name=?, system_type='2/2', compensation='2000 € Netto', location=?, company=?, vacation='', status='active', updated_at=? WHERE id=?")
+      .bind(driver.full_name, demoLocation, demoCompany, now, staff.id).run();
+  } else if (!staff) {
+    const byName = await env.DB.prepare("SELECT id FROM staff WHERE full_name=?").bind(driver.full_name).first<{ id: number }>();
+    if (byName) {
+      await env.DB.prepare("UPDATE staff SET user_id=?, system_type='2/2', compensation='2000 € Netto', location=?, company=?, vacation='', status='active', updated_at=? WHERE id=?")
+        .bind(driver.id, demoLocation, demoCompany, now, byName.id).run();
+      staff = { id: byName.id, full_name: driver.full_name };
+    } else {
+      const created = await env.DB.prepare(
+        "INSERT INTO staff (user_id, full_name, system_type, compensation, location, company, vacation, status, created_at, updated_at) VALUES (?, ?, '2/2', '2000 € Netto', ?, ?, '', 'active', ?, ?)",
+      ).bind(driver.id, driver.full_name, demoLocation, demoCompany, now, now).run();
+      staff = { id: Number(created.meta.last_row_id), full_name: driver.full_name };
+    }
+  } else {
+    await env.DB.prepare("UPDATE staff SET location=?, company=?, status='active', updated_at=? WHERE id=?")
+      .bind(demoLocation, demoCompany, now, staff.id).run();
+  }
+  if (!staff) return;
+
+  await env.DB.prepare("UPDATE vehicles SET assigned_staff_id=?, status='active', updated_at=? WHERE license_plate=?")
+    .bind(staff.id, now, demoPlate).run();
+
+  const existingPlan = await env.DB.prepare(
+    "SELECT id FROM weekly_planning WHERE planning_year=? AND calendar_week=? AND (staff_id=? OR driver_name=? OR license_plate=?)",
+  ).bind(demoYear, demoWeek, staff.id, driver.full_name, demoPlate).first<{ id: number }>();
+
+  let planningId: number;
+  if (existingPlan) {
+    planningId = existingPlan.id;
+    await env.DB.prepare(
+      `UPDATE weekly_planning SET planning_year=?, calendar_week=?, company=?, staff_id=?, driver_name=?, location=?, license_plate=?, work_days='1,2,3,4,5,6,7', start_time='06:00', block_id=?, status='planned', comments='Demo-Einsatz', updated_at=? WHERE id=?`,
+    ).bind(demoYear, demoWeek, demoCompany, staff.id, driver.full_name, demoLocation, demoPlate, demoBlock, now, planningId).run();
+  } else {
+    const created = await env.DB.prepare(
+      `INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, work_days, start_time, block_id, status, comments, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, '1,2,3,4,5,6,7', '06:00', ?, 'planned', 'Demo-Einsatz', ?, ?)`,
+    ).bind(demoYear, demoWeek, demoCompany, staff.id, driver.full_name, demoLocation, demoPlate, demoBlock, now, now).run();
+    planningId = Number(created.meta.last_row_id);
+  }
+
+  const eta = new Date(Date.now() + 4 * 3_600_000).toISOString();
+  await env.DB.prepare(
+    `INSERT INTO trip_operations (planning_id, status, pickup_address, delivery_address, eta, delay_reason, recipient_name, signature_name, started_at, loaded_at, delivered_at, updated_by, created_at, updated_at)
+     VALUES (?, 'Unterwegs', 'Amazon HAJ1, Hannover', 'Amazon BER8, Berlin', ?, '', '', '', ?, ?, NULL, ?, ?, ?)
+     ON CONFLICT(planning_id) DO UPDATE SET status='Unterwegs', pickup_address=excluded.pickup_address, delivery_address=excluded.delivery_address, eta=excluded.eta, started_at=COALESCE(trip_operations.started_at, excluded.started_at), loaded_at=COALESCE(trip_operations.loaded_at, excluded.loaded_at), updated_at=excluded.updated_at`,
+  ).bind(planningId, eta, now, now, manager?.id || 1, now, now).run();
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO vehicle_fuel_codes (license_plate, fuel_type, code_value, active, updated_by, created_at, updated_at)
+     VALUES (?, 'Diesel', 'MK4182-DEMO', 1, ?, ?, ?)`,
+  ).bind(demoPlate, manager?.id || 1, now, now).run();
+
+  const tracker = await env.DB.prepare("SELECT id FROM truck_trackers WHERE license_plate=?").bind(demoPlate).first<{ id: number }>();
+  if (tracker?.id) {
+    const recentPosition = await env.DB.prepare(
+      "SELECT id FROM truck_positions WHERE license_plate=? AND datetime(recorded_at) > datetime('now', '-30 minutes') LIMIT 1",
+    ).bind(demoPlate).first<{ id: number }>();
+    if (!recentPosition) {
+      const recordedAt = now;
+      await env.DB.prepare(
+        "INSERT INTO truck_positions (tracker_id, license_plate, latitude, longitude, speed_kph, heading, ignition, odometer_km, address, source, recorded_at, received_at) VALUES (?, ?, 52.375892, 9.732010, 68, 92, 1, 286410, 'A2 Richtung Berlin', 'demo', ?, ?)",
+      ).bind(tracker.id, demoPlate, recordedAt, recordedAt).run();
+      await env.DB.prepare("UPDATE truck_trackers SET last_connected_at=?, updated_at=? WHERE id=?").bind(recordedAt, recordedAt, tracker.id).run();
+    }
+  }
+
+  const todayTacho = await env.DB.prepare(
+    "SELECT id FROM tachograph_records WHERE staff_id=? AND license_plate=? AND record_date=date('now') LIMIT 1",
+  ).bind(staff.id, demoPlate).first<{ id: number }>();
+  if (!todayTacho) {
+    await env.DB.prepare(
+      "INSERT INTO tachograph_records (staff_id, license_plate, record_date, driving_minutes, rest_minutes, remaining_minutes, infringement, source, notes, created_at, updated_at) VALUES (?, ?, date('now'), 280, 45, 180, '', 'demo', 'Demo für Präsentation', ?, ?)",
+    ).bind(staff.id, demoPlate, now, now).run();
+  }
 }

@@ -1,7 +1,8 @@
 import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../lib/auth";
 import { ensureDomainDatabase } from "../../../lib/domain";
-import { buildTranslations, detectLanguage, normalizeLocale, requireTripAccess } from "../../../lib/trip-chat";
+import { pushNewNotifications } from "../../../lib/push";
+import { detectLanguage, normalizeLocale, requireTripAccess } from "../../../lib/trip-chat";
 
 export async function POST(request: Request) {
   const user = await requirePortalUser(["management", "dispatcher", "driver"]);
@@ -15,7 +16,6 @@ export async function POST(request: Request) {
   const body = String(form.get("body") || "").trim().slice(0, 2000);
   const preferredLanguage = normalizeLocale(form.get("locale"));
   const originalLanguage = body ? detectLanguage(body, preferredLanguage) : preferredLanguage;
-  const translations = body ? buildTranslations(body, originalLanguage) : {};
   const attachment = form.get("file");
   const file = attachment instanceof File && attachment.size ? attachment : null;
   if (!body && !file) return Response.json({ error: "Nachricht oder Datei fehlt" }, { status: 400 });
@@ -47,9 +47,9 @@ export async function POST(request: Request) {
     ? Math.min(300, Math.max(0, Number(form.get("durationSeconds") || 0)))
     : 0;
   const result = await env.DB.prepare(
-    `INSERT INTO trip_messages (trip_operation_id, sender_user_id, sender_role, message_type, body, original_language, translations_json, file_name, object_key, content_type, size_bytes, duration_seconds, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(tripOperationId, user.id, user.role, messageType, body || null, originalLanguage, JSON.stringify(translations), fileName, objectKey, contentType, sizeBytes, durationSeconds, now).run();
+    `INSERT INTO trip_messages (trip_operation_id, sender_user_id, sender_role, message_type, body, original_language, file_name, object_key, content_type, size_bytes, duration_seconds, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(tripOperationId, user.id, user.role, messageType, body || null, originalLanguage, fileName, objectKey, contentType, sizeBytes, durationSeconds, now).run();
   const messageId = Number(result.meta.last_row_id);
   await env.DB.prepare(
     "INSERT OR IGNORE INTO trip_message_reads (message_id, user_id, read_at) VALUES (?, ?, ?)",
@@ -57,7 +57,13 @@ export async function POST(request: Request) {
 
   const preview = body || (messageType === "voice" ? "Sprachnachricht" : "Foto");
   const tripLabel = `${access.trip.license_plate || "ohne Kennzeichen"}${access.trip.block_id ? ` · ${access.trip.block_id}` : ""}`;
-  if (user.role === "driver") {
+  if (user.role === "driver" && body.startsWith("📦")) {
+    for (const scope of ["dispatcher", "management"]) {
+      await env.DB.prepare(
+        "INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES (?, 'trip_request', 'Fahrer braucht eine Lieferung', ?, 'trip_operation', ?, 'warning', ?)",
+      ).bind(scope, `${access.trip.driver_name || user.fullName} · ${tripLabel}: ${preview.slice(0, 160)}`, String(tripOperationId), now).run();
+    }
+  } else if (user.role === "driver") {
     await env.DB.prepare(
       "INSERT INTO notifications (role_scope, category, title, message, entity_type, entity_id, severity, created_at) VALUES ('dispatcher', 'trip_chat', 'Neue Nachricht in einer Tour', ?, 'trip_operation', ?, 'info', ?)",
     ).bind(`${access.trip.driver_name || user.fullName} · ${tripLabel}: ${preview.slice(0, 160)}`, String(tripOperationId), now).run();
@@ -69,5 +75,6 @@ export async function POST(request: Request) {
   await env.DB.prepare(
     "INSERT INTO audit_log (user_id, action, entity_id, details, created_at) VALUES (?, 'sendTripMessage', ?, ?, ?)",
   ).bind(user.id, String(messageId), JSON.stringify({ tripOperationId, messageType, originalLanguage, sizeBytes, licensePlate: access.trip.license_plate, blockId: access.trip.block_id }), now).run();
+  await pushNewNotifications(now);
   return Response.json({ ok: true, id: messageId });
 }
