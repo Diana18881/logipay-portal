@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 
-export function LoginForm() {
+export function LoginForm({ notice = "" }: { notice?: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(notice);
   const [loading, setLoading] = useState(false);
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [twoFactor, setTwoFactor] = useState<{ setup?: boolean; secret?: string } | null>(null);
@@ -55,7 +56,7 @@ export function LoginForm() {
         <div className="login-brand-content">
           <div className="login-logo"><div className="brand-mark"><span /><span /><span /></div><strong>LOGIPAY</strong></div>
           <div className="login-message">
-            <p>GESCHLOSSENES UNTERNEHMENSPORTAL</p>
+            <p>PORTAL FÜR TRANSPORTUNTERNEHMEN</p>
             <h1>Lohn, Touren<br />und Team — <em>im Griff.</em></h1>
             <span>Ein geschützter Arbeitsbereich für Lohnabrechnung und Logistik.</span>
           </div>
@@ -78,7 +79,8 @@ export function LoginForm() {
           {message ? <div className="login-message-box">{message}</div> : null}
           <button className="login-submit" type="submit" disabled={loading}>{loading ? "Wird geprüft …" : "Im Portal anmelden"}<span>→</span></button>
           <div className="login-help"><span>Kein Zugang?</span><button type="button" onClick={requestReset}>Passwort zurücksetzen anfordern</button></div>
-          <div className="login-footer">LOGIPAY Security · Nur für Mitarbeiter</div>
+          <div className="login-register">Neu bei LOGIPAY? <Link href="/registrieren">Firma kostenlos registrieren</Link></div>
+          <div className="login-footer"><Link href="/">LOGIPAY</Link> · <Link href="/app">Fahrer-App</Link> · <Link href="/impressum">Impressum</Link> · <Link href="/datenschutz">Datenschutz</Link></div>
         </form>
       </section>
     </main>

@@ -1,6 +1,7 @@
 import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../../lib/auth";
 import { ensureDomainDatabase } from "../../../../lib/domain";
+import { logFileAccess } from "../../../../lib/audit";
 
 export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requirePortalUser(["management", "dispatcher", "driver"]);
@@ -11,5 +12,6 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
   if (user.role === "driver" && Number(row.user_id) !== user.id && String(row.driver_name) !== user.fullName)
     return new Response("Forbidden", { status: 403 });
   const object = await env.DOCUMENTS.get(String(row.object_key));
+  if (object) await logFileAccess(user.id, "tripDocument", String(id));
   return object ? new Response(object.body, { headers: { "Content-Type": String(row.content_type), "Cache-Control": "private, no-store", "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(String(row.file_name))}` } }) : new Response("Not found", { status: 404 });
 }

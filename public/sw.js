@@ -1,5 +1,5 @@
-const SHELL_CACHE = "logipay-shell-v3";
-const SHELL_FILES = ["/", "/favicon.svg", "/manifest.webmanifest"];
+const SHELL_CACHE = "logipay-shell-v4";
+const SHELL_FILES = ["/", "/favicon.svg", "/manifest.webmanifest", "/icon-192.png", "/app"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_FILES)).catch(() => undefined));
@@ -38,7 +38,7 @@ self.addEventListener("message", (event) => {
   event.waitUntil(self.registration.showNotification(title || "LOGIPAY", {
     body: body || "",
     tag: tag || "logipay-notification",
-    icon: "/favicon.svg",
+    icon: "/icon-192.png",
     badge: "/favicon.svg",
     data: { url: url || "/" },
   }));
@@ -49,7 +49,7 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(payload.title || "LOGIPAY", {
     body: payload.body || "",
     tag: payload.tag || "logipay-push",
-    icon: "/favicon.svg",
+    icon: "/icon-192.png",
     badge: "/favicon.svg",
     data: { url: payload.url || "/?section=notifications" },
   }));

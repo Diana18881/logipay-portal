@@ -4,8 +4,12 @@ import { hashPassword, requirePortalUser } from "../../../lib/auth";
 import { deleteDirectMessage, loadChatContacts, loadDirectMessages, markDirectMessagesRead, requireChatRecipient } from "../../../lib/direct-chat";
 import { deleteTripMessage } from "../../../lib/trip-chat";
 import { pushNewNotifications } from "../../../lib/push";
+import { emailTakenElsewhere, syncDirectory } from "../../../lib/tenants";
+import { syncSeats } from "../../../lib/billing";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
+const loginActions = new Set(["addPortalUser", "updatePortalUser", "addStaff", "updateStaff"]);
+const seatActions = new Set(["addStaff", "archiveStaff", "restoreStaff", "addPortalUser", "updatePortalUser"]);
 const normalizeDays = (value: unknown) => {
   const days = String(value || "1,2,3,4,5,6,7")
     .split(",")
@@ -336,6 +340,10 @@ export async function POST(request: Request) {
   const now = new Date().toISOString();
   let auditDetails: Record<string, unknown> = {};
   let responseBody: Record<string, unknown> | null = null;
+  // Logins are unique across all companies, because the e-mail decides which company a login belongs to.
+  const loginEmail = String((loginActions.has(action) ? body.email ?? body.loginEmail : "") || "").trim().toLowerCase();
+  if (loginEmail && await emailTakenElsewhere(loginEmail, user.companyId))
+    return json({ error: "Diese E-Mail ist bereits registriert" }, 409);
   if (action === "markTripMessagesRead" && ["management", "dispatcher", "driver"].includes(user.role)) {
     const tripOperationId = Number(body.tripOperationId || 0);
     if (!tripOperationId) return json({ error: "Tour fehlt" }, 400);
@@ -636,11 +644,12 @@ export async function POST(request: Request) {
       userId = Number(created.meta.last_row_id);
     }
     await env.DB.prepare(
-      "INSERT INTO staff (user_id, full_name, system_type, compensation, location, company, vacation, status, hired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+      "INSERT INTO staff (user_id, full_name, personnel_number, system_type, compensation, location, company, vacation, status, hired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
     )
       .bind(
         userId,
         body.fullName,
+        String(body.personnelNumber || "").trim() || null,
         body.systemType || "2/1",
         body.compensation || "",
         body.location || "",
@@ -680,10 +689,11 @@ export async function POST(request: Request) {
       .bind(body.id)
       .first();
     await env.DB.prepare(
-      "UPDATE staff SET full_name=?, system_type=?, compensation=?, location=?, company=?, vacation=?, updated_at=? WHERE id=?",
+      "UPDATE staff SET full_name=?, personnel_number=?, system_type=?, compensation=?, location=?, company=?, vacation=?, updated_at=? WHERE id=?",
     )
       .bind(
         body.fullName,
+        String(body.personnelNumber || "").trim() || null,
         body.systemType || "",
         body.compensation || "",
         body.location || "",
@@ -1589,6 +1599,8 @@ export async function POST(request: Request) {
       now,
     )
     .run();
+  if (loginActions.has(action)) await syncDirectory(user.companyId);
+  if (seatActions.has(action)) await syncSeats(user.companyId).catch((error) => console.error("Seat sync failed", error));
   await pushNewNotifications(now);
   return json(responseBody || { ok: true });
 }

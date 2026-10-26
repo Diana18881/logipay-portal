@@ -1,6 +1,7 @@
 import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../../lib/auth";
 import { ensureDomainDatabase } from "../../../../lib/domain";
+import { logFileAccess } from "../../../../lib/audit";
 export async function GET(_: Request, c: { params: Promise<{ id: string }> }) {
   const u = await requirePortalUser(["management", "dispatcher", "driver"]);
   await ensureDomainDatabase();
@@ -17,6 +18,7 @@ export async function GET(_: Request, c: { params: Promise<{ id: string }> }) {
       return new Response("Forbidden", { status: 403 });
   }
   const o = await env.DOCUMENTS.get(String(row.object_key));
+  if (o) await logFileAccess(u.id, "vehicleFile", String(id));
   return o
     ? new Response(o.body, {
         headers: {

@@ -1,6 +1,7 @@
 import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../../../lib/auth";
 import { ensureDomainDatabase } from "../../../../../lib/domain";
+import { logFileAccess } from "../../../../../lib/audit";
 
 const columns = {
   station: ["station_object_key", "station_content_type", "station_file_name"],
@@ -22,6 +23,7 @@ export async function GET(_: Request, context: { params: Promise<{ id: string; k
     if (Number(row.staff_id) !== staff?.id) return new Response("Forbidden", { status: 403 });
   }
   const object = await env.DOCUMENTS.get(String(row[selection[0]]));
+  if (object) await logFileAccess(user.id, "fuelStop", String(`${id}:${kind}`));
   if (!object) return new Response("Not found", { status: 404 });
   return new Response(object.body, { headers: {
     "Content-Type": String(row[selection[1]]),

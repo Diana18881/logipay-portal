@@ -2,6 +2,7 @@ import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../../../lib/auth";
 import { ensureDomainDatabase } from "../../../../../lib/domain";
 import { requireTripAccess } from "../../../../../lib/trip-chat";
+import { logFileAccess } from "../../../../../lib/audit";
 
 export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requirePortalUser(["management", "dispatcher", "driver"]);
@@ -14,6 +15,7 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
   const access = await requireTripAccess(user, Number(row.trip_operation_id));
   if ("error" in access) return new Response(access.error, { status: access.status });
   const object = await env.DOCUMENTS.get(String(row.object_key));
+  if (object) await logFileAccess(user.id, "tripChatAttachment", String(id));
   if (!object) return new Response("Not found", { status: 404 });
   return new Response(object.body, {
     headers: {

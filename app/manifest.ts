@@ -2,14 +2,22 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "LOGIPAY Logistikportal",
+    id: "/",
+    name: "LOGIPAY Fahrer-App & Portal",
     short_name: "LOGIPAY",
-    description: "Fahrer, Touren, Fahrzeuge, Belege, Lohn und Disposition in einem geschützten Portal.",
-    start_url: "/",
+    description: "Touren, Belege, Nachrichten und Lohn – die App für Fahrer und Büro.",
+    start_url: "/?source=app",
+    scope: "/",
     display: "standalone",
-    background_color: "#f4f7f8",
-    theme_color: "#07182d",
-    orientation: "any",
-    icons: [{ src: "/favicon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
+    background_color: "#071a2e",
+    theme_color: "#071a2e",
+    orientation: "portrait",
+    lang: "de",
+    categories: ["business", "productivity"],
+    icons: [
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+    ],
   };
 }

@@ -1,18 +1,11 @@
 import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../../../lib/auth";
 import { ensureDomainDatabase } from "../../../../../lib/domain";
-
-type FleetboardEnvironment = typeof env & {
-  FLEETBOARD_API_URL?: string;
-  FLEETBOARD_API_USER?: string;
-  FLEETBOARD_API_PASSWORD?: string;
-  TRACKER_INGEST_TOKEN?: string;
-};
+import { hasIntegrationKey } from "../../../../../lib/integration-keys";
 
 export async function GET() {
   await requirePortalUser(["management", "dispatcher"]);
   await ensureDomainDatabase();
-  const settings = env as FleetboardEnvironment;
   const summary = await env.DB.prepare(
     `SELECT COUNT(*) AS mapped_vehicles,
       SUM(CASE WHEN last_connected_at IS NOT NULL THEN 1 ELSE 0 END) AS reporting_vehicles,
@@ -24,12 +17,7 @@ export async function GET() {
     provider: "Fleetboard",
     service: "Mapping / Track & Trace",
     connector: "SOAP PosService → LOGIPAY bridge",
-    credentialsConfigured: Boolean(
-      settings.FLEETBOARD_API_URL?.trim() &&
-      settings.FLEETBOARD_API_USER?.trim() &&
-      settings.FLEETBOARD_API_PASSWORD?.trim(),
-    ),
-    bridgeConfigured: Boolean(settings.TRACKER_INGEST_TOKEN?.trim()),
+    bridgeConfigured: await hasIntegrationKey(),
     mappedVehicles: Number(summary?.mapped_vehicles || 0),
     reportingVehicles: Number(summary?.reporting_vehicles || 0),
     lastSyncAt: summary?.last_sync_at || null,

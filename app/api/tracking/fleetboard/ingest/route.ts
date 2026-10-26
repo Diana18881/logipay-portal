@@ -1,17 +1,9 @@
 import { env } from "@logipay/env";
-import { ensureDomainDatabase } from "../../../../../lib/domain";
+import type { LibsqlStatement } from "../../../../../lib/platform/libsql-d1";
+import { withIntegrationKey } from "../../../../../lib/integration-keys";
 
-type FleetboardEnvironment = typeof env & { TRACKER_INGEST_TOKEN?: string };
 type FleetboardPayload = Record<string, unknown>;
 type FleetboardTracker = { id: number; license_plate: string; device_id: string };
-
-function safeEqual(left: string, right: string) {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1)
-    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  return difference === 0;
-}
 
 function firstValue(payload: FleetboardPayload, keys: string[]) {
   for (const key of keys) {
@@ -63,13 +55,11 @@ function normalizePosition(payload: FleetboardPayload) {
   };
 }
 
-export async function POST(request: Request) {
-  const token = (env as FleetboardEnvironment).TRACKER_INGEST_TOKEN;
-  if (!token)
-    return Response.json({ error: "Fleetboard-Bridge ist noch nicht freigeschaltet" }, { status: 503 });
-  const authorization = request.headers.get("authorization") || "";
-  if (!authorization.startsWith("Bearer ") || !safeEqual(authorization.slice(7), token))
-    return Response.json({ error: "Ungültiger Fleetboard-Schlüssel" }, { status: 401 });
+export function POST(request: Request) {
+  return withIntegrationKey(request, () => ingest(request));
+}
+
+async function ingest(request: Request) {
   if (Number(request.headers.get("content-length") || 0) > 131_072)
     return Response.json({ error: "Payload zu groß" }, { status: 413 });
 
@@ -87,13 +77,12 @@ export async function POST(request: Request) {
   if (!positions.length || positions.length > 100)
     return Response.json({ error: "Pro Übertragung sind 1 bis 100 Positionen erlaubt" }, { status: 400 });
 
-  await ensureDomainDatabase();
   const trackerRows = await env.DB.prepare(
     "SELECT id, license_plate, device_id FROM truck_trackers WHERE enabled=1 AND lower(provider)='fleetboard'",
   ).all<FleetboardTracker>();
   const trackers = new Map(trackerRows.results.map((tracker) => [tracker.device_id, tracker]));
   const receivedAt = new Date().toISOString();
-  const statements: D1PreparedStatement[] = [];
+  const statements: LibsqlStatement[] = [];
   const errors: { index: number; error: string }[] = [];
   let accepted = 0;
 

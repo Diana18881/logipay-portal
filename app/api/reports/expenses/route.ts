@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   const today = new Date().toISOString().slice(0, 10);
   const from = validDate(url.searchParams.get("from")) || `${today.slice(0, 4)}-01-01`;
   const to = validDate(url.searchParams.get("to")) || today;
-  const audience = url.searchParams.get("audience") === "amazon" ? "amazon" : "finanzamt";
+  const audience = url.searchParams.get("audience") === "kunde" ? "kunde" : "finanzamt";
   const format = url.searchParams.get("format") === "csv" ? "csv" : "pdf";
   if (from > to) return Response.json({ error: "Der Zeitraum ist ungültig" }, { status: 400 });
   const result = await env.DB.prepare(`SELECT e.*, s.full_name, s.company AS staff_company, s.location AS staff_location
@@ -30,10 +30,10 @@ export async function GET(request: Request) {
     .bind(user.id, JSON.stringify({ audience, format, from, to, count: rows.length }), now).run();
 
   if (format === "csv") {
-    const headers = audience === "amazon"
-      ? ["Datum", "Amazon Standort", "Block ID", "Tourreferenz", "Fahrer", "Firma", "Kennzeichen", "Kategorie", "Anbieter", "Brutto EUR", "MwSt. EUR", "Kostenstelle", "Status", "Belegnummer", "Belegdatei"]
+    const headers = audience === "kunde"
+      ? ["Datum", "Auftraggeber / Standort", "Auftrags-Nr.", "Tourreferenz", "Fahrer", "Firma", "Kennzeichen", "Kategorie", "Anbieter", "Brutto EUR", "MwSt. EUR", "Kostenstelle", "Status", "Belegnummer", "Belegdatei"]
       : ["Datum", "Belegnummer", "Fahrer", "Firma", "Kennzeichen", "Kategorie", "Anbieter", "Netto EUR", "MwSt. EUR", "Brutto EUR", "Zahlungsart", "Erstattung EUR", "Zahlungsreferenz", "Zahlungsdatum", "Kostenstelle", "Status", "Belegdatei"];
-    const data = rows.map((row) => audience === "amazon"
+    const data = rows.map((row) => audience === "kunde"
       ? [row.expense_date, row.amazon_site, row.block_id, row.tour_reference, row.full_name, row.staff_company, row.license_plate, row.category, row.merchant, money(row.gross_amount), money(row.vat_amount), row.cost_center, row.status, row.receipt_number, row.receipt_file_name]
       : [row.expense_date, row.receipt_number, row.full_name, row.staff_company, row.license_plate, row.category, row.merchant, money(Number(row.gross_amount || 0) - Number(row.vat_amount || 0)), money(row.vat_amount), money(row.gross_amount), row.payment_method, money(row.reimbursement_amount), row.payment_reference, row.paid_at, row.cost_center, row.status, row.receipt_file_name]);
     const csv = `\uFEFF${[headers, ...data].map((line) => line.map(csvCell).join(";")).join("\r\n")}`;
@@ -59,7 +59,7 @@ export async function GET(request: Request) {
     while (short.length > 1 && font.widthOfTextAtSize(`${short}…`, size) > width) short = short.slice(0, -1);
     return `${short}…`;
   };
-  const title = audience === "amazon" ? "Amazon Ausgabenbericht" : "Finanzamt Belegjournal";
+  const title = audience === "kunde" ? "Ausgabenbericht für Auftraggeber" : "Finanzamt Belegjournal";
   const totalGross = rows.reduce((sum, row) => sum + Number(row.gross_amount || 0), 0);
   const totalVat = rows.reduce((sum, row) => sum + Number(row.vat_amount || 0), 0);
   const totalReimbursement = rows.reduce((sum, row) => sum + Number(row.reimbursement_amount || 0), 0);
@@ -74,14 +74,14 @@ export async function GET(request: Request) {
   let page = createPage();
   const drawMetric = (x: number, label: string, value: string) => { page.drawRectangle({ x, y: 454, width: 170, height: 54, color: rgb(0.94, 0.98, 0.97), borderColor: rgb(0.83, 0.91, 0.9), borderWidth: 0.6 }); page.drawText(label, { x: x + 12, y: 486, size: 7, font: bold, color: muted }); page.drawText(value, { x: x + 12, y: 466, size: 14, font: bold, color: navy }); };
   drawMetric(32, "BRUTTO GESAMT", `${money(totalGross)} EUR`); drawMetric(214, "MWST. GESAMT", `${money(totalVat)} EUR`); drawMetric(396, "ERSTATTUNGEN", `${money(totalReimbursement)} EUR`); drawMetric(578, "BELEGE", String(rows.length));
-  const headers = audience === "amazon" ? ["Datum", "Site / Block", "Fahrer", "Kennzeichen", "Kategorie", "Brutto", "Tour", "Status"] : ["Datum", "Beleg-Nr.", "Fahrer", "Anbieter", "Netto", "MwSt.", "Brutto", "Status"];
-  const widths = audience === "amazon" ? [66, 115, 125, 82, 105, 76, 105, 92] : [66, 92, 125, 120, 75, 70, 75, 105];
+  const headers = audience === "kunde" ? ["Datum", "Standort / Auftrag", "Fahrer", "Kennzeichen", "Kategorie", "Brutto", "Tour", "Status"] : ["Datum", "Beleg-Nr.", "Fahrer", "Anbieter", "Netto", "MwSt.", "Brutto", "Status"];
+  const widths = audience === "kunde" ? [66, 115, 125, 82, 105, 76, 105, 92] : [66, 92, 125, 120, 75, 70, 75, 105];
   let y = 425;
   const drawHeader = (target: PDFPage) => { let x = 32; target.drawRectangle({ x: 32, y: y - 17, width: widths.reduce((sum, width) => sum + width, 0), height: 21, color: rgb(0.92, 0.96, 0.97) }); headers.forEach((label, index) => { target.drawText(label, { x: x + 5, y: y - 10, size: 7, font: bold, color: muted }); x += widths[index]; }); y -= 22; };
   drawHeader(page);
   for (const row of rows) {
     if (y < 52) { page = createPage(true); y = 492; drawHeader(page); }
-    const values = audience === "amazon"
+    const values = audience === "kunde"
       ? [row.expense_date, [row.amazon_site, row.block_id].filter(Boolean).join(" / "), row.full_name, row.license_plate, row.category, `${money(row.gross_amount)} €`, row.tour_reference, row.status]
       : [row.expense_date, row.receipt_number, row.full_name, row.merchant, `${money(Number(row.gross_amount || 0) - Number(row.vat_amount || 0))} €`, `${money(row.vat_amount)} €`, `${money(row.gross_amount)} €`, row.status];
     let x = 32; page.drawLine({ start: { x: 32, y: y + 5 }, end: { x: 32 + widths.reduce((sum, width) => sum + width, 0), y: y + 5 }, thickness: 0.5, color: line });

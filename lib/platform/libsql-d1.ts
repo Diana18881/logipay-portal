@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import { createClient, type Client } from "@libsql/client";
 
 export type D1BindValue = string | number | null | boolean | ArrayBuffer;
@@ -47,6 +49,7 @@ export type LibsqlDatabase = {
 };
 
 export function createLibsqlDatabase(url: string, authToken?: string): LibsqlDatabase {
+  if (url.startsWith("file:")) mkdirSync(path.dirname(url.slice(5)), { recursive: true });
   const client = createClient({ url, authToken: authToken || undefined });
   return {
     prepare(sql: string) {

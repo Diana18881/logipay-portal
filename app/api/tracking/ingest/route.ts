@@ -1,26 +1,11 @@
 import { env } from "@logipay/env";
-import { ensureDomainDatabase } from "../../../../lib/domain";
+import { withIntegrationKey } from "../../../../lib/integration-keys";
 
-type TrackerEnvironment = typeof env & { TRACKER_INGEST_TOKEN?: string };
-
-function safeEqual(left: string, right: string) {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1)
-    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  return difference === 0;
+export function POST(request: Request) {
+  return withIntegrationKey(request, () => ingest(request));
 }
 
-export async function POST(request: Request) {
-  const token = (env as TrackerEnvironment).TRACKER_INGEST_TOKEN;
-  if (!token)
-    return Response.json(
-      { error: "Tracker-Schnittstelle ist noch nicht freigeschaltet" },
-      { status: 503 },
-    );
-  const authorization = request.headers.get("authorization") || "";
-  if (!authorization.startsWith("Bearer ") || !safeEqual(authorization.slice(7), token))
-    return Response.json({ error: "Ungültiger Tracker-Schlüssel" }, { status: 401 });
+async function ingest(request: Request) {
   if (Number(request.headers.get("content-length") || 0) > 32_768)
     return Response.json({ error: "Payload zu groß" }, { status: 413 });
 
@@ -45,7 +30,6 @@ export async function POST(request: Request) {
   if (odometerKm !== null && (!Number.isFinite(odometerKm) || odometerKm < 0))
     return Response.json({ error: "Kilometerstand ungültig" }, { status: 400 });
 
-  await ensureDomainDatabase();
   const tracker = await env.DB.prepare(
     "SELECT id, license_plate, provider FROM truck_trackers WHERE device_id=? AND enabled=1",
   ).bind(deviceId).first<{ id: number; license_plate: string; provider: string }>();

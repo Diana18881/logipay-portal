@@ -162,7 +162,15 @@ const sectionDescriptions: Partial<Record<Section, string>> = {
   notifications: "Offene Aufgaben und alle Meldungen aus dem Betrieb an einem Ort",
 };
 
-export function Portal({ currentUser }: { currentUser: PortalUser }) {
+function isoWeekOf(date: Date) {
+  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  return { year: target.getUTCFullYear(), week: Math.ceil(((target.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7) };
+}
+
+export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = false }: { currentUser: PortalUser; trialDaysLeft?: number | null; paymentProblem?: boolean }) {
   const [section, setSection] = useState<Section>("overview");
   const [data, setData] = useState<Data>({
     staff: [],
@@ -200,8 +208,8 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
     year: 2026,
     kw: 32,
   });
-  const [year, setYear] = useState(new Date().getFullYear());
-  const [kw, setKw] = useState(32);
+  const [year, setYear] = useState(() => isoWeekOf(new Date()).year);
+  const [kw, setKw] = useState(() => isoWeekOf(new Date()).week);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<
     "staff" | "vehicle" | "planning" | "concern" | null
@@ -618,7 +626,7 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
           </div>
           <div>
             <strong>LOGIPAY</strong>
-            <small>{isDriver ? t("driver") : "Personal & Disposition"}</small>
+            <small title={currentUser.companyName}>{currentUser.companyName}</small>
           </div>
         </div>
         <div className="access-card">
@@ -656,12 +664,14 @@ export function Portal({ currentUser }: { currentUser: PortalUser }) {
               <small>{isDriver ? t("driver") : labels[currentUser.role]}</small>
             </div>
           </div>
+          {currentUser.role === "management" ? <a className="logout-button account-link" href="/abo">▣ Abonnement & Daten</a> : null}
           <button className="logout-button" onClick={logout}>
             ↪ {isDriver ? t("logout") : "Abmelden"}
           </button>
         </div>
       </aside>
       <section className="workspace">
+        {currentUser.role === "management" && (paymentProblem || trialDaysLeft !== null) ? <a className={`billing-banner ${paymentProblem ? "billing-banner-alert" : ""}`} href="/abo">{paymentProblem ? "Zahlung fehlgeschlagen – bitte Zahlungsmethode im Abonnement prüfen." : `Testphase: noch ${trialDaysLeft} ${trialDaysLeft === 1 ? "Tag" : "Tage"}. Jetzt Abonnement abschließen →`}</a> : null}
         <header className="topbar">
           <button className="menu-toggle" aria-label={isDriver ? t("menuOpen") : "Menü öffnen"} onClick={() => setMobileMenu(true)}>☰</button>
           <div className="period-control" role="group" aria-label={isDriver ? t("planningPeriod") : "Planungszeitraum"}>
@@ -2873,6 +2883,51 @@ function ReportCard({ icon, title, text, children }: { icon: string; title: stri
   return <article className="report-card2"><div className="report-icon">{icon}</div><div className="report-body"><h3>{title}</h3><p>{text}</p><div className="report-controls">{children}</div></div></article>;
 }
 
+type DatevField = { key: string; label: string; wageType: string; bs: number };
+type DatevSettings = { consultant: string; client: string; wageTypes: Record<string, string> };
+
+function DatevExport({ month, setMonth }: { month: string; setMonth: (value: string) => void }) {
+  const [fields, setFields] = useState<DatevField[]>([]);
+  const [settings, setSettings] = useState<DatevSettings | null>(null);
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    fetch("/api/payroll/datev", { cache: "no-store" }).then((response) => response.json()).then((result: { settings?: DatevSettings; fields?: DatevField[] }) => {
+      if (result.settings) setSettings(result.settings);
+      if (result.fields) setFields(result.fields);
+    }).catch(() => setMessage("DATEV-Einstellungen konnten nicht geladen werden"));
+  }, []);
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const response = await fetch("/api/payroll/datev", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ consultant: form.get("consultant"), client: form.get("client"), wageTypes: Object.fromEntries(fields.map((field) => [field.key, form.get(`wage-${field.key}`)])) }) });
+    const result = await response.json().catch(() => ({})) as { settings?: DatevSettings; error?: string };
+    if (!response.ok || !result.settings) return setMessage(result.error || "Speichern fehlgeschlagen");
+    setSettings(result.settings); setOpen(false); setMessage("DATEV-Einstellungen gespeichert");
+  }
+  async function download() {
+    setMessage("");
+    const response = await fetch(`/api/payroll/datev?period=${month}`, { cache: "no-store" });
+    if (!response.ok) { const result = await response.json().catch(() => ({})) as { error?: string }; return setMessage(result.error || "Export fehlgeschlagen"); }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a"); link.href = url; link.download = `LODAS-Bewegungsdaten-${month}.txt`; link.click(); URL.revokeObjectURL(url);
+  }
+  const ready = Boolean(settings?.consultant && settings?.client);
+  return <ReportCard icon="D" title="DATEV-Export (LODAS)" text={ready ? `Berater ${settings?.consultant} · Mandant ${settings?.client}. Lohnwerte des Monats als LODAS-Importdatei für Ihr Steuerbüro.` : "Berater- und Mandantennummer sowie Lohnarten einmalig mit Ihrem Steuerbüro abstimmen und hinterlegen."}>
+    <label>Monat<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
+    <button type="button" className="primary-button" disabled={!ready} onClick={() => void download()}>Datei herunterladen</button>
+    <button type="button" onClick={() => setOpen(!open)}>{open ? "Schließen" : "Einstellungen"}</button>
+    {message ? <div className="inline-notice">{message}</div> : null}
+    {open && settings ? <form className="datev-settings" onSubmit={save}>
+      <label>Beraternummer<input name="consultant" inputMode="numeric" defaultValue={settings.consultant} maxLength={7} /></label>
+      <label>Mandantennummer<input name="client" inputMode="numeric" defaultValue={settings.client} maxLength={5} /></label>
+      {fields.map((field) => <label key={field.key}>{field.label}<input name={`wage-${field.key}`} inputMode="numeric" maxLength={4} defaultValue={settings.wageTypes[field.key] || ""} placeholder="Lohnart" /></label>)}
+      <p>Leere Lohnart = Wert wird nicht exportiert. Die Personalnummer tragen Sie beim Mitarbeiter ein.</p>
+      <button type="submit" className="primary-button">Speichern</button>
+    </form> : null}
+  </ReportCard>;
+}
+
 function ReportsCenter({ role, year, kw, staff, vehicles, payroll }: { role: string; year: number; kw: number; staff: Row[]; vehicles: Row[]; payroll: Row[] }) {
   const today = new Date().toISOString().slice(0, 10);
   const [day, setDay] = useState(today);
@@ -2904,13 +2959,14 @@ function ReportsCenter({ role, year, kw, staff, vehicles, payroll }: { role: str
       </ReportCard>
     </section> : null}
     {canFinance ? <section><h2>Finanzen</h2>
-      <ReportCard icon="€" title="Ausgabenbericht" text="Belege und Ausgaben für Finanzamt oder Amazon in einem Zeitraum.">
+      <ReportCard icon="€" title="Ausgabenbericht" text="Belege und Ausgaben für Finanzamt oder Auftraggeber in einem Zeitraum.">
         <label>Von<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
         <label>Bis<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
-        <label>Für<select value={audience} onChange={(event) => setAudience(event.target.value)}><option value="finanzamt">Finanzamt</option><option value="amazon">Amazon</option></select></label>
+        <label>Für<select value={audience} onChange={(event) => setAudience(event.target.value)}><option value="finanzamt">Finanzamt</option><option value="kunde">Auftraggeber</option></select></label>
         <a className="primary-button" href={`/api/reports/expenses?from=${from}&to=${to}&audience=${audience}&format=pdf`} target="_blank" rel="noreferrer">PDF</a>
         <a href={`/api/reports/expenses?from=${from}&to=${to}&audience=${audience}&format=csv`}>CSV</a>
       </ReportCard>
+      <DatevExport month={month} setMonth={setMonth} />
       <ReportCard icon="▤" title="Lohnübersicht (CSV)" text={monthPayroll.length ? `${monthPayroll.length} Abrechnungen im gewählten Monat. Einzelne PDF-Lohnzettel finden Sie unter „Lohn & Abrechnung“.` : "Für diesen Monat gibt es noch keine Abrechnungen. Zuerst unter „Lohn & Abrechnung“ berechnen."}>
         <label>Monat<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
         <button type="button" className="primary-button" disabled={!monthPayroll.length} onClick={() => downloadCsv(`lohn-${month}.csv`, ["Mitarbeiter", "Monat", "Grundgehalt", "Arbeitstage", "Spesen", "Nacht", "Sonntag", "Feiertag", "Erstattungen", "Abzüge", "Auszahlung", "Status"], monthPayroll.map((row) => [row.full_name, row.period, row.base_salary, row.tour_count, row.expenses, row.night_bonus, row.sunday_bonus, row.holiday_bonus, row.reimbursements, row.deductions, row.net_amount, row.payment_status]))}>CSV herunterladen</button>
@@ -3005,6 +3061,16 @@ function EntryForm({
             />
           </label>
           <label>
+            Personalnummer
+            <input
+              name="personnelNumber"
+              inputMode="numeric"
+              maxLength={10}
+              defaultValue={String(editing?.personnel_number || "")}
+              placeholder="für den DATEV-Export"
+            />
+          </label>
+          <label>
             Systemart
             <select
               name="systemType"
@@ -3012,6 +3078,7 @@ function EntryForm({
             >
               <option>2/1</option>
               <option>2/2</option>
+              <option>5/2</option>
               <option>SPRINGER</option>
             </select>
           </label>
@@ -3028,7 +3095,7 @@ function EntryForm({
             <input
               name="location"
               defaultValue={String(editing?.location || "")}
-              placeholder="BER8 / HAJ1"
+              placeholder="z. B. Hamburg / Bremen"
             />
           </label>
           <label>
@@ -3036,8 +3103,7 @@ function EntryForm({
             <input
               name="company"
               defaultValue={String(editing?.company || "")}
-              required
-              placeholder="z. B. EuRide GmbH"
+              placeholder="z. B. Muster GmbH"
             />
           </label>
           {!editing ? (
@@ -3078,11 +3144,11 @@ function EntryForm({
           </label>
           <label>
             Firma
-            <input name="company" placeholder="z. B. EuRide GmbH" />
+            <input name="company" placeholder="z. B. Muster GmbH" />
           </label>
           <label>
             Standort
-            <input name="location" placeholder="z. B. BER8" />
+            <input name="location" placeholder="z. B. Hamburg" />
           </label>
           <label>
             Status
@@ -3135,7 +3201,7 @@ function EntryForm({
             <input
               name="location"
               defaultValue={String(editing?.location || "")}
-              placeholder="z. B. BER8"
+              placeholder="z. B. Hamburg"
             />
           </label>
           <label>
@@ -3188,7 +3254,7 @@ function EntryForm({
             <input
               name="blockId"
               defaultValue={String(editing?.block_id || "")}
-              placeholder="Amazon Block ID"
+              placeholder="Auftrags-Nr."
             />
           </label>
           <label className="wide">
@@ -3223,7 +3289,7 @@ function EntryForm({
           </label>
           <label>
             Base
-            <input name="base" defaultValue={String(editing?.base || "")} placeholder="z. B. BER8" />
+            <input name="base" defaultValue={String(editing?.base || "")} placeholder="z. B. Hamburg" />
           </label>
           <label>
             LKW / Kennzeichen

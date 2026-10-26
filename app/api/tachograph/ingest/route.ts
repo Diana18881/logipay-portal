@@ -1,21 +1,11 @@
 import { env } from "@logipay/env";
-import { ensureDomainDatabase } from "../../../../lib/domain";
+import { withIntegrationKey } from "../../../../lib/integration-keys";
 
-type TachographEnvironment = typeof env & { TACHOGRAPH_INGEST_TOKEN?: string };
-
-function safeEqual(left: string, right: string) {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  return difference === 0;
+export function POST(request: Request) {
+  return withIntegrationKey(request, () => ingest(request));
 }
 
-export async function POST(request: Request) {
-  const token = (env as TachographEnvironment).TACHOGRAPH_INGEST_TOKEN;
-  if (!token) return Response.json({ error: "Tachograph-Schnittstelle ist noch nicht freigeschaltet" }, { status: 503 });
-  const authorization = request.headers.get("authorization") || "";
-  if (!authorization.startsWith("Bearer ") || !safeEqual(authorization.slice(7), token))
-    return Response.json({ error: "Ungültiger Schnittstellenschlüssel" }, { status: 401 });
+async function ingest(request: Request) {
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   if (!body) return Response.json({ error: "Ungültiges JSON" }, { status: 400 });
   const staffId = Number(body.staffId);
@@ -26,7 +16,6 @@ export async function POST(request: Request) {
   const remainingMinutes = Number(body.remainingMinutes || 0);
   if (!staffId || !licensePlate || !/^20\d{2}-\d{2}-\d{2}$/.test(recordDate) || [drivingMinutes, restMinutes, remainingMinutes].some((value) => !Number.isFinite(value) || value < 0 || value > 1440))
     return Response.json({ error: "Fahrer, Fahrzeug, Datum oder Zeitwerte ungültig" }, { status: 400 });
-  await ensureDomainDatabase();
   const staff = await env.DB.prepare("SELECT id FROM staff WHERE id=? AND status='active'").bind(staffId).first();
   if (!staff) return Response.json({ error: "Fahrer nicht gefunden" }, { status: 404 });
   const now = new Date().toISOString();

@@ -2,6 +2,7 @@ import { env } from "@logipay/env";
 import { requirePortalUser } from "../../../../../lib/auth";
 import { getDirectMessageForUser } from "../../../../../lib/direct-chat";
 import { ensureDomainDatabase } from "../../../../../lib/domain";
+import { logFileAccess } from "../../../../../lib/audit";
 
 export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requirePortalUser(["management", "dispatcher", "driver"]);
@@ -10,6 +11,7 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
   const row = await getDirectMessageForUser(user, Number(id));
   if (!row?.object_key) return new Response("Not found", { status: 404 });
   const object = await env.DOCUMENTS.get(String(row.object_key));
+  if (object) await logFileAccess(user.id, "directChatAttachment", String(id));
   if (!object) return new Response("Not found", { status: 404 });
   return new Response(object.body, {
     headers: {

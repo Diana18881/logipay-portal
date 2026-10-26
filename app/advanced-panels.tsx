@@ -380,7 +380,6 @@ export function TruckTracking({ rows, vehicles, operations, canManage, locale, a
   const [clock, setClock] = useState(() => new Date().getTime());
   const [trackerProvider, setTrackerProvider] = useState("Fleetboard");
   const [fleetboardStatus, setFleetboardStatus] = useState<{
-    credentialsConfigured: boolean;
     bridgeConfigured: boolean;
     mappedVehicles: number;
     reportingVehicles: number;
@@ -388,6 +387,7 @@ export function TruckTracking({ rows, vehicles, operations, canManage, locale, a
     ingestPath: string;
   } | null>(null);
   const [fleetboardNotice, setFleetboardNotice] = useState("");
+  const [integrationKey, setIntegrationKey] = useState("");
   const driverView = !canManage;
   const c = {
     de: { moving: "In Fahrt", alarms: "Alarme", fleet: "Mein Fahrzeug", refresh: "Aktualisierung alle 15 Sek.", unknown: "Position unbekannt", noTracker: "Noch kein Fahrzeug-Tracker verbunden.", noSignal: "kein Signal", lastSignal: "letztes Signal vor", minutes: "Min.", noPosition: "Noch keine GPS-Position vorhanden.", speed: "Geschwindigkeit", ignition: "Zündung", on: "Ein", off: "Aus", odometer: "Kilometerstand", coordinates: "Koordinaten", source: "Datenquelle", history: "Positionsverlauf", historyHelp: "Die letzten Meldungen des Fahrzeugs" },
@@ -420,6 +420,14 @@ export function TruckTracking({ rows, vehicles, operations, canManage, locale, a
       if (!response.ok || !result) return setFleetboardNotice(result?.error || "Fleetboard-Status konnte nicht geladen werden");
       setFleetboardStatus(result); setFleetboardNotice("");
     } catch { setFleetboardNotice("Fleetboard-Status konnte nicht geladen werden"); }
+  }
+  async function createIntegrationKey() {
+    if (fleetboardStatus?.bridgeConfigured && !window.confirm("Der bisherige Schlüssel funktioniert danach nicht mehr. Fortfahren?")) return;
+    const response = await fetch("/api/company/integration-key", { method: "POST" });
+    const result = await response.json().catch(() => ({})) as { key?: string; error?: string };
+    if (!response.ok || !result.key) return setFleetboardNotice(result.error || "Schlüssel konnte nicht erzeugt werden");
+    setIntegrationKey(result.key);
+    await refreshFleetboardStatus();
   }
   useEffect(() => {
     let cancelled = false;
@@ -560,13 +568,14 @@ export function TruckTracking({ rows, vehicles, operations, canManage, locale, a
           <div><span>Letzte Synchronisierung</span><strong>{fleetboardStatus?.lastSyncAt ? new Date(fleetboardStatus.lastSyncAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "Noch kein Signal"}</strong><small>automatisch über GPS</small></div>
         </div>
         <div className="fleetboard-capabilities"><span>Position</span><span>Geschwindigkeit</span><span>Stopps</span><span>Zündung</span><span>Kilometerstand</span><span>ETA</span></div>
-        <div className="fleetboard-security-state"><span className={fleetboardStatus?.credentialsConfigured ? "is-ready" : "is-missing"}>SOAP-Zugang {fleetboardStatus?.credentialsConfigured ? "geschützt hinterlegt" : "fehlt"}</span><span className={fleetboardStatus?.bridgeConfigured ? "is-ready" : "is-missing"}>Live-Bridge {fleetboardStatus?.bridgeConfigured ? "freigeschaltet" : "noch gesperrt"}</span></div>
+        <div className="fleetboard-security-state"><span className={fleetboardStatus?.bridgeConfigured ? "is-ready" : "is-missing"}>Schnittstellenschlüssel {fleetboardStatus?.bridgeConfigured ? "aktiv" : "noch nicht erzeugt"}</span></div>
         <div className="fleetboard-setup-steps">
           <div><b>1</b><span>Fleetboard SOAP-API-Benutzer im Portal anlegen und Mapping / Track & Trace buchen.</span></div>
           <div><b>2</b><span>Unten Kennzeichen und Fleetboard Fahrzeug-ID oder VIN eindeutig zuordnen.</span></div>
-          <div><b>3</b><span>Server-Zugangsdaten und Bridge-Token geschützt hinterlegen. Keine Passwörter werden im Browser angezeigt.</span></div>
+          <div><b>3</b><span>Schnittstellenschlüssel erzeugen und beim Telematik-Anbieter als Bearer-Token eintragen. Der Schlüssel wird nur einmal angezeigt.</span></div>
         </div>
-        <div className="fleetboard-connector-line"><code>{fleetboardStatus?.ingestPath || "/api/tracking/fleetboard/ingest"}</code><button type="button" onClick={() => void refreshFleetboardStatus()}>Verbindung prüfen</button></div>
+        <div className="fleetboard-connector-line"><code>{fleetboardStatus?.ingestPath || "/api/tracking/fleetboard/ingest"}</code><button type="button" onClick={() => void refreshFleetboardStatus()}>Verbindung prüfen</button><button type="button" onClick={() => void createIntegrationKey()}>{fleetboardStatus?.bridgeConfigured ? "Neuen Schlüssel erzeugen" : "Schlüssel erzeugen"}</button></div>
+        {integrationKey ? <div className="inline-notice integration-key"><span>Nur jetzt sichtbar – sicher speichern:</span><code>{integrationKey}</code></div> : null}
         {fleetboardNotice ? <div className="inline-notice">{fleetboardNotice}</div> : null}
       </div>
       <div className="panel">

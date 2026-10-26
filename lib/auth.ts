@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { env } from "@logipay/env";
+import { currentTenantId, env, SESSION_COOKIE } from "@logipay/env";
+import { companyAccess, DEMO_TENANT, getCompany } from "./tenants";
 
 export type PortalRole = "management" | "accountant" | "dispatcher" | "driver";
 
@@ -11,9 +12,11 @@ export type PortalUser = {
   role: PortalRole;
   mustChangePassword: boolean;
   twoFactorEnabled: boolean;
+  companyId: string;
+  companyName: string;
 };
 
-const COOKIE_NAME = "logipay_session";
+const COOKIE_NAME = SESSION_COOKIE;
 const SESSION_DAYS = 7;
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -107,8 +110,10 @@ export async function hashPassword(password: string) {
 }
 
 export async function createSession(userId: number) {
+  const tenant = currentTenantId();
+  if (!tenant) throw new Error("Keine Firma ausgewählt");
   const random = crypto.getRandomValues(new Uint8Array(32));
-  const token = bytesToBase64(random).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  const token = tenant + "." + bytesToBase64(random).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
   const tokenHash = await sha256(token);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_DAYS * 24 * 60 * 60 * 1000);
@@ -165,28 +170,29 @@ export async function ensureAuthDatabase() {
     env.DB.prepare("CREATE TABLE IF NOT EXISTS password_reset_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, resolved_at TEXT)"),
   ]);
 
-  // Demo accounts are only seeded when a secret password is configured; no credentials live in the repository.
+  // Demo accounts exist only in the demo company and only when a secret password is configured.
   const demoPassword = process.env.LOGIPAY_DEMO_PASSWORD;
-  if (demoPassword) {
+  if (demoPassword && currentTenantId() === DEMO_TENANT) {
     const existing = await env.DB.prepare("SELECT COUNT(*) AS count FROM users WHERE email LIKE '%@logipay.demo'").first<{ count: number }>();
     if (Number(existing?.count ?? 0) < 4) {
       const demoHash = await hashPassword(demoPassword);
       const insert = "INSERT OR IGNORE INTO users (email, full_name, role, password_hash, must_change_password, active) VALUES (?, ?, ?, ?, 0, 1)";
       await env.DB.batch([
-        env.DB.prepare(insert).bind("director@logipay.demo", "Lirim Krasnici", "management", demoHash),
-        env.DB.prepare(insert).bind("accounting@logipay.demo", "Елена Волкова", "accountant", demoHash),
-        env.DB.prepare(insert).bind("dispatcher@logipay.demo", "Ирина Соколова", "dispatcher", demoHash),
-        env.DB.prepare(insert).bind("driver@logipay.demo", "Михаил Козлов", "driver", demoHash),
+        env.DB.prepare(insert).bind("director@logipay.demo", "Anna Becker", "management", demoHash),
+        env.DB.prepare(insert).bind("accounting@logipay.demo", "Jonas Wolf", "accountant", demoHash),
+        env.DB.prepare(insert).bind("dispatcher@logipay.demo", "Sofia Lehmann", "dispatcher", demoHash),
+        env.DB.prepare(insert).bind("driver@logipay.demo", "Marek Nowak", "driver", demoHash),
       ]);
     }
   }
-  await env.DB.prepare("UPDATE users SET full_name = ? WHERE email = ?").bind("Lirim Krasnici", "director@logipay.demo").run();
 }
 
 export async function getPortalUser(): Promise<PortalUser | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
-  if (!token) return null;
+  const companyId = currentTenantId();
+  const company = companyId ? await getCompany(companyId) : null;
+  if (!token || !companyId || !company) return null;
   const tokenHash = await sha256(token);
   const row = await env.DB.prepare(
     `SELECT users.id, users.email, users.full_name, users.role, users.must_change_password, users.two_factor_enabled
@@ -201,7 +207,7 @@ export async function getPortalUser(): Promise<PortalUser | null> {
     role: PortalRole;
     must_change_password: number;
     two_factor_enabled: number;
-  }>();
+  }>().catch(() => null);
 
   if (!row) return null;
   return {
@@ -211,12 +217,16 @@ export async function getPortalUser(): Promise<PortalUser | null> {
     role: row.role,
     mustChangePassword: Boolean(row.must_change_password),
     twoFactorEnabled: Boolean(row.two_factor_enabled),
+    companyId,
+    companyName: company.name,
   };
 }
 
 export async function requirePortalUser(allowedRoles?: PortalRole[]) {
   const user = await getPortalUser();
   if (!user) redirect("/login");
+  const access = companyAccess(await getCompany(user.companyId));
+  if (!access.allowed) redirect(user.role === "management" ? "/abo" : "/login?gesperrt=1");
   if (allowedRoles && !allowedRoles.includes(user.role)) redirect("/");
   return user;
 }
@@ -224,6 +234,6 @@ export async function requirePortalUser(allowedRoles?: PortalRole[]) {
 export async function destroyCurrentSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
-  if (!token) return;
+  if (!token || !currentTenantId()) return;
   await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256(token)).run();
 }
