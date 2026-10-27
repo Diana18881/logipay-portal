@@ -2198,30 +2198,75 @@ function PlanningAlerts({
     );
   }
 
+  // Group the raw hints: same problem on several weekdays becomes one line, related hints share a heading.
+  const groupOf = (key: string) =>
+    key.startsWith("departure-pending-") ? "pending"
+    : key.startsWith("departure-") ? "departure"
+    : key.startsWith("vehicle-") || key.startsWith("driver-") ? "conflict"
+    : key.startsWith("absent-") || key.startsWith("inactive-") ? "people"
+    : key.startsWith("doc") ? "documents"
+    : key.startsWith("tacho-") ? "tacho"
+    : "vehicles";
+  const groupMeta: Record<string, { title: string; icon: string }> = {
+    conflict: { title: "Doppelt belegt", icon: "⇄" },
+    departure: { title: "Abfahrt nicht bestätigt", icon: "⏰" },
+    people: { title: "Fahrer nicht verfügbar", icon: "◉" },
+    tacho: { title: "Lenkzeiten", icon: "◷" },
+    vehicles: { title: "Fahrzeuge & Prüftermine", icon: "▣" },
+    documents: { title: "Dokumente laufen ab", icon: "▤" },
+    pending: { title: "Abfahrt wartet auf Bestätigung", icon: "…" },
+  };
+  const order = ["conflict", "departure", "people", "tacho", "vehicles", "documents", "pending"];
+  const merged = new Map<string, { level: "danger" | "warning"; text: string; days: string[] }>();
+  for (const alert of alerts) {
+    const conflict = alert.key.match(/^(vehicle|driver)-(\d)-(.+)-(\d\d:\d\d)$/);
+    if (conflict) {
+      const id = `${conflict[1]}-${conflict[3]}-${conflict[4]}`;
+      const entry = merged.get(id) || { level: alert.level, text: conflict[1] === "vehicle" ? `${conflict[3]} ist mehreren Fahrern zugeordnet` : `${conflict[3]} hat zwei Einsätze gleichzeitig`, days: [] };
+      entry.days.push(weekDayNames[Number(conflict[2]) - 1].slice(0, 2));
+      merged.set(id, entry);
+      continue;
+    }
+    const departure = alert.text.match(/^(.+?): Abfahrt (\d{4})-(\d\d)-(\d\d) (\d\d:\d\d)/);
+    if (alert.key.startsWith("departure") && departure) {
+      const id = `${groupOf(alert.key)}|${departure[1]}`;
+      const entry = merged.get(id) || { level: alert.level, text: departure[1], days: [] };
+      entry.days.push(`${departure[4]}.${departure[3]}. ${departure[5]}`);
+      merged.set(id, entry);
+      continue;
+    }
+    merged.set(alert.key, { level: alert.level, text: alert.text, days: [] });
+  }
+  const groups = order.map((group) => ({
+    group,
+    items: [...merged.entries()].filter(([id]) => groupOf(id.includes("|") ? (id.startsWith("pending") ? "departure-pending-" : "departure-") : id) === group).map(([id, item]) => ({ id, ...item })),
+  })).filter((entry) => entry.items.length);
+  const urgent = groups.reduce((sum, entry) => sum + entry.items.filter((item) => item.level === "danger").length, 0);
+  const total = groups.reduce((sum, entry) => sum + entry.items.length, 0);
+
   return (
-    <div
-      className={`planning-alerts ${alerts.length ? "has-alerts" : "all-clear"}`}
-    >
+    <div className={`planning-alerts ${total ? "has-alerts" : "all-clear"}`}>
       <div className="alerts-title">
-        <span>{alerts.length ? "!" : "✓"}</span>
+        <span>{total ? "!" : "✓"}</span>
         <div>
-          <b>
-            {alerts.length
-              ? `${alerts.length} automatische Hinweise`
-              : "Keine Konflikte erkannt"}
-          </b>
-          <small>
-            Fahrer, Fahrzeuge, Kennzeichen, Abfahrtsbestätigung, Dokumente, Tachograph und Prüftermine werden automatisch
-            geprüft.
-          </small>
+          <b>{total ? `${total} Hinweise${urgent ? ` · ${urgent} dringend` : ""}` : "Keine Konflikte erkannt"}</b>
+          <small>Fahrer, Fahrzeuge, Abfahrten, Dokumente, Lenkzeiten und Prüftermine werden automatisch geprüft.</small>
         </div>
       </div>
-      {alerts.length ? (
-        <div className="alert-list">
-          {alerts.map((alert) => (
-            <p className={alert.level} key={alert.key}>
-              {alert.text}
-            </p>
+      {groups.length ? (
+        <div className="alert-groups">
+          {groups.map((entry, index) => (
+            <details key={entry.group} className={`alert-group ${entry.items.some((item) => item.level === "danger") ? "danger" : "warning"}`} open={index === 0}>
+              <summary><span className="alert-group-icon">{groupMeta[entry.group].icon}</span><b>{groupMeta[entry.group].title}</b><em>{entry.items.length}</em></summary>
+              <ul>
+                {entry.items.map((item) => (
+                  <li key={item.id} className={item.level}>
+                    <span>{item.text}</span>
+                    {item.days.length ? <small>{item.days.join(" · ")}</small> : null}
+                  </li>
+                ))}
+              </ul>
+            </details>
           ))}
         </div>
       ) : null}

@@ -481,3 +481,25 @@
 @media (max-width: 760px) { .app-shell .fleet-map { height: 280px; } }
 .app-shell.theme-dark .fleet-map-card header button { background: #13293a; color: #e6eff2; border-color: #22343f; }
 .app-shell.theme-dark .fleet-map-card h3 { color: #e6eff2; }
+
+/* Planning hints grouped */
+.app-shell .planning-alerts .alerts-title b { font-size: 18px; }
+.app-shell .alert-groups { display: grid; gap: 8px; padding: 12px; }
+.app-shell .alert-group { border: 1px solid #e4ecef; border-radius: 14px; background: #fff; overflow: hidden; }
+.app-shell .alert-group > summary { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; list-style: none; }
+.app-shell .alert-group > summary::-webkit-details-marker { display: none; }
+.app-shell .alert-group > summary::after { content: "›"; margin-left: 4px; color: #8a9ca6; font-size: 20px; transition: transform .2s; }
+.app-shell .alert-group[open] > summary::after { transform: rotate(90deg); }
+.app-shell .alert-group-icon { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 10px; font-size: 14px; }
+.app-shell .alert-group.danger .alert-group-icon { background: #fde8e6; color: #b23a2b; }
+.app-shell .alert-group.warning .alert-group-icon { background: #fff3dc; color: #9a6510; }
+.app-shell .alert-group > summary b { flex: 1; color: #0b1a29; font-size: 15px; }
+.app-shell .alert-group > summary em { min-width: 26px; padding: 2px 8px; border-radius: 999px; background: #eef3f5; color: #3e5563; font-size: 13px; font-style: normal; font-weight: 800; text-align: center; }
+.app-shell .alert-group.danger > summary em { background: #b23a2b; color: #fff; }
+.app-shell .alert-group ul { display: grid; gap: 0; margin: 0; padding: 0 14px 10px 54px; list-style: none; }
+.app-shell .alert-group li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding: 8px 0; border-top: 1px solid #f0f4f5; color: #1d3140; font-size: 14px; }
+.app-shell .alert-group li small { color: #6c808b; font-size: 12.5px; }
+.app-shell.theme-dark .alert-group { border-color: #22343f; background: #10232e; }
+.app-shell.theme-dark .alert-group > summary b, .app-shell.theme-dark .alert-group li { color: #e6eff2; }
+.app-shell.theme-dark .alert-group li { border-color: #22343f; }
+@media (max-width: 760px) { .app-shell .alert-group ul { padding-left: 14px; } }

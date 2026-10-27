@@ -94,8 +94,37 @@ async function refreshDemoPositions() {
   await env.DB.prepare("DELETE FROM truck_positions WHERE source='demo' AND recorded_at < datetime('now','-2 days')").run();
 }
 
+/** One truck per driver and confirmed departures, so the demo shows a realistic, mostly calm week. */
+async function tidyDemoWeek() {
+  const { year, week } = isoWeek(new Date());
+  const stamp = new Date().toISOString();
+  const extra = [["HH-MT 104", "Hamburg"], ["HB-MT 202", "Bremen"], ["H-MT 302", "Hannover"], ["HH-MT 105", "Hamburg"]];
+  await env.DB.batch(extra.map(([plate, location]) => env.DB.prepare(
+    "INSERT OR IGNORE INTO vehicles (license_plate, company, location, status, notes, created_at, updated_at) VALUES (?, ?, ?, 'active', '', ?, ?)",
+  ).bind(plate, company, location, stamp, stamp)));
+  const plans = await env.DB.prepare("SELECT id, license_plate FROM weekly_planning WHERE planning_year=? AND calendar_week=? ORDER BY id").bind(year, week).all<{ id: number; license_plate: string | null }>();
+  const free = (await env.DB.prepare("SELECT license_plate FROM vehicles WHERE status='active' ORDER BY license_plate").all<{ license_plate: string }>()).results.map((row) => row.license_plate);
+  const used = new Set<string>();
+  const fixes = [];
+  for (const plan of plans.results) {
+    if (plan.license_plate && !used.has(plan.license_plate)) { used.add(plan.license_plate); continue; }
+    const plate = free.find((candidate) => !used.has(candidate));
+    if (!plate) continue;
+    used.add(plate);
+    fixes.push(env.DB.prepare("UPDATE weekly_planning SET license_plate=?, updated_at=? WHERE id=?").bind(plate, stamp, plan.id));
+  }
+  if (fixes.length) await env.DB.batch(fixes);
+  // Confirm departures for today and tomorrow, except the first plan, which stays open as an example.
+  const manager = await env.DB.prepare("SELECT id FROM users WHERE role='management' ORDER BY id LIMIT 1").first<{ id: number }>();
+  const days = [0, 1].map((offset) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10));
+  await env.DB.batch(plans.results.slice(1).flatMap((plan) => days.map((day) => env.DB.prepare(
+    "INSERT OR IGNORE INTO planning_departure_confirmations (planning_id, shift_date, confirmed_at, confirmed_by, created_at) VALUES (?, ?, ?, ?, ?)",
+  ).bind(plan.id, day, stamp, manager?.id || 1, stamp))));
+}
+
 export async function seedDemoHistory() {
   await upgradeDemoStaff();
+  await tidyDemoWeek();
   await refreshDemoPositions();
   if (await ensureDemoWeek()) await env.DB.prepare("DELETE FROM payroll_calculations WHERE period=?").bind(new Date().toISOString().slice(0, 7)).run();
   const current = new Date().toISOString().slice(0, 7);
