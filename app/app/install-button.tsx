@@ -1,5 +1,6 @@
 "use client";
 
+import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 
 type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
@@ -7,6 +8,13 @@ type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Pro
 export function InstallButton() {
   const [prompt, setPrompt] = useState<InstallPromptEvent | null>(null);
   const [state, setState] = useState<"unknown" | "installed" | "ios" | "ready">("unknown");
+  const [qr, setQr] = useState("");
+
+  useEffect(() => {
+    // On a computer, show a QR code so the phone can open this page directly.
+    if (/android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent)) return;
+    QRCode.toString(`${window.location.origin}/app`, { type: "svg", margin: 1, width: 180, color: { dark: "#0b1a29", light: "#ffffff" } }).then(setQr).catch(() => setQr(""));
+  }, []);
 
   useEffect(() => {
     if (window.matchMedia("(display-mode: standalone)").matches) return setState("installed");
@@ -35,6 +43,7 @@ export function InstallButton() {
 
   return (
     <div className="install-cta">
+      {qr ? <div className="install-qr"><div dangerouslySetInnerHTML={{ __html: qr }} /><p><b>Mit dem Handy scannen</b>Kamera auf den Code richten – die Seite öffnet sich auf dem Handy, dort dann installieren.</p></div> : null}
       {state === "ready" ? <button className="site-button" onClick={() => void install()}>App installieren</button> : null}
       {state === "installed" ? <div className="install-hint">Die App ist installiert. Öffnen Sie LOGIPAY vom Startbildschirm.</div> : null}
       {state === "ios" ? <div className="install-hint">iPhone: Teilen-Symbol □↑ unten in Safari → „Zum Home-Bildschirm“.</div> : null}

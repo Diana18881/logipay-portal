@@ -9,6 +9,7 @@ export const driverLanguages: Array<{ code: DriverLocale; short: string; label: 
 
 const copy: Record<DriverLocale, Record<string, string>> = {
   de: {
+    installApp: "App installieren",
     hello: "Hallo",
     overview: "Start", vehicles: "Mein LKW", tracking: "Standort", planning: "Wochenplan",
     operations: "Touren", tachograph: "Fahrzeiten", expenses: "Belege", checklists: "LKW-Check",
@@ -48,6 +49,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     noNotifications: "Keine Meldungen", more: "Mehr", home: "Start", receipts: "Belege", messages: "Chats", alerts: "Meldungen",
   },
   pl: {
+    installApp: "Zainstaluj aplikację",
     hello: "Cześć",
     overview: "Start", vehicles: "Moja ciężarówka", tracking: "Lokalizacja", planning: "Plan tygodnia",
     operations: "Trasy", tachograph: "Czas jazdy", expenses: "Paragony", checklists: "Kontrola auta",
@@ -87,6 +89,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     noNotifications: "Brak powiadomień", more: "Więcej", home: "Start", receipts: "Paragony", messages: "Czaty", alerts: "Alerty",
   },
   uk: {
+    installApp: "Встановити застосунок",
     hello: "Привіт",
     overview: "Головна", vehicles: "Моя вантажівка", tracking: "Місцезнаходження", planning: "План тижня",
     operations: "Рейси", tachograph: "Час водіння", expenses: "Чеки", checklists: "Перевірка авто",
@@ -126,6 +129,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     noNotifications: "Сповіщень немає", more: "Ще", home: "Головна", receipts: "Чеки", messages: "Чати", alerts: "Сповіщення",
   },
   ru: {
+    installApp: "Установить приложение",
     hello: "Привет",
     overview: "Главная", vehicles: "Мой грузовик", tracking: "Местоположение", planning: "План недели",
     operations: "Рейсы", tachograph: "Время вождения", expenses: "Чеки", checklists: "Проверка машины",

@@ -101,14 +101,14 @@ const nav: { id: Section; label: string; roles: string[] }[] = [
 ];
 
 // A few main areas in the sidebar; everything else is a tab inside its area.
-const navGroups: { id: string; title: string; icon: string; ids: Section[] }[] = [
-  { id: "navHome", title: "Startseite", icon: "⌂", ids: ["driverFlow", "overview"] },
-  { id: "navPlan", title: "Planung & Touren", icon: "▦", ids: ["planning", "operations", "messages", "tracking"] },
-  { id: "navPeople", title: "Fahrer & Personal", icon: "◉", ids: ["staff", "absences", "personnel", "tachograph"] },
-  { id: "navFleet", title: "Fuhrpark", icon: "▣", ids: ["vehicles", "checklists"] },
-  { id: "navMoney", title: "Finanzen", icon: "€", ids: ["expenses", "documents", "reports"] },
-  { id: "navTasks", title: "Aufgaben & Tickets", icon: "◆", ids: ["tasks", "concerns", "notifications"] },
-  { id: "navAdmin", title: "Verwaltung", icon: "⚙", ids: ["users", "security"] },
+const navGroups: { id: string; title: string; icon: IconName; ids: Section[] }[] = [
+  { id: "navHome", title: "Startseite", icon: "home", ids: ["driverFlow", "overview"] },
+  { id: "navPlan", title: "Planung & Touren", icon: "calendar", ids: ["planning", "operations", "messages", "tracking"] },
+  { id: "navPeople", title: "Fahrer & Personal", icon: "users", ids: ["staff", "absences", "personnel", "tachograph"] },
+  { id: "navFleet", title: "Fuhrpark", icon: "truck", ids: ["vehicles", "checklists"] },
+  { id: "navMoney", title: "Finanzen", icon: "euro", ids: ["expenses", "documents", "reports"] },
+  { id: "navTasks", title: "Aufgaben & Tickets", icon: "inbox", ids: ["tasks", "concerns", "notifications"] },
+  { id: "navAdmin", title: "Verwaltung", icon: "settings", ids: ["users", "security"] },
 ];
 
 // Everyday words (DE/RU/UK/PL) that should find a function in the global search.
@@ -653,7 +653,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
               className={activeGroup?.id === group.id ? "nav-active" : ""}
               onClick={() => { openGroup(group); setMobileMenu(false); }}
             >
-              <span className="nav-icon">{group.icon}</span>
+              <span className="nav-icon"><Icon name={group.icon} size={20} /></span>
               {groupTitle(group)}
               {counter ? <span className={`nav-counter${group.id === "navPlan" && unreadChatCount ? " nav-counter-chat" : ""}`}>{Math.min(99, counter)}</span> : null}
             </button>;
@@ -673,7 +673,8 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
               <small>{isDriver ? t("driver") : labels[currentUser.role]}</small>
             </div>
           </div>
-          {currentUser.role === "management" ? <a className="logout-button account-link" href="/abo">▣ Abonnement & Daten</a> : null}
+          <a className="sidebar-link" href="/app" target="_blank" rel="noreferrer"><Icon name="phone" size={18} />{isDriver ? t("installApp", "App installieren") : "Fahrer-App installieren"}</a>
+          {currentUser.role === "management" ? <a className="sidebar-link" href="/abo"><Icon name="card" size={18} />Abonnement & Daten</a> : null}
           <button className="logout-button" onClick={logout}>
             ↪ {isDriver ? t("logout") : "Abmelden"}
           </button>

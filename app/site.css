@@ -121,7 +121,7 @@
 .install-cta { display: grid; gap: 10px; margin: 22px 0; }
 .install-steps { display: grid; gap: 14px; margin-top: 18px; }
 .install-steps section { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
-.install-steps h2 { margin: 0 0 10px; font-size: 18px; }
+.install-steps h2 { margin: 0 0 10px; font-size: 18px; font-weight: 750; }
 .install-steps ol { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
 .install-hint { padding: 12px 14px; border-radius: 10px; background: var(--mint-pale); color: #126e62; font-size: 14px; }
 
@@ -368,3 +368,8 @@
 .two-factor-manual summary { color: #4f6472; cursor: pointer; }
 .two-factor-manual code { display: block; margin: 8px 0 4px; padding: 10px; border-radius: 10px; background: #f3f8f9; font-size: 15px; letter-spacing: 1px; word-spacing: 4px; user-select: all; overflow-wrap: anywhere; }
 .two-factor-manual small { color: #6c808b; }
+.install-qr { display: flex; align-items: center; gap: 18px; width: 100%; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+.install-qr > div { flex: none; width: 150px; }
+.install-qr svg { display: block; width: 150px; height: 150px; }
+.install-qr p { margin: 0; color: var(--muted); font-size: 14px; }
+.install-qr b { display: block; margin-bottom: 4px; color: var(--ink); font-size: 16px; }
