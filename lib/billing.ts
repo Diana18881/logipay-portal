@@ -46,7 +46,7 @@ async function ensureCustomer(company: Company, email: string) {
     name: company.name,
     email,
     "metadata[company_id]": company.id,
-    preferred_locales: "de",
+    "preferred_locales[0]": "de",
   });
   await updateCompany(company.id, { stripe_customer_id: customer.id });
   return customer.id;
