@@ -46,7 +46,7 @@ export function InstallButton() {
       {qr ? <div className="install-qr"><div dangerouslySetInnerHTML={{ __html: qr }} /><p><b>Mit dem Handy scannen</b>Kamera auf den Code richten – die Seite öffnet sich auf dem Handy, dort dann installieren.</p></div> : null}
       {state === "ready" ? <button className="site-button" onClick={() => void install()}>App installieren</button> : null}
       {state === "installed" ? <div className="install-hint">Die App ist installiert. Öffnen Sie LOGIPAY vom Startbildschirm.</div> : null}
-      {state === "ios" ? <div className="install-hint">iPhone: Teilen-Symbol □↑ unten in Safari → „Zum Home-Bildschirm“.</div> : null}
+      {state === "ios" ? <div className="install-hint">iPhone: in Safari Teilen □↑ (bei iOS 26 erst ≡ neben der Adresse) → „Zum Home-Bildschirm“.</div> : null}
       <a className="site-button site-button-ghost" href="/login">Zur Anmeldung</a>
     </div>
   );

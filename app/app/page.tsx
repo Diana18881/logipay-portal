@@ -29,7 +29,7 @@ export default function InstallPage() {
             <h2>iPhone (Safari)</h2>
             <ol>
               <li>Diese Seite in Safari öffnen.</li>
-              <li>Unten auf das Teilen-Symbol <b>□↑</b> tippen.</li>
+              <li>Unten auf das Teilen-Symbol <b>□↑</b> tippen. Bei iOS 26 zuerst auf <b>≡</b> bzw. <b>•••</b> neben der Adresse tippen, dann „Teilen“.</li>
               <li>„Zum Home-Bildschirm“ wählen und „Hinzufügen“ tippen.</li>
               <li>LOGIPAY vom Home-Bildschirm starten und anmelden. Für Push-Nachrichten ist iOS 16.4 oder neuer nötig.</li>
             </ol>
