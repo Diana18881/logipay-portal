@@ -171,6 +171,22 @@ const sectionDescriptions: Partial<Record<Section, string>> = {
   reports: "PDF- und Excel-Berichte für Planung, Finanzamt, Auftraggeber und DATEV",
 };
 
+// Reads the old free-text pay ("2.400 € Netto") so existing staff open with sensible defaults.
+function payGuess(row: Row | null) {
+  const text = String(row?.compensation || "");
+  const match = text.match(/\d[\d.,]*/);
+  let amount = 0;
+  if (match) {
+    let number = match[0].replace(/[.,]+$/, "");
+    if (/,\d{1,2}$/.test(number)) number = number.replace(/\./g, "").replace(",", ".");
+    else if (/^\d{1,3}(\.\d{3})+$/.test(number)) number = number.replace(/\./g, "");
+    else number = number.replace(/,/g, "");
+    amount = Number(number) || 0;
+  }
+  const type = /\/\s*(h\b|std|stunde)|pro\s*stunde/i.test(text) ? "hourly" : /\/\s*(tag|day)|pro\s*tag/i.test(text) ? "daily" : "monthly";
+  return { amount, type, basis: /netto/i.test(text) ? "netto" : "brutto" };
+}
+
 function isoWeekOf(date: Date) {
   const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const day = target.getUTCDay() || 7;
@@ -3114,13 +3130,35 @@ function EntryForm({
               <option>SPRINGER</option>
             </select>
           </label>
+          <div className="form-section wide">
+            <b>Lohn</b>
+            <span>Grundlage für den Monatsabschluss. Zuschläge und Spesen rechnet LOGIPAY automatisch dazu.</span>
+          </div>
           <label>
-            Vergütung
-            <input
-              name="compensation"
-              defaultValue={String(editing?.compensation || "")}
-              placeholder="2300–2400 € Netto"
-            />
+            Lohnart
+            <select name="payType" defaultValue={String(editing?.pay_type || payGuess(editing).type)}>
+              <option value="monthly">Monatslohn</option>
+              <option value="hourly">Stundenlohn</option>
+              <option value="daily">Tagessatz</option>
+            </select>
+          </label>
+          <label>
+            Betrag €
+            <input name="payAmount" inputMode="decimal" defaultValue={String(editing?.pay_amount || payGuess(editing).amount || "")} placeholder="z. B. 2600 oder 15,50" />
+          </label>
+          <label>
+            Brutto / Netto
+            <select name="payBasis" defaultValue={String(editing?.pay_basis || payGuess(editing).basis)}>
+              <option value="brutto">Brutto (üblich)</option>
+              <option value="netto">Netto vereinbart</option>
+            </select>
+          </label>
+          <label>
+            Einsatzart (für Spesen)
+            <select name="tourType" defaultValue={String(editing?.tour_type || "fern")}>
+              <option value="fern">Fernverkehr – mehrtägig, Übernachtung im Lkw</option>
+              <option value="nah">Nahverkehr – abends zu Hause</option>
+            </select>
           </label>
           <label>
             Standort

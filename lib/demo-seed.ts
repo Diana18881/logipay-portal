@@ -40,9 +40,32 @@ function isoWeek(date: Date) {
 }
 
 /** Six months of fictional history so the demo dashboard shows real-looking charts. */
+/** Gives demo drivers structured gross pay and personnel numbers (older demo data used "€ Netto" text). */
+async function upgradeDemoStaff() {
+  const rows = await env.DB.prepare("SELECT id, full_name, compensation, system_type FROM staff WHERE pay_amount IS NULL").all<{ id: number; full_name: string; compensation: string | null; system_type: string | null }>();
+  if (!rows.results.length) return;
+  const { describePay } = await import("./payroll");
+  await env.DB.batch(rows.results.map((row, index) => {
+    const amount = 3100 + (index % 4) * 150;
+    const tour = row.system_type === "5/2" ? "nah" : "fern";
+    return env.DB.prepare("UPDATE staff SET pay_type='monthly', pay_amount=?, pay_basis='brutto', tour_type=?, compensation=?, personnel_number=COALESCE(personnel_number, ?) WHERE id=?")
+      .bind(amount, tour, describePay("monthly", amount, "brutto"), String(1000 + row.id), row.id);
+  }));
+  await env.DB.prepare("DELETE FROM payroll_calculations WHERE period=?").bind(new Date().toISOString().slice(0, 7)).run();
+}
+
 export async function seedDemoHistory() {
+  await upgradeDemoStaff();
+  const current = new Date().toISOString().slice(0, 7);
   const existing = await env.DB.prepare("SELECT COUNT(*) AS count FROM payroll_calculations").first<{ count: number }>();
-  if (Number(existing?.count || 0) > 0) return;
+  if (Number(existing?.count || 0) > 0) {
+    const thisMonth = await env.DB.prepare("SELECT COUNT(*) AS count FROM payroll_calculations WHERE period=?").bind(current).first<{ count: number }>();
+    if (!Number(thisMonth?.count || 0)) {
+      const { calculateMonth } = await import("./payroll");
+      await calculateMonth(current, 1, { countPlanned: true });
+    }
+    return;
+  }
   const people = await env.DB.prepare("SELECT id, compensation FROM staff WHERE status='active' ORDER BY id").all<{ id: number; compensation: string }>();
   if (!people.results.length) return;
   const now = new Date();
@@ -53,12 +76,21 @@ export async function seedDemoHistory() {
     const period = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
     for (const [index, person] of people.results.entries()) {
       const base = Number(String(person.compensation).match(/\d{4}/)?.[0] || 2400);
-      const extra = ((index * 37 + back * 53) % 9) * 25;
-      const night = ((index + back) % 3) * 60;
-      const total = base + extra + night;
+      const hourly = Math.round((base / (40 * 4.33)) * 100) / 100;
+      const nights = (index + back) % 4;
+      const night = Math.round(nights * 8 * hourly * 0.25 * 100) / 100;
+      const trips = 4 + (index % 2);
+      const fullDays = 21 - trips * 2;
+      const meals = trips * 2 * 14 + fullDays * 28 + (21 - trips) * 9;
+      const total = Math.round((base + night + meals) * 100) / 100;
+      const details = JSON.stringify({ version: 2, days: { worked: 21, vacation: 0, sick: 0 }, hourly, pay: { type: "monthly", amount: base, basis: "brutto", tourType: "fern" }, warnings: [], lines: [
+        { key: "base", label: "Grundlohn", formula: `Monatslohn ${base.toLocaleString("de-DE")} € brutto / Monat`, amount: base },
+        ...(night ? [{ key: "night", label: "Nachtzuschlag (steuerfrei)", formula: `${nights} Tage × 8 h × ${hourly.toLocaleString("de-DE")} €/h × 25 %`, amount: night, taxFree: true }] : []),
+        { key: "meals", label: "Spesen (steuerfrei)", formula: `${trips * 2} × 14,00 € (An-/Abreisetag) + ${fullDays} × 28,00 € (voller Tag) + ${21 - trips} × 9,00 € (Übernachtung im Lkw)`, amount: meals, taxFree: true },
+      ] });
       if (back > 0) statements.push(env.DB.prepare(
-        "INSERT OR IGNORE INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, night_bonus, sunday_bonus, holiday_bonus, reimbursements, deductions, net_amount, payment_status, calculation_details, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, 'paid', '{\"source\":\"demo\"}', ?, ?)",
-      ).bind(person.id, period, base, 20 + (index % 3), extra, 0, night, total, stamp, stamp));
+        "INSERT OR IGNORE INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, night_bonus, sunday_bonus, holiday_bonus, reimbursements, deductions, net_amount, payment_status, calculation_details, created_at, updated_at) VALUES (?, ?, ?, 21, 0, ?, ?, 0, 0, 0, 0, ?, 'paid', ?, ?, ?)",
+      ).bind(person.id, period, base, meals, night, total, details, stamp, stamp));
       if (index < 5) {
         const day = String(3 + ((index * 5 + back * 3) % 24)).padStart(2, "0");
         const amount = 140 + ((index * 61 + back * 97) % 260) + 0.4;
@@ -77,6 +109,14 @@ export async function seedDemoHistory() {
     ).bind(person.id, category, `${category}.pdf`, `demo/${person.id}/${category}`, soon(days), stamp));
   }
   if (statements.length) await env.DB.batch(statements);
+  for (let back = 5; back >= 1; back--) {
+    const month = new Date(now.getFullYear(), now.getMonth() - back, 1);
+    const period = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
+    await env.DB.prepare("INSERT OR IGNORE INTO payroll_periods (period, status, closed_at, updated_at) VALUES (?, 'closed', ?, ?)").bind(period, stamp, stamp).run();
+  }
+  // The current month is calculated for real, so "So wurde gerechnet" shows the live rules.
+  const { calculateMonth } = await import("./payroll");
+  await calculateMonth(now.toISOString().slice(0, 7), 1, { countPlanned: true });
 }
 
 export async function seedDemoCompany() {

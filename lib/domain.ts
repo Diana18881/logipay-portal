@@ -303,6 +303,13 @@ async function ensureDomainDatabaseNow() {
       "ALTER TABLE driver_concerns ADD COLUMN staff_id INTEGER",
     ).run();
   }
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS company_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT NOT NULL)").run();
+  const staffColumns = await env.DB.prepare("PRAGMA table_info(staff)").all<{ name: string }>();
+  if (!staffColumns.results.some((column) => column.name === "personnel_number"))
+    await env.DB.prepare("ALTER TABLE staff ADD COLUMN personnel_number TEXT").run();
+  for (const [column, type] of [["pay_type", "TEXT"], ["pay_amount", "REAL"], ["pay_basis", "TEXT"], ["tour_type", "TEXT"]] as const)
+    if (!staffColumns.results.some((existing) => existing.name === column))
+      await env.DB.prepare(`ALTER TABLE staff ADD COLUMN ${column} ${type}`).run();
   if (currentTenantId() === DEMO_TENANT) {
     await seedDemoCompany();
     await seedDemoHistory();
@@ -350,10 +357,6 @@ async function ensureDomainDatabaseNow() {
        )`,
     ).bind(syncNow),
   ]);
-  await env.DB.prepare("CREATE TABLE IF NOT EXISTS company_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT NOT NULL)").run();
-  const staffColumns = await env.DB.prepare("PRAGMA table_info(staff)").all<{ name: string }>();
-  if (!staffColumns.results.some((column) => column.name === "personnel_number"))
-    await env.DB.prepare("ALTER TABLE staff ADD COLUMN personnel_number TEXT").run();
   // Optional planner hint; Turso/libsql rejects this statement, so failures are ignored.
   await env.DB.prepare("PRAGMA optimize").run().catch(() => undefined);
 }

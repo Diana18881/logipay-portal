@@ -272,3 +272,92 @@
 .app-shell.theme-dark .empty-art span { background: #13293a; }
 .app-shell.theme-dark .empty-hint strong { color: #e9f2f4; }
 .app-shell.theme-dark .empty-state { background: #13293a; color: #a9bfca; }
+
+/* ───── Monatsabschluss ───── */
+.app-shell .month-close { display: grid; gap: 14px; }
+.app-shell .month-head { padding: 18px; }
+.app-shell .month-head-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.app-shell .month-picker { display: grid; gap: 6px; font-weight: 650; }
+.app-shell .month-state { align-self: center; padding: 6px 12px; border-radius: 999px; background: #eef3f5; color: #5d717e; font-size: 13px; font-weight: 750; }
+.app-shell .month-state.is-open { background: #fff3dc; color: #9a6510; }
+.app-shell .month-state.is-closed { background: #e3f6f2; color: #0e8577; }
+.app-shell .month-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.app-shell .month-steps { display: grid; gap: 8px; margin: 16px 0 0; padding: 0; list-style: none; }
+.app-shell .month-steps li { display: flex; align-items: center; gap: 10px; color: #7a8e99; font-size: 14px; }
+.app-shell .month-steps b { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 50%; background: #eef3f5; color: #7a8e99; font-size: 13px; }
+.app-shell .month-steps li.done { color: #1d3140; }
+.app-shell .month-steps li.done b { background: linear-gradient(135deg, #12a593, #1b8fc9); color: #fff; }
+.app-shell .month-reopen { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.app-shell .month-reopen input { flex: 1; min-width: 220px; }
+.app-shell .month-kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.app-shell .month-kpis div { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid #e4ecef; border-radius: 16px; background: #fff; }
+.app-shell .month-kpis small { color: #5d717e; font-size: 12.5px; font-weight: 650; }
+.app-shell .month-kpis b { color: #0b1a29; font-size: 20px; letter-spacing: -.3px; }
+.app-shell .month-kpis .month-total { border: 0; background: linear-gradient(135deg, #0b1a29, #0f3a4d); }
+.app-shell .month-kpis .month-total small { color: #9fd9cf; }
+.app-shell .month-kpis .month-total b { color: #fff; }
+.app-shell .month-warnings { padding: 16px 18px; border-color: #f2d6a6; background: #fffaf0; }
+.app-shell .month-warnings h3 { margin: 0 0 8px; color: #9a6510; font-size: 15px; }
+.app-shell .month-warnings ul { display: grid; gap: 4px; margin: 0; padding-left: 18px; color: #6b5420; font-size: 14px; }
+.app-shell .month-people { display: grid; gap: 10px; }
+.app-shell .month-person { padding: 16px; border: 1px solid #e4ecef; border-radius: 18px; background: #fff; }
+.app-shell .month-person.is-open { border-color: #9fe0d5; box-shadow: 0 12px 28px #16b8a314; }
+.app-shell .month-person header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; }
+.app-shell .month-person header b { display: block; color: #0b1a29; font-size: 17px; }
+.app-shell .month-person header small { color: #6c808b; font-size: 13px; }
+.app-shell .month-person header strong { grid-row: span 2; color: #0b1a29; font-size: 20px; text-align: right; }
+.app-shell .month-days { display: flex; flex-wrap: wrap; gap: 6px; }
+.app-shell .month-days span { padding: 3px 9px; border-radius: 999px; background: #f1f6f7; color: #3e5563; font-size: 12.5px; font-weight: 650; }
+.app-shell .month-figures { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 12px 0; }
+.app-shell .month-figures span { display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; background: #f6f9fa; color: #0b1a29; font-weight: 750; }
+.app-shell .month-figures small { color: #6c808b; font-size: 12px; font-weight: 600; }
+.app-shell .month-person-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.app-shell .month-person-actions button, .app-shell .month-person-actions a { min-height: 40px; padding: 0 14px; border: 1px solid #d6e2e6; border-radius: 12px; background: #fff; color: #0b1a29; font-size: 14px; font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; cursor: pointer; }
+.app-shell .month-lines { width: 100%; margin-top: 12px; border-collapse: collapse; }
+.app-shell .month-lines td { padding: 10px 4px; border-top: 1px solid #eef3f5; vertical-align: top; }
+.app-shell .month-lines td:last-child { text-align: right; font-weight: 750; white-space: nowrap; }
+.app-shell .month-lines b { display: block; font-size: 14px; }
+.app-shell .month-lines small { color: #6c808b; font-size: 12.5px; }
+.app-shell .month-lines-total td { border-top: 2px solid #0b1a29; }
+.app-shell .month-adjust { display: grid; gap: 10px; margin-top: 12px; padding: 14px; border-radius: 14px; background: #f6f9fa; }
+.app-shell .month-adjust label { display: grid; gap: 4px; font-weight: 650; }
+.app-shell .month-empty { padding: 24px; text-align: center; }
+.app-shell .month-empty p { max-width: 520px; margin: 8px auto 0; color: #5d717e; }
+.app-shell .month-rules { padding: 0; overflow: hidden; }
+.app-shell .month-rules-toggle { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 18px; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.app-shell .month-rules-toggle b { display: block; font-size: 16px; }
+.app-shell .month-rules-toggle small { color: #6c808b; font-size: 13px; }
+.app-shell .month-rules-toggle em { color: #0e8577; font-style: normal; font-weight: 750; }
+.app-shell .month-rules-form { display: grid; gap: 12px; padding: 0 18px 18px; }
+.app-shell .month-rules-form label { display: grid; gap: 4px; }
+.app-shell .month-rules-form label > span { font-weight: 700; }
+.app-shell .month-rules-form label > div { display: flex; align-items: center; gap: 8px; }
+.app-shell .month-rules-form label > div input { width: 120px; }
+.app-shell .month-rules-form em { color: #5d717e; font-style: normal; }
+.app-shell .month-rules-form small { color: #6c808b; }
+.app-shell .payroll-advanced { padding: 0; }
+.app-shell .payroll-advanced > summary { padding: 16px 18px; cursor: pointer; font-weight: 750; }
+@media (min-width: 900px) {
+  .app-shell .month-steps { grid-template-columns: repeat(3, 1fr); }
+  .app-shell .month-kpis { grid-template-columns: repeat(6, 1fr); }
+  .app-shell .month-person header { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .app-shell .month-person header strong { grid-row: auto; }
+  .app-shell .month-figures { grid-template-columns: repeat(6, 1fr); }
+  .app-shell .month-adjust { grid-template-columns: 1fr 1fr 2fr auto; align-items: end; }
+  .app-shell .month-rules-form { grid-template-columns: repeat(2, 1fr); }
+  .app-shell .month-rules-form .primary-button { grid-column: 1 / -1; justify-self: start; }
+}
+.app-shell .month-lines { min-width: 0 !important; table-layout: fixed; }
+.app-shell .month-lines td:first-child { width: auto; white-space: normal; }
+.app-shell .month-lines td:last-child { width: 110px; }
+.app-shell .month-lines b { display: block !important; }
+.app-shell .month-lines small { display: block !important; margin-top: 2px; overflow-wrap: anywhere; }
+.app-shell .month-person, .app-shell .month-close { min-width: 0; max-width: 100%; }
+.app-shell .month-head-row > * { min-width: 0; }
+.app-shell .month-lines td { display: table-cell !important; }
+.app-shell .month-lines td:first-child > * { display: block !important; }
+@media (max-width: 760px) {
+  .app-shell .month-person header { grid-template-columns: minmax(0, 1fr) auto; }
+  .app-shell .month-person header strong { grid-column: 1 / -1; grid-row: auto; text-align: left; font-size: 22px; }
+  .app-shell .month-lines td:last-child { width: 96px; }
+}

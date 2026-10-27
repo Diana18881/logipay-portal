@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { PayrollMonth } from "./payroll-month";
 import type { DriverLocale } from "./driver-i18n";
 import { queueOfflineUpload } from "../lib/offline-client";
 import { mapPayrollRows, parseCsv, type PayrollRecord } from "../lib/payroll-import";
@@ -89,10 +90,10 @@ export function PayrollCenter({ rows, periods, workDays, staff, driver, manageme
   const [calcBusy, setCalcBusy] = useState(false);
   const [calcDone, setCalcDone] = useState("");
   const c = {
-    de: { title: "Meine Abrechnung", help: "Monatliche Lohnwerte, Zahlungsstatus und PDF", month: "Monat", base: "Grundgehalt", tours: "Arbeitstage", night: "Nacht", sunday: "Sonntag", holiday: "Feiertag", expenses: "Spesen", reimbursements: "Erstattungen", deductions: "Abzüge", net: "Netto", status: "Status", empty: "Noch keine Monatsabrechnung" },
-    pl: { title: "Moje rozliczenie", help: "Miesięczne wynagrodzenie, status płatności i PDF", month: "Miesiąc", base: "Podstawa", tours: "Dni pracy", night: "Noc", sunday: "Niedziela", holiday: "Święta", expenses: "Diety", reimbursements: "Zwroty", deductions: "Potrącenia", net: "Netto", status: "Status", empty: "Brak rozliczenia" },
-    uk: { title: "Мій розрахунок", help: "Місячна зарплата, статус виплати та PDF", month: "Місяць", base: "Основна зарплата", tours: "Робочі дні", night: "Нічні", sunday: "Неділя", holiday: "Свята", expenses: "Добові", reimbursements: "Повернення витрат", deductions: "Відрахування", net: "Нетто", status: "Статус", empty: "Розрахунку ще немає" },
-    ru: { title: "Мой расчёт", help: "Месячная зарплата, статус выплаты и PDF", month: "Месяц", base: "Основная зарплата", tours: "Рабочие дни", night: "Ночные", sunday: "Воскресенье", holiday: "Праздники", expenses: "Суточные", reimbursements: "Возврат расходов", deductions: "Удержания", net: "Нетто", status: "Статус", empty: "Расчёта пока нет" },
+    de: { title: "Meine Abrechnung", help: "Monatliche Lohnwerte, Zahlungsstatus und PDF", month: "Monat", base: "Grundgehalt", tours: "Arbeitstage", night: "Nacht", sunday: "Sonntag", holiday: "Feiertag", expenses: "Spesen", reimbursements: "Erstattungen", deductions: "Abzüge", net: "Gesamt vor Steuern", status: "Status", empty: "Noch keine Monatsabrechnung" },
+    pl: { title: "Moje rozliczenie", help: "Miesięczne wynagrodzenie, status płatności i PDF", month: "Miesiąc", base: "Podstawa", tours: "Dni pracy", night: "Noc", sunday: "Niedziela", holiday: "Święta", expenses: "Diety", reimbursements: "Zwroty", deductions: "Potrącenia", net: "Razem przed podatkami", status: "Status", empty: "Brak rozliczenia" },
+    uk: { title: "Мій розрахунок", help: "Місячна зарплата, статус виплати та PDF", month: "Місяць", base: "Основна зарплата", tours: "Робочі дні", night: "Нічні", sunday: "Неділя", holiday: "Свята", expenses: "Добові", reimbursements: "Повернення витрат", deductions: "Відрахування", net: "Разом до податків", status: "Статус", empty: "Розрахунку ще немає" },
+    ru: { title: "Мой расчёт", help: "Месячная зарплата, статус выплаты и PDF", month: "Месяц", base: "Основная зарплата", tours: "Рабочие дни", night: "Ночные", sunday: "Воскресенье", holiday: "Праздники", expenses: "Суточные", reimbursements: "Возврат расходов", deductions: "Удержания", net: "Итого до налогов", status: "Статус", empty: "Расчёта пока нет" },
   }[locale];
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -119,6 +120,11 @@ export function PayrollCenter({ rows, periods, workDays, staff, driver, manageme
   async function reopen() {
     await action({ action: "reopenPayrollPeriod", period, reason: reopenReason }); setReopenReason("");
   }
+  if (!driver) return <div className="advanced-stack payroll-workspace">
+    <PayrollMonth rows={rows} periods={periods} management={management} action={action} reload={reload} />
+    <details className="panel payroll-advanced"><summary>Arbeitstage von Hand korrigieren</summary><WorkTimeSheet staff={staff} workDays={workDays} period={period} setPeriod={setPeriod} closed={periods.some((item) => item.period === period && item.status === "closed")} action={action} /></details>
+    <details className="panel payroll-advanced"><summary>Werte aus Datei des Steuerbüros übernehmen</summary><PayrollFileImport staff={staff} period={period} reload={reload} /></details>
+  </div>;
   return <div className="advanced-stack payroll-workspace">
     {!driver ? <WorkTimeSheet staff={staff} workDays={workDays} period={period} setPeriod={setPeriod} closed={periods.some((item) => item.period === period && item.status === "closed")} action={action} /> : null}
     {!driver ? <div className="panel payroll-automation"><div className="panel-title"><div><h2>2 · Abrechnung berechnen</h2><p>Grundlage sind die tatsächlichen Arbeitstage aus der Wochenplanung (nur Tage im gewählten Monat, Tour gestartet oder abgeschlossen). Pro Arbeitstag: Spesen; dazu Zuschläge für Nachtschicht, Sonntag und Feiertag und freigegebene Erstattungen. Das Grundgehalt kommt aus „Vergütung“ im Mitarbeiterstamm: „1750 € Netto“ = Monatsbetrag, „14 €/h“ = Stundenlohn × Stunden × Arbeitstage, „90 €/Tag“ = Tagessatz × Arbeitstage. Abzüge (Vorschuss, Bußgeld, Schaden) trägst du je Monat unten ein; Brutto-Vergütungen werden ohne Steuern und Sozialabgaben ausgewiesen.</p></div><span className={`period-state state-${String(periodRow?.status || "open")}`}>{periodRow?.status === "closed" ? "Geschlossen" : periodRow?.status === "review" ? "In Prüfung" : "Offen"}</span></div><form className="payroll-auto-form" onSubmit={calculate}>

@@ -6,8 +6,18 @@ import { deleteTripMessage } from "../../../lib/trip-chat";
 import { pushNewNotifications } from "../../../lib/push";
 import { emailTakenElsewhere, syncDirectory } from "../../../lib/tenants";
 import { syncSeats } from "../../../lib/billing";
+import { calculateMonth, describePay, saveRules, type PayBasis, type PayType } from "../../../lib/payroll";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
+
+// Structured pay from the staff form; the readable text is kept in "compensation" for lists and exports.
+const payFields = (body: Record<string, unknown>) => {
+  const type = (["monthly", "hourly", "daily"].includes(String(body.payType)) ? body.payType : "monthly") as PayType;
+  const basis = (body.payBasis === "netto" ? "netto" : "brutto") as PayBasis;
+  const amount = Math.max(0, Number(String(body.payAmount ?? "").replace(",", ".")) || 0);
+  const tour = body.tourType === "nah" ? "nah" : "fern";
+  return { type, basis, amount, tour, text: amount ? describePay(type, amount, basis) : String(body.compensation || "") };
+};
 const loginActions = new Set(["addPortalUser", "updatePortalUser", "addStaff", "updateStaff"]);
 const seatActions = new Set(["importStaff", "addStaff", "archiveStaff", "restoreStaff", "addPortalUser", "updatePortalUser"]);
 const normalizeDays = (value: unknown) => {
@@ -22,55 +32,6 @@ const daySetsOverlap = (left: string, right: string) => {
   return left.split(",").some((day) => rightDays.has(day));
 };
 
-// First amount in "Vergütung": "1.750 €" and "1,750 €" = 1750, "14,50 €/h" and "14.50 €/h" = 14.5; ranges use the lower bound.
-const parseCompensation = (value: unknown) => {
-  const match = String(value || "").match(/\d[\d.,]*/);
-  if (!match) return 0;
-  let text = match[0].replace(/[.,]+$/, "");
-  if (/,\d{1,2}$/.test(text)) text = text.replace(/\./g, "").replace(",", ".");
-  else if (/^\d{1,3}(\.\d{3})+$/.test(text)) text = text.replace(/\./g, "");
-  else text = text.replace(/,/g, "");
-  return Number(text) || 0;
-};
-
-const easterSunday = (year: number) => {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(Date.UTC(year, month - 1, day));
-};
-
-const isGermanFederalHoliday = (date: Date) => {
-  const year = date.getUTCFullYear();
-  const key = `${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-  if (["01-01", "05-01", "10-03", "12-25", "12-26"].includes(key)) return true;
-  const easter = easterSunday(year).getTime();
-  const day = Date.UTC(year, date.getUTCMonth(), date.getUTCDate());
-  return [-2, 1, 39, 50].some((offset) => day === easter + offset * 86400000);
-};
-
-// A monthly base typed in by hand survives recalculation; otherwise it follows "Vergütung" in the staff record.
-const keepsManualBase = (existing: Record<string, string | number | null> | null) => {
-  if (!existing) return false;
-  try {
-    const details = JSON.parse(String(existing.calculation_details || "{}")) as { source?: string; manualBase?: boolean };
-    return details.source === "manual-adjustment" || details.manualBase === true;
-  }
-  catch { return false; }
-};
-
-const payrollEligibleStatuses = ["Gestartet", "Beladen", "Unterwegs", "Zugestellt", "Problem"] as const;
 
 export async function GET(request: Request) {
   const user = await requirePortalUser();
@@ -633,6 +594,25 @@ export async function POST(request: Request) {
         .bind(eventType === "late" ? "Fahrerverspätung" : eventType === "no_show" ? "Fahrer nicht erschienen" : "Fahrerunfall", `${person.full_name}${eventType === "late" ? ` · ${minutesLate} Min.` : ""}${notes ? ` · ${notes}` : ""}`, String(result.meta.last_row_id), eventType === "accident" || eventType === "no_show" ? "urgent" : "warning", now).run();
     auditDetails = { oldValue: null, newValue: { staffId, driverName: person.full_name, eventDate, eventType, rating, scoreDelta, minutesLate, notes } };
     body.id = Number(result.meta.last_row_id);
+  } else if (action === "savePayrollRules" && ["management", "accountant"].includes(user.role)) {
+    try { const rules = await saveRules(body as Record<string, unknown>); auditDetails = { oldValue: null, newValue: rules }; responseBody = { ok: true, rules }; }
+    catch (error) { return json({ error: error instanceof Error ? error.message : "Ungültige Lohnregeln" }, 400); }
+  } else if (action === "savePayrollAdjustment" && ["management", "accountant"].includes(user.role)) {
+    const period = String(body.period || "");
+    const staffId = Number(body.staffId || 0);
+    if (!/^\d{4}-\d{2}$/.test(period) || !staffId) return json({ error: "Mitarbeiter und Monat fehlen" }, 400);
+    const state = await env.DB.prepare("SELECT status FROM payroll_periods WHERE period=?").bind(period).first<{ status: string }>();
+    if (state?.status === "closed") return json({ error: "Monat ist abgeschlossen" }, 409);
+    const bonus = Math.max(0, Number(String(body.bonus || 0).replace(",", ".")) || 0);
+    const deduction = Math.max(0, Number(String(body.deduction || 0).replace(",", ".")) || 0);
+    const note = String(body.note || "").trim().slice(0, 160);
+    const row = await env.DB.prepare("SELECT id, calculation_details FROM payroll_calculations WHERE staff_id=? AND period=?").bind(staffId, period).first<{ id: number; calculation_details: string | null }>();
+    if (!row) return json({ error: "Bitte den Monat zuerst berechnen" }, 409);
+    const details = JSON.parse(row.calculation_details || "{}");
+    details.adjustment = { bonus, deduction, note };
+    await env.DB.prepare("UPDATE payroll_calculations SET calculation_details=?, updated_at=? WHERE id=?").bind(JSON.stringify(details), now, row.id).run();
+    await calculateMonth(period, user.id, { countPlanned: true });
+    auditDetails = { oldValue: null, newValue: { staffId, period, bonus, deduction, note } };
   } else if ((action === "importStaff" || action === "importVehicles") && user.role === "management") {
     let rows: Record<string, string>[] = [];
     try { rows = JSON.parse(String(body.rows || "[]")); } catch { return json({ error: "Ungültige Importdaten" }, 400); }
@@ -682,20 +662,24 @@ export async function POST(request: Request) {
       userId = Number(created.meta.last_row_id);
     }
     await env.DB.prepare(
-      "INSERT INTO staff (user_id, full_name, personnel_number, system_type, compensation, location, company, vacation, status, hired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+      "INSERT INTO staff (user_id, full_name, personnel_number, system_type, compensation, location, company, vacation, status, hired_at, created_at, updated_at, pay_type, pay_amount, pay_basis, tour_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
     )
       .bind(
         userId,
         body.fullName,
         String(body.personnelNumber || "").trim() || null,
         body.systemType || "2/1",
-        body.compensation || "",
+        payFields(body).text,
         body.location || "",
         body.company || "",
         body.vacation || "",
         String(body.hiredAt || now.slice(0, 10)),
         now,
         now,
+        payFields(body).type,
+        payFields(body).amount || null,
+        payFields(body).basis,
+        payFields(body).tour,
       )
       .run();
   } else if (action === "archiveStaff" && user.role === "management") {
@@ -727,17 +711,21 @@ export async function POST(request: Request) {
       .bind(body.id)
       .first();
     await env.DB.prepare(
-      "UPDATE staff SET full_name=?, personnel_number=?, system_type=?, compensation=?, location=?, company=?, vacation=?, updated_at=? WHERE id=?",
+      "UPDATE staff SET full_name=?, personnel_number=?, system_type=?, compensation=?, location=?, company=?, vacation=?, updated_at=?, pay_type=?, pay_amount=?, pay_basis=?, tour_type=? WHERE id=?",
     )
       .bind(
         body.fullName,
         String(body.personnelNumber || "").trim() || null,
         body.systemType || "",
-        body.compensation || "",
+        payFields(body).text,
         body.location || "",
         body.company || "",
         body.vacation || "",
         now,
+        payFields(body).type,
+        payFields(body).amount || null,
+        payFields(body).basis,
+        payFields(body).tour,
         body.id,
       )
       .run();
@@ -1260,121 +1248,9 @@ export async function POST(request: Request) {
     if (!/^\d{4}-\d{2}$/.test(period)) return json({ error: "Gültigen Abrechnungsmonat wählen" }, 400);
     const periodState = await env.DB.prepare("SELECT status FROM payroll_periods WHERE period=?").bind(period).first<{ status: string }>();
     if (periodState?.status === "closed") return json({ error: "Monat ist geschlossen. Management muss ihn mit Begründung wieder öffnen." }, 409);
-    const spesenRate = Math.max(0, Number(body.spesenRate || 0));
-    const nightRate = Math.max(0, Number(body.nightRate || 0));
-    const sundayRate = Math.max(0, Number(body.sundayRate || 0));
-    const holidayRate = Math.max(0, Number(body.holidayRate || 0));
-    const hoursPerDay = Math.min(24, Math.max(1, Number(body.hoursPerDay || 8)));
-    const countPlanned = body.countPlanned === "on" || body.countPlanned === "true";
-    const overwriteManual = body.overwriteManual === "on" || body.overwriteManual === "true";
-    if (![spesenRate, nightRate, sundayRate, holidayRate].every(Number.isFinite))
-      return json({ error: "Zuschlagssätze sind ungültig" }, 400);
-    const people = await env.DB.prepare("SELECT id, full_name, compensation FROM staff WHERE status='active' ORDER BY full_name").all<{ id: number; full_name: string; compensation: string | null }>();
-    const periodYear = Number(period.slice(0, 4));
-    let calculated = 0;
-    let totalTours = 0;
-    let plannedDaysInPeriod = 0;
-    const keptManual: string[] = [];
-    let timesheetPeople = 0;
-    for (const person of people.results) {
-      const manualRow = await env.DB.prepare("SELECT calculation_details FROM payroll_calculations WHERE staff_id=? AND period=?")
-        .bind(person.id, period).first<Record<string, string | number | null>>();
-      // Hand-corrected payslips are only replaced when explicitly requested.
-      if (!overwriteManual && manualRow && String(manualRow.calculation_details || "").includes('"source":"manual-adjustment"')) {
-        keptManual.push(person.full_name);
-        continue;
-      }
-      // Arbeitstage kalendergenau: jede Planung gilt für ihre Wochentage (work_days) in der ISO-Woche.
-      const planned = await env.DB.prepare(
-        `SELECT p.id, p.planning_year, p.calendar_week, p.work_days, p.start_time, o.status AS trip_status
-         FROM weekly_planning p LEFT JOIN trip_operations o ON o.planning_id=p.id
-         WHERE (p.staff_id=? OR p.driver_name=?) AND p.planning_year BETWEEN ? AND ?`,
-      ).bind(person.id, person.full_name, periodYear - 1, periodYear + 1).all<{ id: number; planning_year: number; calendar_week: number; work_days: string | null; start_time: string | null; trip_status: string | null }>();
-      const workedDates = new Map<string, { night: boolean }>();
-      for (const row of planned.results) {
-        const eligible = row.trip_status && row.trip_status !== "Geplant" ? (payrollEligibleStatuses as readonly string[]).includes(row.trip_status) : countPlanned;
-        const monday = new Date(Date.UTC(row.planning_year, 0, 4));
-        monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7) + (Number(row.calendar_week) - 1) * 7);
-        const startHour = Number(String(row.start_time || "06:00").slice(0, 2));
-        const night = startHour >= 22 || startHour < 6;
-        for (const dayNumber of String(row.work_days || "1,2,3,4,5,6,7").split(",").map(Number).filter((day) => day >= 1 && day <= 7)) {
-          const date = new Date(monday);
-          date.setUTCDate(monday.getUTCDate() + dayNumber - 1);
-          const key = date.toISOString().slice(0, 10);
-          if (key.slice(0, 7) !== period) continue;
-          plannedDaysInPeriod += 1;
-          if (!eligible) continue;
-          workedDates.set(key, { night: night || Boolean(workedDates.get(key)?.night) });
-        }
-      }
-      const sheet = (await env.DB.prepare("SELECT work_date, day_type, hours, night FROM work_days WHERE staff_id=? AND substr(work_date,1,7)=?").bind(person.id, period).all<{ work_date: string; day_type: string; hours: number; night: number }>()).results;
-      let hoursTotal = workedDates.size * hoursPerDay;
-      let leaveDays = 0;
-      const source = sheet.length ? "timesheet" : "planning";
-      if (sheet.length) timesheetPeople += 1;
-      if (sheet.length) {
-        workedDates.clear();
-        hoursTotal = 0;
-        for (const day of sheet) {
-          if (day.day_type === "work") { workedDates.set(day.work_date, { night: Boolean(day.night) }); hoursTotal += Number(day.hours || 0); }
-          else if (day.day_type === "vacation" || day.day_type === "sick") leaveDays += 1;
-        }
-      }
-      const existing = await env.DB.prepare("SELECT * FROM payroll_calculations WHERE staff_id=? AND period=?")
-        .bind(person.id, period).first<Record<string, string | number | null>>();
-      const compensation = String(person.compensation || "");
-      const payKind = /\/\s*(h\b|std|stunde)|pro\s*stunde|per\s*hour/i.test(compensation) ? "hourly" : /\/\s*(tag|day)|pro\s*tag|per\s*day/i.test(compensation) ? "daily" : "monthly";
-      const payBasis = /brutto/i.test(compensation) ? "Brutto" : "Netto";
-      const rate = parseCompensation(compensation);
-      const workedCount = workedDates.size;
-      const baseSalary = payKind === "hourly" ? Math.round(rate * (hoursTotal + leaveDays * hoursPerDay) * 100) / 100
-        : payKind === "daily" ? Math.round(rate * (workedCount + leaveDays) * 100) / 100
-        : keepsManualBase(existing) ? Number(existing?.base_salary || 0) : rate;
-      const deductions = Number(existing?.deductions || 0);
-      let nightCount = 0;
-      let sundayCount = 0;
-      let holidayCount = 0;
-      for (const [key, info] of workedDates) {
-        const date = new Date(`${key}T00:00:00Z`);
-        if (info.night) nightCount += 1;
-        if (date.getUTCDay() === 0) sundayCount += 1;
-        if (isGermanFederalHoliday(date)) holidayCount += 1;
-      }
-      const tourCount = workedCount;
-      totalTours += tourCount;
-      const expensesAmount = Math.round(tourCount * spesenRate * 100) / 100;
-      const nightBonus = Math.round(nightCount * nightRate * 100) / 100;
-      const sundayBonus = Math.round(sundayCount * sundayRate * 100) / 100;
-      const holidayBonus = Math.round(holidayCount * holidayRate * 100) / 100;
-      const bonuses = Math.round((nightBonus + sundayBonus + holidayBonus) * 100) / 100;
-      const reimbursement = await env.DB.prepare(
-        "SELECT COALESCE(SUM(reimbursement_amount),0) AS total FROM expenses WHERE staff_id=? AND substr(expense_date,1,7)=? AND reimbursable=1 AND status IN ('Freigegeben','Zur Zahlung')",
-      ).bind(person.id, period).first<{ total: number }>();
-      const reimbursements = Math.round(Number(reimbursement?.total || 0) * 100) / 100;
-      const netAmount = Math.round((baseSalary + expensesAmount + bonuses + reimbursements - deductions) * 100) / 100;
-      const calculationDetails = JSON.stringify({
-        source, hoursTotal, leaveDays,
-        workedDays: [...workedDates.keys()].sort(),
-        payKind, payBasis, hoursPerDay, countPlanned,
-        manualBase: payKind === "monthly" && keepsManualBase(existing),
-        counts: { workedDays: tourCount, night: nightCount, sunday: sundayCount, holiday: holidayCount },
-        rates: { spesen: spesenRate, night: nightRate, sunday: sundayRate, holiday: holidayRate },
-      });
-      await env.DB.prepare(`INSERT INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, night_bonus, sunday_bonus, holiday_bonus, reimbursements, deductions, net_amount, payment_status, calculation_details, calculated_at, calculated_by, locked_at, locked_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, NULL, NULL, ?, ?)
-        ON CONFLICT(staff_id, period) DO UPDATE SET base_salary=excluded.base_salary, tour_count=excluded.tour_count, bonuses=excluded.bonuses, expenses=excluded.expenses, night_bonus=excluded.night_bonus, sunday_bonus=excluded.sunday_bonus, holiday_bonus=excluded.holiday_bonus, reimbursements=excluded.reimbursements, deductions=excluded.deductions, net_amount=excluded.net_amount, calculation_details=excluded.calculation_details, calculated_at=excluded.calculated_at, calculated_by=excluded.calculated_by, updated_at=excluded.updated_at`)
-        .bind(person.id, period, baseSalary, tourCount, bonuses, expensesAmount, nightBonus, sundayBonus, holidayBonus, reimbursements, deductions, netAmount, calculationDetails, now, user.id, now, now).run();
-      calculated += 1;
-    }
-    await env.DB.prepare("INSERT INTO payroll_periods (period, status, updated_at) VALUES (?, 'open', ?) ON CONFLICT(period) DO UPDATE SET updated_at=excluded.updated_at")
-      .bind(period, now).run();
-    auditDetails = { oldValue: periodState || null, newValue: { period, calculated, totalTours, spesenRate, nightRate, sundayRate, holidayRate, keptManual } };
-    responseBody = {
-      ok: true,
-      calculated,
-      tours: totalTours,
-      message: `${calculated} Abrechnungen berechnet · ${totalTours} Arbeitstage erfasst für ${period}${keptManual.length ? ` · ${keptManual.length} manuell korrigierte beibehalten (${keptManual.join(", ")})` : ""}${totalTours === 0 && !timesheetPeople && !keptManual.length ? (plannedDaysInPeriod === 0 ? ` – ACHTUNG: In ${period} gibt es keine Wochenplanung. Bitte den richtigen Monat wählen oder zuerst KW-Planung anlegen.` : " – ACHTUNG: Es gibt geplante Tage, aber keine Tour wurde gestartet. Häkchen „Geplante Tage mitzählen“ setzen.") : ""}`,
-    };
+    const result = await calculateMonth(period, user.id, { countPlanned: String(body.countPlanned ?? "true") !== "false" });
+    auditDetails = { oldValue: periodState || null, newValue: { period, calculated: result.calculated, rules: result.rules } };
+    responseBody = { ok: true, calculated: result.calculated, message: `${result.calculated} Mitarbeiter für ${period} berechnet` };
   } else if (
     action === "addAbsence" &&
     ["management", "dispatcher"].includes(user.role)
