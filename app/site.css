@@ -532,3 +532,13 @@
 .lp-demo-hint a { color: #8ff0de; font-weight: 700; }
 .lp-final-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
 .lp-final .site-button-ghost { border-color: #ffffff40; background: transparent; color: #fff; }
+
+/* Driver invitation page */
+.invite-page h1 { font-weight: 800; }
+.invite-page > p b { color: #fff; }
+.invite-form { display: grid; gap: 12px; width: 100%; max-width: 420px; text-align: left; }
+.invite-form label { display: grid; gap: 6px; color: #c9d8e3; font-size: 14px; font-weight: 600; }
+.invite-form input { min-height: 50px; padding: 0 14px; border: 1px solid #ffffff2e; border-radius: 12px; background: #ffffff12; color: #fff; font-size: 16px; }
+.invite-form input[readonly] { color: #9fb6c2; }
+.invite-form small { color: #9fb6c2; }
+.invite-form .site-button { width: 100%; margin-top: 4px; }

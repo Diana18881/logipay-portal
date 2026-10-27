@@ -7,6 +7,7 @@ import { AbsenceCalendar } from "./absences";
 import { EmptyState } from "./empty-state";
 import { AssistantWidget } from "./assistant-panel";
 import { DriverAppGate } from "./driver-app-gate";
+import { InviteDialog } from "./invite-dialog";
 import { Icon, type IconName } from "./icons";
 import { isInstalledApp, isMobileDevice } from "./service-worker";
 import { ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
@@ -1755,6 +1756,7 @@ function StaffList({ rows, events, canRate, showPay, isManager, open, edit, add,
   const [rating, setRating] = useState<Row | null>(null);
   const [scores, setScores] = useState<Record<string, number>>({ punctuality: 5, care: 5, communication: 5, vehicle: 5 });
   const [formPerson, setFormPerson] = useState<Row | null>(null);
+  const [invitePerson, setInvitePerson] = useState<Row | null>(null);
   const [formType, setFormType] = useState("certificate");
   const [formReason, setFormReason] = useState("");
   const stars = Math.round(ratingCriteria.reduce((sum, { key }) => sum + scores[key], 0) / ratingCriteria.length);
@@ -1782,6 +1784,7 @@ function StaffList({ rows, events, canRate, showPay, isManager, open, edit, add,
         {showPay ? <span className="person-pay">{person.compensation || "—"}</span> : null}
         <Badge value={String(person.status)} />
         {isManager || canRate ? <div className="person-actions">
+          {isManager && person.status === "active" ? <button type="button" className="invite-action" onClick={() => setInvitePerson(person)}>{person.login_email ? "Neu einladen" : "Einladen"}</button> : null}
           {isManager ? <button type="button" className="edit-action" onClick={() => edit(person)}>Bearbeiten</button> : null}
           <details><summary aria-label="Mehr">⋯</summary><div>
             {canRate && person.status === "active" ? <button type="button" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); setRating(person); setScores({ punctuality: 5, care: 5, communication: 5, vehicle: 5 }); }}>★ Bewertung senden</button> : null}
@@ -1809,6 +1812,7 @@ function StaffList({ rows, events, canRate, showPay, isManager, open, edit, add,
         <small className="event-visibility">Sichtbar für Management und alle Dispatcher</small>
       </form>
     </div> : null}
+    {invitePerson ? <InviteDialog person={{ id: String(invitePerson.id), full_name: String(invitePerson.full_name), login_email: invitePerson.login_email ? String(invitePerson.login_email) : null }} close={() => setInvitePerson(null)} /> : null}
     {formPerson ? <div className="driver-event-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormPerson(null); }}>
       <form className="driver-event-modal" onSubmit={(event) => {
         event.preventDefault();

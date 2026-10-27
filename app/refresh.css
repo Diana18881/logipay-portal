@@ -121,3 +121,21 @@
 .demo-banner span { flex: 1; min-width: 200px; }
 .demo-banner a { color: #fff; font-weight: 700; text-decoration: none; }
 .demo-banner .demo-banner-cta { padding: 7px 14px; border-radius: 10px; background: #16b8a3; color: #062019; }
+
+/* Invite dialog */
+.app-shell .invite-action { min-height: 38px; padding: 0 14px; border: 1px solid #bfe9e2; border-radius: 10px; background: #effaf8; color: #0e8577; font-size: 14px; font-weight: 750; cursor: pointer; }
+.invite-dialog-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px; background: #0b1a2966; backdrop-filter: blur(4px); }
+.invite-dialog { width: min(480px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 22px; border-radius: 22px; background: #fff; color: #0b1a29; box-shadow: 0 30px 80px #0b1a2940; }
+.invite-dialog header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.invite-dialog header small { color: #12a593; font-size: 12px; font-weight: 800; letter-spacing: 1px; }
+.invite-dialog header h2 { margin: 4px 0 0; font-size: 22px; font-weight: 800; }
+.invite-dialog header button { width: 38px; height: 38px; border: 0; border-radius: 12px; background: #f1f5f6; font-size: 22px; cursor: pointer; }
+.invite-dialog p { margin: 0 0 14px; color: #5d717e; }
+.invite-dialog form { display: grid; gap: 12px; }
+.invite-dialog label { display: grid; gap: 6px; font-size: 14px; font-weight: 650; }
+.invite-dialog input { min-height: 48px; padding: 0 14px; border: 1px solid #d6e2e6; border-radius: 12px; font-size: 16px; }
+.invite-share { display: grid; gap: 10px; }
+.invite-share a, .invite-share button { display: flex; align-items: center; justify-content: center; min-height: 50px; border: 1px solid #d6e2e6; border-radius: 14px; background: #fff; color: #0b1a29; font-size: 16px; font-weight: 750; text-decoration: none; cursor: pointer; }
+.invite-share .invite-whatsapp { border: 0; background: #25d366; color: #fff; }
+.invite-share .invite-mail { background: #0b1a29; color: #fff; border: 0; }
+.invite-share code { padding: 10px; border-radius: 10px; background: #f4f8f9; color: #4f6472; font-size: 12px; overflow-wrap: anywhere; user-select: all; }
