@@ -2,107 +2,134 @@ import Link from "next/link";
 import { pricePerDriverCents } from "../lib/billing";
 import { contactEmail } from "../lib/legal";
 import { TRIAL_DAYS } from "../lib/tenants";
+import { LandingMotion, PriceCalculator } from "./landing-motion";
 import { SiteFooter, SiteHeader } from "./site-chrome";
 
+const steps = [
+  { title: "Firma anlegen", text: "In einer Minute registriert. Ihre Firma bekommt eine eigene, getrennte Datenbank." },
+  { title: "Fahrer einladen", text: "Fahrer installieren die App direkt aus dem Browser – auf Android und iPhone." },
+  { title: "Monat abschließen", text: "Touren, Belege und Zuschläge fließen in die Lohnwerte. Ein Klick erzeugt den DATEV-Export." },
+];
+
 const features = [
-  { icon: "€", title: "Lohn & DATEV-Export", text: "Grundlohn, Touren, Nacht-, Sonn- und Feiertagszuschläge, Spesen und Abzüge pro Monat berechnen. Export im DATEV-LODAS-Format für Ihr Steuerbüro." },
-  { icon: "▦", title: "Wochenplanung & Touren", text: "Fahrer, Fahrzeuge und Aufträge pro Kalenderwoche planen. Status von Beladung bis Zustellung live verfolgen." },
-  { icon: "▤", title: "Belege & Auslagen", text: "Fahrer fotografieren Tank- und Spesenbelege. Beträge werden erkannt, die Buchhaltung prüft und erstattet." },
-  { icon: "◷", title: "Dokumente & Fristen", text: "Führerschein, Fahrerkarte, Code 95, ADR und TÜV mit Ablaufdatum. Das Portal erinnert rechtzeitig." },
-  { icon: "⌖", title: "Live-Tracking & Tachograph", text: "GPS-Positionen und Lenkzeiten aus Telematik-Systemen. Warnung, bevor die Fahrzeit überschritten wird." },
-  { icon: "✉", title: "Chat & Sprachnachrichten", text: "Nachrichten, Fotos und Sprachnachrichten zwischen Disposition und Fahrern – direkt oder pro Tour." },
+  { icon: "€", title: "Lohn & DATEV", text: "Grundlohn, Zuschläge, Spesen und Abzüge pro Monat – als LODAS-Datei für Ihr Steuerbüro." },
+  { icon: "▦", title: "Wochenplanung", text: "Fahrer, Fahrzeuge und Aufträge pro Kalenderwoche planen und live verfolgen." },
+  { icon: "◫", title: "Belege per Foto", text: "Fahrer fotografieren Tank- und Spesenbelege, die Buchhaltung prüft und erstattet." },
+  { icon: "◷", title: "Fristen im Blick", text: "Führerschein, Fahrerkarte, Code 95, ADR und TÜV – das Portal erinnert rechtzeitig." },
+  { icon: "⌖", title: "GPS & Lenkzeiten", text: "Positionen und Fahrzeiten aus Telematik-Systemen, mit Warnung vor Überschreitung." },
+  { icon: "✉", title: "Chat & Sprachnachrichten", text: "Direkt zwischen Disposition und Fahrer – oder pro Tour." },
 ];
 
 const faqs = [
   { q: "Was zählt als aktiver Fahrer?", a: "Jede Person, die im Portal als aktiver Mitarbeiter geführt wird. Archivierte Mitarbeiter kosten nichts. Büro-Zugänge für Geschäftsleitung, Buchhaltung und Disposition sind inklusive." },
-  { q: "Ersetzt LOGIPAY mein Lohnprogramm?", a: "Nein. LOGIPAY sammelt alle Lohndaten aus dem Betriebsalltag und übergibt sie per DATEV-Export an Ihr Steuerbüro oder Lohnprogramm. Die Entgeltabrechnung mit Steuern und Sozialversicherung bleibt dort." },
-  { q: "Wo liegen meine Daten?", a: "Ausschließlich in der EU: Anwendung und Dateien in Frankfurt am Main, Datenbanken in Irland. Jede Firma hat eine eigene, getrennte Datenbank. Einen Vertrag zur Auftragsverarbeitung (AVV) nach Art. 28 DSGVO schließen Sie bei der Registrierung ab." },
-  { q: "Brauchen Fahrer eine App aus dem App Store?", a: "Nein. Die Fahrer-App wird direkt aus dem Browser auf dem Handy installiert, funktioniert auf Android und iPhone, auch offline, und spricht Deutsch, Polnisch, Ukrainisch und Russisch." },
-  { q: "Wie kündige ich?", a: "Monatlich, mit einem Klick im Kundenportal. Vorher können Sie alle Daten als Datei exportieren. Danach werden Ihre Daten vollständig gelöscht." },
+  { q: "Ersetzt LOGIPAY mein Lohnprogramm?", a: "Nein. LOGIPAY sammelt alle Lohndaten aus dem Betriebsalltag und übergibt sie per DATEV-Export an Ihr Steuerbüro. Die Entgeltabrechnung mit Steuern und Sozialversicherung bleibt dort." },
+  { q: "Wo liegen meine Daten?", a: "Ausschließlich in der EU: Anwendung und Dateien in Frankfurt am Main, Datenbanken in Irland. Jede Firma hat eine eigene Datenbank. Der Vertrag zur Auftragsverarbeitung (AVV) ist inklusive." },
+  { q: "Brauchen Fahrer den App Store?", a: "Nein. Die Fahrer-App wird direkt aus dem Browser installiert, funktioniert auch ohne Netz und spricht Deutsch, Polnisch, Ukrainisch und Russisch." },
+  { q: "Wie kündige ich?", a: "Monatlich, mit einem Klick. Vorher können Sie alle Daten exportieren, danach werden sie vollständig gelöscht." },
+];
+
+const trust = [
+  ["EU", "Server in der EU", "Frankfurt und Irland"],
+  ["▣", "Eigene Datenbank", "Pro Firma getrennt"],
+  ["2FA", "Zwei-Faktor-Anmeldung", "Für Leitung und Buchhaltung"],
+  ["§", "AVV inklusive", "Art. 28 DSGVO"],
 ];
 
 export function Landing() {
-  const price = (pricePerDriverCents() / 100).toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  const priceCents = pricePerDriverCents();
+  const price = (priceCents / 100).toLocaleString("de-DE", { maximumFractionDigits: 2 });
   const email = contactEmail();
   return (
-    <div className="site">
+    <div className="site lp">
+      <LandingMotion />
       <SiteHeader />
       <main>
-        <section className="hero">
-          <div className="hero-text">
-            <p className="eyebrow">FÜR TRANSPORT- UND LOGISTIKUNTERNEHMEN</p>
-            <h1>Lohn, Touren und Fahrer – <em>in einem Portal.</em></h1>
-            <p className="hero-lead">LOGIPAY verbindet Disposition, Belege, Dokumente und Lohnvorbereitung. Ihre Fahrer arbeiten mit der Fahrer-App auf dem Handy, Ihr Steuerbüro bekommt den DATEV-Export.</p>
-            <div className="hero-actions">
-              <Link href="/registrieren" className="site-button">{TRIAL_DAYS} Tage kostenlos testen</Link>
+        <section className="lp-hero">
+          <div className="lp-hero-glow" aria-hidden="true" />
+          <div className="lp-hero-text">
+            <span className="lp-pill lp-rise">Für Transport- und Logistikfirmen</span>
+            <h1 className="lp-rise lp-d1">Weniger Papier.<br /><span className="lp-gradient">Mehr Touren.</span></h1>
+            <p className="lp-lead lp-rise lp-d2">Disposition, Belege, Fahrer-App und Lohnvorbereitung in einem Portal. Ihr Steuerbüro bekommt den DATEV-Export.</p>
+            <div className="lp-actions lp-rise lp-d3">
+              <Link href="/registrieren" className="site-button lp-cta">{TRIAL_DAYS} Tage kostenlos testen <span aria-hidden="true">→</span></Link>
               {email ? <a href={`mailto:${email}?subject=${encodeURIComponent("LOGIPAY Live-Demo")}`} className="site-button site-button-ghost">Live-Demo anfragen</a> : <Link href="#preise" className="site-button site-button-ghost">Preise ansehen</Link>}
             </div>
-            <ul className="hero-points"><li>Keine Kreditkarte für den Test</li><li>Server in der EU</li><li>Monatlich kündbar</li></ul>
+            <ul className="lp-checks lp-rise lp-d4"><li>Ohne Kreditkarte</li><li>Server in der EU</li><li>Monatlich kündbar</li></ul>
           </div>
-          <div className="hero-visual" aria-hidden="true">
-            <div className="mock-window">
-              <div className="mock-bar"><span /><span /><span /></div>
-              <div className="mock-kpis"><div><small>Fahrer aktiv</small><b>24</b></div><div><small>Touren heute</small><b>31</b></div><div><small>Offene Belege</small><b>7</b></div></div>
-              <div className="mock-rows">{["Unterwegs · HH-MT 101", "Beladen · HB-MT 201", "Zugestellt · H-MT 301", "Geplant · HH-MT 103"].map((row) => <div key={row}><i />{row}</div>)}</div>
+
+          <div className="lp-stage" aria-hidden="true">
+            <div className="lp-phone">
+              <div className="lp-phone-notch" />
+              <div className="lp-screen">
+                <small>Heute · 06:00</small>
+                <b>Hamburg → Bremen</b>
+                <div className="lp-route"><i className="lp-route-dot" /><span className="lp-route-line"><em /></span><i className="lp-route-dot lp-route-end" /></div>
+                <div className="lp-status"><span>Beladen</span><span>Unterwegs</span><span>Zugestellt</span></div>
+                <div className="lp-screen-card"><span>Fahrzeugcheck</span><b>✓ OK</b></div>
+                <div className="lp-screen-card"><span>Lenkzeit übrig</span><b>4:20 h</b></div>
+                <div className="lp-screen-button">Beleg fotografieren</div>
+              </div>
             </div>
-            <div className="mock-phone"><div className="mock-phone-screen"><small>Meine Tour</small><b>Hamburg → Bremen</b><span>Abfahrt 06:00</span><button type="button" tabIndex={-1}>Abfahrt bestätigen</button><button type="button" tabIndex={-1} className="ghost">Beleg fotografieren</button></div></div>
+            <div className="lp-toast lp-toast-1"><span>✓</span><div><b>Beleg erkannt</b><small>Diesel · 312,40 €</small></div></div>
+            <div className="lp-toast lp-toast-2"><span>▦</span><div><b>Neue Tour</b><small>Morgen 05:30 · Lüneburg</small></div></div>
+            <div className="lp-toast lp-toast-3"><span>€</span><div><b>DATEV-Export bereit</b><small>Oktober · 24 Fahrer</small></div></div>
           </div>
         </section>
 
-        <section id="funktionen" className="site-section">
-          <p className="eyebrow">FUNKTIONEN</p>
-          <h2>Alles, was zwischen Disposition und Lohnbüro passiert</h2>
-          <div className="feature-grid">{features.map((feature) => <article key={feature.title}><span>{feature.icon}</span><h3>{feature.title}</h3><p>{feature.text}</p></article>)}</div>
+        <section className="lp-section">
+          <div className="lp-head" data-reveal><span className="lp-kicker">So einfach geht&apos;s</span><h2>In drei Schritten startklar</h2></div>
+          <ol className="lp-steps">{steps.map((step, index) => <li key={step.title} data-reveal style={{ transitionDelay: `${index * 90}ms` }}><span>{index + 1}</span><h3>{step.title}</h3><p>{step.text}</p></li>)}</ol>
         </section>
 
-        <section id="fahrer-app" className="site-section app-section">
-          <div>
-            <p className="eyebrow">FAHRER-APP</p>
-            <h2>Die App für Ihre Fahrer – ohne App Store</h2>
-            <ul className="check-list">
-              <li>Installation mit einem Fingertipp auf Android und iPhone</li>
-              <li>Tour, Abfahrt, Fahrzeugcheck und Zustellung mit Unterschrift</li>
-              <li>Belege und Tankquittungen mit der Kamera erfassen</li>
-              <li>Funktioniert ohne Netz – sendet automatisch, sobald Empfang da ist</li>
-              <li>Push-Nachrichten bei neuen Touren und Nachrichten</li>
-              <li>Deutsch, Polnisch, Ukrainisch und Russisch</li>
+        <section id="funktionen" className="lp-section">
+          <div className="lp-head" data-reveal><span className="lp-kicker">Funktionen</span><h2>Alles zwischen Disposition und Lohnbüro</h2></div>
+          <div className="lp-features">{features.map((feature, index) => <article key={feature.title} data-reveal style={{ transitionDelay: `${(index % 3) * 80}ms` }}><span>{feature.icon}</span><h3>{feature.title}</h3><p>{feature.text}</p></article>)}</div>
+        </section>
+
+        <section id="fahrer-app" className="lp-section">
+          <div className="lp-app" data-reveal>
+            <span className="lp-kicker lp-kicker-light">Fahrer-App</span>
+            <h2>Einfach genug für jeden Fahrer</h2>
+            <p>Große Knöpfe, klare Schritte, vier Sprachen. Installiert mit einem Fingertipp – ohne App Store.</p>
+            <ul className="lp-langs"><li>Deutsch</li><li>Polski</li><li>Українська</li><li>Русский</li></ul>
+            <ul className="lp-app-list">
+              <li>Tour, Abfahrt und Zustellung mit Unterschrift</li>
+              <li>Belege und Lieferscheine mit der Kamera</li>
+              <li>Funktioniert ohne Netz, sendet später automatisch</li>
+              <li>Push-Nachrichten bei neuen Touren</li>
             </ul>
-            <Link href="/app" className="site-button site-button-ghost">So installieren Fahrer die App</Link>
+            <Link href="/app" className="site-button lp-button-light">So installieren Fahrer die App</Link>
           </div>
         </section>
 
-        <section className="site-section trust-section">
-          <p className="eyebrow">DATENSCHUTZ & SICHERHEIT</p>
-          <h2>Gebaut für Personaldaten</h2>
-          <div className="trust-grid">
-            <div><b>EU-Server</b><span>Anwendung und Dateien in Frankfurt, Datenbanken in Irland</span></div>
-            <div><b>Getrennte Datenbank</b><span>Jede Firma hat ihre eigene Datenbank und eigenen Dateispeicher</span></div>
-            <div><b>Zwei-Faktor-Anmeldung</b><span>Pflicht für Geschäftsleitung und Buchhaltung</span></div>
-            <div><b>Änderungsprotokoll</b><span>Jede Änderung und jeder Dokumentenzugriff wird protokolliert</span></div>
-            <div><b>AVV nach Art. 28 DSGVO</b><span>Vertrag zur Auftragsverarbeitung inklusive</span></div>
-            <div><b>Export & Löschung</b><span>Alle Daten jederzeit exportieren oder endgültig löschen</span></div>
-          </div>
+        <section className="lp-section">
+          <div className="lp-head" data-reveal><span className="lp-kicker">Datenschutz</span><h2>Gebaut für Personaldaten</h2></div>
+          <div className="lp-trust">{trust.map(([icon, title, text], index) => <div key={title} data-reveal style={{ transitionDelay: `${index * 70}ms` }}><span>{icon}</span><b>{title}</b><small>{text}</small></div>)}</div>
         </section>
 
-        <section id="preise" className="site-section pricing-section">
-          <p className="eyebrow">PREISE</p>
-          <h2>Ein Preis. Alle Funktionen.</h2>
-          <div className="price-card">
-            <div className="price"><b>{price} €</b><span>pro aktivem Fahrer / Monat<br />zzgl. MwSt.</span></div>
-            <ul className="check-list">
+        <section id="preise" className="lp-section">
+          <div className="lp-head" data-reveal><span className="lp-kicker">Preis</span><h2>Ein Preis. Alle Funktionen.</h2></div>
+          <div className="lp-pricing" data-reveal>
+            <PriceCalculator priceCents={priceCents} />
+            <ul className="lp-price-list">
+              <li>{price} € pro aktivem Fahrer und Monat, zzgl. MwSt.</li>
               <li>Alle Funktionen inklusive DATEV-Export und Fahrer-App</li>
               <li>Unbegrenzte Büro-Zugänge</li>
               <li>{TRIAL_DAYS} Tage kostenlos, ohne Kreditkarte</li>
-              <li>Monatlich kündbar, sichere Zahlung über Stripe</li>
+              <li>Monatlich kündbar</li>
             </ul>
-            <Link href="/registrieren" className="site-button">Jetzt kostenlos starten</Link>
           </div>
         </section>
 
-        <section className="site-section faq-section">
-          <p className="eyebrow">FRAGEN</p>
-          <h2>Häufige Fragen</h2>
-          <div className="faq-list">{faqs.map((faq) => <details key={faq.q}><summary>{faq.q}</summary><p>{faq.a}</p></details>)}</div>
+        <section className="lp-section lp-section-narrow">
+          <div className="lp-head" data-reveal><span className="lp-kicker">Fragen</span><h2>Gut zu wissen</h2></div>
+          <div className="lp-faq">{faqs.map((faq) => <details key={faq.q} data-reveal><summary>{faq.q}<span aria-hidden="true">+</span></summary><p>{faq.a}</p></details>)}</div>
+        </section>
+
+        <section className="lp-final" data-reveal>
+          <h2>Bereit für weniger Papierkram?</h2>
+          <p>{TRIAL_DAYS} Tage kostenlos. Keine Kreditkarte. In einer Minute eingerichtet.</p>
+          <Link href="/registrieren" className="site-button lp-cta">Jetzt kostenlos starten <span aria-hidden="true">→</span></Link>
         </section>
       </main>
       <SiteFooter />
