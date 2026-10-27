@@ -359,15 +359,11 @@
 .lp-screen-msg p { margin: 2px 0 0; color: #1d3b4d; font-size: 12px; line-height: 1.35; }
 @keyframes lp-msg { 0%, 20% { opacity: 0; transform: translateY(6px); } 28%, 92% { opacity: 1; transform: none; } 100% { opacity: 0; } }
 
-/* Two-factor setup on the login card */
-.two-factor-steps { display: grid; gap: 6px; margin: 8px 0 10px; padding-left: 18px; color: #4f6472; font-size: 13px; line-height: 1.45; }
-.two-factor-qr { display: grid; place-items: center; width: 200px; margin: 6px auto 4px; padding: 8px; border: 1px solid #e3ebee; border-radius: 14px; background: #fff; }
-.two-factor-qr svg { display: block; width: 184px; height: 184px; }
-.two-factor-link { display: block; margin: 4px 0 8px; color: #0f8f7f; font-size: 13px; font-weight: 700; text-align: center; }
-.two-factor-manual { margin: 4px 0 10px; font-size: 13px; }
-.two-factor-manual summary { color: #4f6472; cursor: pointer; }
-.two-factor-manual code { display: block; margin: 8px 0 4px; padding: 10px; border-radius: 10px; background: #f3f8f9; font-size: 15px; letter-spacing: 1px; word-spacing: 4px; user-select: all; overflow-wrap: anywhere; }
-.two-factor-manual small { color: #6c808b; }
+/* Login: e-mail code step */
+.login-card .code-field input { height: 64px; font-size: 30px !important; font-weight: 800; letter-spacing: 14px; text-align: center; }
+.remember-device { display: flex !important; flex-direction: row !important; align-items: center; gap: 10px; color: #4f6472; font-size: 14px; font-weight: 500 !important; }
+.remember-device input { width: 18px !important; height: 18px; accent-color: var(--mint); }
+.login-card > p b { color: var(--ink); }
 .install-qr { display: flex; align-items: center; gap: 18px; width: 100%; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
 .install-qr > div { flex: none; width: 150px; }
 .install-qr svg { display: block; width: 150px; height: 150px; }

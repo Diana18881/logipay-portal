@@ -21,7 +21,7 @@ export default function DatenschutzPage() {
       <h2>3. Daten beim Besuch der Website</h2>
       <p>Beim Aufruf der Website verarbeitet unser Hosting-Dienstleister technisch notwendige Daten (IP-Adresse, Zeitpunkt, aufgerufene Seite, Browsertyp) zur Auslieferung und zur Abwehr von Angriffen. Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO. Die Protokolle werden nach kurzer Zeit gelöscht.</p>
       <h2>4. Cookies</h2>
-      <p>Wir verwenden ausschließlich ein technisch notwendiges Cookie für die Anmeldung im Portal (Sitzungs-Cookie, Laufzeit 7 Tage). Es gibt keine Analyse-, Werbe- oder Tracking-Cookies. Eine Einwilligung ist daher nicht erforderlich (§ 25 Abs. 2 TDDDG).</p>
+      <p>Wir verwenden ausschließlich technisch notwendige Cookies: ein Cookie für die Anmeldung im Portal (Sitzungs-Cookie, Laufzeit 7 Tage) und – nur wenn Sie „Dieses Gerät merken“ wählen – ein Cookie, das den Anmeldecode auf diesem Gerät für 30 Tage erspart. Es gibt keine Analyse-, Werbe- oder Tracking-Cookies. Eine Einwilligung ist daher nicht erforderlich (§ 25 Abs. 2 TDDDG).</p>
       <h2>5. Registrierung und Vertrag</h2>
       <p>Bei der Registrierung speichern wir Firmenname, Name und E-Mail-Adresse des Ansprechpartners sowie ein verschlüsseltes Passwort. Zum Schutz vor Missbrauch speichern wir die IP-Adresse der Registrierung für eine Stunde. Rechtsgrundlage ist Art. 6 Abs. 1 lit. b DSGVO.</p>
       <h2>6. Zahlungen</h2>
@@ -35,7 +35,7 @@ export default function DatenschutzPage() {
       <h2>9. Ihre Rechte</h2>
       <p>Sie haben das Recht auf Auskunft (Art. 15), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung (Art. 18), Datenübertragbarkeit (Art. 20) und Widerspruch (Art. 21 DSGVO). Sie können sich außerdem bei einer Datenschutz-Aufsichtsbehörde beschweren.</p>
       <h2>10. Sicherheit</h2>
-      <p>Die Übertragung erfolgt verschlüsselt (TLS). Jede Kundenfirma hat eine eigene Datenbank und einen getrennten Dateispeicher. Passwörter werden nur als Hash gespeichert; für Geschäftsleitung und Buchhaltung ist eine Zwei-Faktor-Anmeldung vorgeschrieben.</p>
+      <p>Die Übertragung erfolgt verschlüsselt (TLS). Jede Kundenfirma hat eine eigene Datenbank und einen getrennten Dateispeicher. Passwörter werden nur als Hash gespeichert; Geschäftsleitung und Buchhaltung bestätigen jede Anmeldung zusätzlich mit einem Code, der per E-Mail gesendet wird.</p>
     </LegalPage>
   );
 }

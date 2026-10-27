@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import QRCode from "qrcode";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 
 export function LoginForm({ notice = "" }: { notice?: string }) {
   const [email, setEmail] = useState("");
@@ -10,45 +9,42 @@ export function LoginForm({ notice = "" }: { notice?: string }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(notice);
   const [loading, setLoading] = useState(false);
-  const [twoFactorCode, setTwoFactorCode] = useState("");
-  const [twoFactor, setTwoFactor] = useState<{ setup?: boolean; secret?: string; otpauth?: string } | null>(null);
-  const [qr, setQr] = useState("");
-
-  useEffect(() => {
-    if (!twoFactor?.otpauth) return setQr("");
-    QRCode.toString(twoFactor.otpauth, { type: "svg", margin: 1, width: 200, color: { dark: "#0b1a29", light: "#ffffff" } }).then(setQr).catch(() => setQr(""));
-  }, [twoFactor?.otpauth]);
+  const [code, setCode] = useState("");
+  const [codeStep, setCodeStep] = useState<{ email: string } | null>(null);
+  const [rememberDevice, setRememberDevice] = useState(true);
   const [message, setMessage] = useState("");
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  async function send(extra: { code?: string; resend?: boolean } = {}) {
     setError("");
     setLoading(true);
     const response = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, twoFactorCode }),
+      body: JSON.stringify({ email, password, rememberDevice, ...extra }),
     });
     const contentType = response.headers.get("content-type") ?? "";
     const result = contentType.includes("application/json")
-      ? await response.json() as { error?: string; requiresTwoFactor?: boolean; setup?: boolean; secret?: string; otpauth?: string }
+      ? await response.json() as { error?: string; requiresCode?: boolean; email?: string; sent?: boolean }
       : { error: "Anmeldeserver vorübergehend nicht erreichbar. Bitte erneut versuchen." };
-    if (result.requiresTwoFactor) {
-      // Keep the code field open after a wrong code, so it can simply be entered again.
-      setTwoFactor({ setup: result.setup, secret: result.secret, otpauth: result.otpauth });
-      setTwoFactorCode("");
-      if (response.status !== 202) setError(result.error ?? "Falscher Code");
-      setLoading(false);
+    setLoading(false);
+    if (result.requiresCode) {
+      setCodeStep({ email: result.email || email });
+      setCode("");
+      if (response.status === 202) setMessage(result.sent === false ? "Ein Code wurde gerade erst gesendet – bitte Posteingang prüfen." : `Code gesendet an ${result.email}`);
+      if (!response.ok) setError(result.error ?? "Falscher Code");
       return;
     }
     if (!response.ok) {
-      setTwoFactor(null);
-      setTwoFactorCode("");
       setError(result.error ?? "Anmeldung fehlgeschlagen");
-      setLoading(false);
       return;
     }
     window.location.href = "/";
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setMessage("");
+    await send(codeStep ? { code } : {});
   }
 
   async function requestReset() {
@@ -80,27 +76,22 @@ export function LoginForm({ notice = "" }: { notice?: string }) {
       <section className="login-panel">
         <form className="login-card" onSubmit={submit}>
           <div className="secure-label"><i /> Gesicherte Verbindung</div>
-          <h2>Anmeldung</h2>
-          <p>Bitte Firmenkonto verwenden</p>
-          <label>E-Mail<input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@firma.de" required /></label>
-          <label>Passwort<div className="password-field"><input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Passwort eingeben" required /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Passwort ausblenden" : "Passwort anzeigen"}>{showPassword ? "Ausblenden" : "Anzeigen"}</button></div></label>
-          {twoFactor ? <div className="two-factor-box">
-            {twoFactor.setup ? <>
-              <strong>Zwei-Faktor-Anmeldung einrichten</strong>
-              <ol className="two-factor-steps">
-                <li>iPhone: Kamera auf den QR-Code richten und „Code hinzufügen“ bzw. „In Passwörtern öffnen“ tippen. Android: Google Authenticator öffnen → „+“ → „QR-Code scannen“.</li>
-                <li>Den 6-stelligen Code aus der App unten eintragen.</li>
-              </ol>
-              {qr ? <div className="two-factor-qr" dangerouslySetInnerHTML={{ __html: qr }} /> : null}
-              {twoFactor.otpauth ? <a className="two-factor-link" href={twoFactor.otpauth}>Auf diesem Gerät öffnen</a> : null}
-              <details className="two-factor-manual"><summary>Schlüssel lieber von Hand eingeben</summary><code>{twoFactor.secret?.match(/.{1,4}/g)?.join(" ")}</code><small>Typ: zeitbasiert · 6 Ziffern · 30 Sekunden</small></details>
-            </> : <strong>Code aus Ihrer Authenticator-App</strong>}
-            <label>6-stelliger Code<input inputMode="numeric" autoComplete="one-time-code" value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value.replace(/\D/g, "").slice(0, 6))} maxLength={6} placeholder="123456" autoFocus required /></label>
-          </div> : null}
+          {codeStep ? <>
+            <h2>Code eingeben</h2>
+            <p>Wir haben einen 6-stelligen Code an <b>{codeStep.email}</b> gesendet. Er ist 10 Minuten gültig.</p>
+            <label className="code-field">Anmeldecode<input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} maxLength={6} placeholder="••••••" autoFocus required /></label>
+            <label className="remember-device"><input type="checkbox" checked={rememberDevice} onChange={(event) => setRememberDevice(event.target.checked)} /><span>Dieses Gerät 30 Tage merken</span></label>
+          </> : <>
+            <h2>Anmeldung</h2>
+            <p>Bitte Firmenkonto verwenden</p>
+            <label>E-Mail<input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@firma.de" required /></label>
+            <label>Passwort<div className="password-field"><input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Passwort eingeben" required /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Passwort ausblenden" : "Passwort anzeigen"}>{showPassword ? "Ausblenden" : "Anzeigen"}</button></div></label>
+          </>}
           {error ? <div className="login-error">{error}</div> : null}
           {message ? <div className="login-message-box">{message}</div> : null}
-          <button className="login-submit" type="submit" disabled={loading}>{loading ? "Wird geprüft …" : "Im Portal anmelden"}<span>→</span></button>
-          <div className="login-help"><span>Kein Zugang?</span><button type="button" onClick={requestReset}>Passwort zurücksetzen anfordern</button></div>
+          <button className="login-submit" type="submit" disabled={loading || (Boolean(codeStep) && code.length !== 6)}>{loading ? "Wird geprüft …" : codeStep ? "Bestätigen" : "Weiter"}<span>→</span></button>
+          {codeStep ? <div className="login-help"><button type="button" onClick={() => void send({ resend: true })} disabled={loading}>Neuen Code senden</button><span>·</span><button type="button" onClick={() => { setCodeStep(null); setError(""); setMessage(""); }}>Zurück</button></div>
+            : <div className="login-help"><span>Kein Zugang?</span><button type="button" onClick={requestReset}>Passwort zurücksetzen anfordern</button></div>}
           <div className="login-register">Neu bei LOGIPAY? <Link href="/registrieren">Firma kostenlos registrieren</Link></div>
           <div className="login-footer"><Link href="/">LOGIPAY</Link> · <Link href="/app">Fahrer-App</Link> · <Link href="/impressum">Impressum</Link> · <Link href="/datenschutz">Datenschutz</Link></div>
         </form>
