@@ -4,6 +4,7 @@ import { contactEmail } from "../lib/legal";
 import { TRIAL_DAYS } from "../lib/tenants";
 import { LandingMotion, PriceCalculator } from "./landing-motion";
 import { SiteFooter, SiteHeader } from "./site-chrome";
+import { TruckScene } from "./truck-scene";
 
 const steps = [
   { title: "Firma anlegen", text: "In einer Minute registriert. Ihre Firma bekommt eine eigene, getrennte Datenbank." },
@@ -60,12 +61,7 @@ export function Landing() {
           </div>
 
           <div className="lp-stage" aria-hidden="true">
-            <div className="lp-board">
-              <div className="lp-board-head"><span /><span /><span /><b>Disposition · KW 44</b></div>
-              <div className="lp-board-kpis"><div><small>Touren</small><b>31</b></div><div><small>Unterwegs</small><b>12</b></div><div><small>Belege</small><b>7</b></div></div>
-              <div className="lp-bars">{[62, 80, 48, 92, 70, 38, 56].map((height, index) => <i key={index} style={{ height: `${height}%`, animationDelay: `${index * 90}ms` }} />)}</div>
-              <div className="lp-board-days"><span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span></div>
-            </div>
+            <TruckScene />
             <div className="lp-phone">
               <div className="lp-phone-notch" />
               <div className="lp-screen">
