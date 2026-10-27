@@ -724,3 +724,38 @@
   .movie-scene { gap: 8px; }
   .movie-scene label span { min-height: 36px; }
 }
+
+/* ───────── Excel vs LOGIPAY ───────── */
+.compare-table { overflow: hidden; border: 1px solid #e1eaed; border-radius: 22px; background: #fff; box-shadow: 0 20px 50px #0b1a290d; }
+.compare-head, .compare-row { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 14px 18px; }
+.compare-head { display: none; }
+.compare-row { border-top: 1px solid #eef3f5; }
+.compare-row:first-of-type { border-top: 0; }
+.compare-topic { color: #0b1a29; font-size: 16px; font-weight: 800; }
+.compare-row p { display: flex; gap: 10px; margin: 0; font-size: 15px; line-height: 1.45; }
+.compare-row i { display: grid; place-items: center; flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; font-size: 12px; font-style: normal; font-weight: 900; }
+.compare-row .compare-old { color: #7a8e99; }
+.compare-row .compare-old i { background: #fde8e6; color: #c8372a; }
+.compare-row .compare-new { color: #0b1a29; font-weight: 600; }
+.compare-row .compare-new i { background: #e3f6f2; color: #0e8577; }
+@media (min-width: 860px) {
+  .compare-head, .compare-row { grid-template-columns: 200px 1fr 1fr; gap: 24px; align-items: center; padding: 16px 26px; }
+  .compare-head { display: grid; border-bottom: 1px solid #e1eaed; background: #f6fafa; }
+  .compare-head b { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+  .compare-head .compare-old { color: #a86a62; }
+  .compare-head .compare-new { color: #0e8577; }
+  .compare-row .compare-new { position: relative; }
+}
+
+/* ───────── Testimonials ───────── */
+.testimonial-logos { display: flex; flex-wrap: wrap; justify-content: center; gap: 24px 40px; margin-bottom: 28px; opacity: .75; }
+.testimonial-logos img { height: 34px; filter: grayscale(1); }
+.testimonial-grid { display: grid; gap: 14px; }
+.testimonial-grid figure { margin: 0; padding: 24px; border: 1px solid #e4ecef; border-radius: 20px; background: #fff; }
+.testimonial-grid blockquote { margin: 0 0 18px; color: #1d3140; font-size: 17px; line-height: 1.55; }
+.testimonial-grid figcaption { display: flex; align-items: center; gap: 12px; }
+.testimonial-grid figcaption img, .testimonial-grid figcaption span { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; }
+.testimonial-grid figcaption span { display: grid; place-items: center; background: linear-gradient(135deg, #12a593, #1b8fc9); color: #fff; font-weight: 800; }
+.testimonial-grid figcaption b { display: block; }
+.testimonial-grid figcaption small { color: #6c808b; }
+@media (min-width: 860px) { .testimonial-grid { grid-template-columns: repeat(3, 1fr); } }

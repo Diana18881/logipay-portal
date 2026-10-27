@@ -2,6 +2,8 @@ import Link from "next/link";
 import { pricePerDriverCents } from "../lib/billing";
 import { TRIAL_DAYS } from "../lib/tenants";
 import { ChaosSection } from "./chaos-section";
+import { CompareSection } from "./compare-section";
+import { TestimonialsSection } from "./testimonials-section";
 import { Icon, type IconName } from "./icons";
 import { ProductTour } from "./product-tour";
 import { LandingMotion, PriceCalculator } from "./landing-motion";
@@ -79,6 +81,8 @@ export function Landing() {
           <ol className="lp-steps">{steps.map((step, index) => <li key={step.title} data-reveal style={{ transitionDelay: `${index * 90}ms` }}><span>{index + 1}</span><h3>{step.title}</h3><p>{step.text}</p></li>)}</ol>
         </section>
 
+        <CompareSection />
+
         <section id="funktionen" className="lp-section">
           <div className="lp-head" data-reveal><span className="lp-kicker">Funktionen</span><h2>Alles zwischen Disposition und Lohnbüro</h2></div>
           <div className="lp-features">{features.map((feature, index) => <article key={feature.title} data-reveal style={{ transitionDelay: `${(index % 3) * 80}ms` }}><span><Icon name={feature.icon} size={24} /></span><h3>{feature.title}</h3><p>{feature.text}</p></article>)}</div>
@@ -124,6 +128,8 @@ export function Landing() {
           <div className="lp-head" data-reveal><span className="lp-kicker">Datenschutz</span><h2>Gebaut für Personaldaten</h2></div>
           <div className="lp-trust">{trust.map(([icon, title, text], index) => <div key={title} data-reveal style={{ transitionDelay: `${index * 70}ms` }}><span>{icon}</span><b>{title}</b><small>{text}</small></div>)}</div>
         </section>
+
+        <TestimonialsSection />
 
         <section id="preise" className="lp-section">
           <div className="lp-head" data-reveal><span className="lp-kicker">Preis</span><h2>Ein Preis. Alle Funktionen.</h2></div>
