@@ -23,7 +23,10 @@ export function AppMovie({ playing }: { playing: boolean }) {
   const [t, setT] = useState(0);
   useEffect(() => {
     if (!playing) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { setT(10500); return; }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const still = requestAnimationFrame(() => setT(10500));
+      return () => cancelAnimationFrame(still);
+    }
     let start = performance.now() - t;
     let frame = 0;
     const tick = (now: number) => {

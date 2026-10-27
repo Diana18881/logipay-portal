@@ -31,7 +31,11 @@ export function ChaosSection() {
   useEffect(() => {
     const section = ref.current;
     if (!section) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { section.style.setProperty("--p", "1"); setPlaying(true); return; }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      section.style.setProperty("--p", "1");
+      const still = requestAnimationFrame(() => setPlaying(true));
+      return () => cancelAnimationFrame(still);
+    }
     let frame = 0;
     const update = () => {
       frame = 0;
