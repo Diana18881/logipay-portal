@@ -4,6 +4,7 @@ import { EmptyState } from "./empty-state";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { driverText, type DriverLocale } from "./driver-i18n";
 import { queueOfflineUpload } from "../lib/offline-client";
+import { celebrate } from "./success-burst";
 
 type Row = Record<string, string | number | null>;
 type Action = (payload: Record<string, string | number | null>) => Promise<void>;
@@ -197,7 +198,7 @@ export function TripExecutionCenter({ rows, documents, messages, contacts = [], 
     return () => window.removeEventListener("error", suppressSafariAudioError);
   }, []);
   async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const values = Object.fromEntries(new FormData(form).entries()); await action({ action: "saveTripOperation", planningId: selected?.planning_id || null, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) }); setSelected(null); }
-  async function upload(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const formData = new FormData(form); try { if (!navigator.onLine) throw new Error("offline"); const response = await fetch("/api/trip-documents", { method: "POST", body: formData }); const result = await response.json() as { error?: string }; if (!response.ok) return window.alert(result.error || "Upload fehlgeschlagen"); form.reset(); await reload(); } catch { await queueOfflineUpload("/api/trip-documents", formData); form.reset(); setChatNotice(driver ? "Документ сохранён офлайн." : "Dokument offline gespeichert."); } }
+  async function upload(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const formData = new FormData(form); try { if (!navigator.onLine) throw new Error("offline"); const response = await fetch("/api/trip-documents", { method: "POST", body: formData }); const result = await response.json() as { error?: string }; if (!response.ok) return window.alert(result.error || "Upload fehlgeschlagen"); form.reset(); celebrate(driver ? "Dokument gesendet" : "Dokument gespeichert"); await reload(); } catch { await queueOfflineUpload("/api/trip-documents", formData); form.reset(); setChatNotice(driver ? "Документ сохранён офлайн." : "Dokument offline gespeichert."); } }
   async function sendChatMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const peopleMode = chatMode === "people";
@@ -479,7 +480,7 @@ export function ExpenseCenter({ rows, staff, vehicles, audit, driver, canApprove
       const response = await fetch("/api/expense-receipts", { method: "POST", body: formData });
       const result = await response.json() as { error?: string; recognitionStatus?: string };
       if (!response.ok) return setNotice(result.error || "Upload fehlgeschlagen");
-      setNotice(`${driver ? c.sent : "Ausgabe an die Buchhaltung gesendet"} · ${result.recognitionStatus}`); form.reset(); setScanResult(null); await reload();
+      setNotice(`${driver ? c.sent : "Ausgabe an die Buchhaltung gesendet"} · ${result.recognitionStatus}`); form.reset(); setScanResult(null); if (driver) celebrate(c.sent); await reload();
     } catch {
       await queueOfflineUpload("/api/expense-receipts", formData); form.reset(); setScanResult(null);
       setNotice(driver ? "Чек сохранён без интернета и отправится автоматически." : "Beleg offline gespeichert und wird automatisch synchronisiert.");

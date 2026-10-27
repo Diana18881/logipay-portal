@@ -9,6 +9,7 @@ export const driverLanguages: Array<{ code: DriverLocale; short: string; label: 
 
 const copy: Record<DriverLocale, Record<string, string>> = {
   de: {
+    departureDone: "Abfahrt bestätigt", checkDone: "Fahrzeugcheck gespeichert",
     installApp: "App installieren",
     hello: "Hallo",
     overview: "Start", vehicles: "Mein LKW", tracking: "Standort", planning: "Wochenplan",
@@ -49,6 +50,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     noNotifications: "Keine Meldungen", more: "Mehr", home: "Start", receipts: "Belege", messages: "Chats", alerts: "Meldungen",
   },
   pl: {
+    departureDone: "Wyjazd potwierdzony", checkDone: "Kontrola pojazdu zapisana",
     installApp: "Zainstaluj aplikację",
     hello: "Cześć",
     overview: "Start", vehicles: "Moja ciężarówka", tracking: "Lokalizacja", planning: "Plan tygodnia",
@@ -89,6 +91,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     noNotifications: "Brak powiadomień", more: "Więcej", home: "Start", receipts: "Paragony", messages: "Czaty", alerts: "Alerty",
   },
   uk: {
+    departureDone: "Виїзд підтверджено", checkDone: "Перевірку авто збережено",
     installApp: "Встановити застосунок",
     hello: "Привіт",
     overview: "Головна", vehicles: "Моя вантажівка", tracking: "Місцезнаходження", planning: "План тижня",
@@ -129,6 +132,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     noNotifications: "Сповіщень немає", more: "Ще", home: "Головна", receipts: "Чеки", messages: "Чати", alerts: "Сповіщення",
   },
   ru: {
+    departureDone: "Выезд подтверждён", checkDone: "Проверка машины сохранена",
     installApp: "Установить приложение",
     hello: "Привет",
     overview: "Главная", vehicles: "Мой грузовик", tracking: "Местоположение", planning: "План недели",

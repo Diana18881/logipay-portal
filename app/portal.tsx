@@ -10,6 +10,7 @@ import { DriverAppGate } from "./driver-app-gate";
 import { InviteDialog } from "./invite-dialog";
 import { ImportDialog } from "./import-dialog";
 import { ReadableLayout } from "./readable-layout";
+import { celebrate, SuccessBurst } from "./success-burst";
 import { OfficeCharts, SetupGuide } from "./office-dashboard";
 import { Icon, type IconName } from "./icons";
 import { isInstalledApp, isMobileDevice } from "./service-worker";
@@ -479,7 +480,9 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
     }
     setModal(null);
     setEditing(null);
-    setNotice(result.message || (isDriver ? t("saved") : "Änderung gespeichert"));
+    const doneLabels: Record<string, string> = { confirmDeparture: t("departureDone", "Abfahrt bestätigt"), saveChecklist: t("checkDone", "Fahrzeugcheck gespeichert"), saveTripOperation: t("saved"), driverConcern: t("saved") };
+    if (isDriver && doneLabels[String(payload.action)]) { celebrate(doneLabels[String(payload.action)]); setNotice(""); }
+    else setNotice(result.message || (isDriver ? t("saved") : "Änderung gespeichert"));
     // Refresh in the background so open forms, the chosen month and the selected person stay as they are.
     await load(true);
   }
@@ -1017,6 +1020,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
         </div>
       </section>
       <ReadableLayout />
+      <SuccessBurst />
       {importKind ? <ImportDialog kind={importKind} close={() => setImportKind(null)} done={(message) => { setImportKind(null); setNotice(message); void load(true); }} /> : null}
       <AssistantWidget context={assistantContext} locale={locale} section={nav.find((item) => item.id === section)?.label || section} />
       <nav className="driver-bottom-nav" aria-label={isDriver ? t("workArea") : "Navigation"}>
@@ -1355,6 +1359,7 @@ function VehicleFiles({
     if (!response.ok) return alert(result.error || "Tankvorgang konnte nicht gespeichert werden");
     form.reset();
     setShowFuelForm(false);
+    celebrate("Tankvorgang gespeichert");
     await reload();
   }
   return (
@@ -2789,6 +2794,7 @@ function VoiceRecorder({ locale, planning, reload }: { locale: DriverLocale; pla
     setSending(false);
     if (!response.ok) return setNotice(result.error || t("voiceUploadError"));
     setNotice(t("voiceSent"));
+    celebrate(t("voiceSent"));
     setRecordedBlob(null); setSelectedFile(null); setNote(""); setSeconds(0);
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl("");
