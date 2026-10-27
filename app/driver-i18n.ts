@@ -9,6 +9,7 @@ export const driverLanguages: Array<{ code: DriverLocale; short: string; label: 
 
 const copy: Record<DriverLocale, Record<string, string>> = {
   de: {
+    hello: "Hallo",
     overview: "Start", vehicles: "Mein LKW", tracking: "Standort", planning: "Wochenplan",
     operations: "Touren", tachograph: "Fahrzeiten", expenses: "Belege", checklists: "LKW-Check",
     concerns: "Anliegen", driverFlow: "Mein Arbeitstag", navHome: "Start", navPlan: "Touren & Chats", navPeople: "Meine Dokumente", navFleet: "Mein LKW", navMoney: "Geld & Belege", navTasks: "Meldungen & Anliegen", documents: "Lohn", personnel: "Dokumente", notifications: "Meldungen",
@@ -47,6 +48,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     noNotifications: "Keine Meldungen", more: "Mehr", home: "Start", receipts: "Belege", messages: "Chats", alerts: "Meldungen",
   },
   pl: {
+    hello: "Cześć",
     overview: "Start", vehicles: "Moja ciężarówka", tracking: "Lokalizacja", planning: "Plan tygodnia",
     operations: "Trasy", tachograph: "Czas jazdy", expenses: "Paragony", checklists: "Kontrola auta",
     concerns: "Zgłoszenia", driverFlow: "Mój dzień", navHome: "Start", navPlan: "Trasy i czaty", navPeople: "Moje dokumenty", navFleet: "Moja ciężarówka", navMoney: "Pieniądze i paragony", navTasks: "Powiadomienia i zgłoszenia", documents: "Wynagrodzenie", personnel: "Dokumenty", notifications: "Powiadomienia",
@@ -85,6 +87,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     noNotifications: "Brak powiadomień", more: "Więcej", home: "Start", receipts: "Paragony", messages: "Czaty", alerts: "Alerty",
   },
   uk: {
+    hello: "Привіт",
     overview: "Головна", vehicles: "Моя вантажівка", tracking: "Місцезнаходження", planning: "План тижня",
     operations: "Рейси", tachograph: "Час водіння", expenses: "Чеки", checklists: "Перевірка авто",
     concerns: "Звернення", driverFlow: "Мій день", navHome: "Головна", navPlan: "Рейси та чати", navPeople: "Мої документи", navFleet: "Моя вантажівка", navMoney: "Гроші та чеки", navTasks: "Сповіщення та звернення", documents: "Зарплата", personnel: "Документи", notifications: "Сповіщення",
@@ -123,6 +126,7 @@ const copy: Record<DriverLocale, Record<string, string>> = {
     noNotifications: "Сповіщень немає", more: "Ще", home: "Головна", receipts: "Чеки", messages: "Чати", alerts: "Сповіщення",
   },
   ru: {
+    hello: "Привет",
     overview: "Главная", vehicles: "Мой грузовик", tracking: "Местоположение", planning: "План недели",
     operations: "Рейсы", tachograph: "Время вождения", expenses: "Чеки", checklists: "Проверка машины",
     concerns: "Обращения", driverFlow: "Мой день", navHome: "Главная", navPlan: "Рейсы и чаты", navPeople: "Мои документы", navFleet: "Мой грузовик", navMoney: "Деньги и чеки", navTasks: "Уведомления и обращения", documents: "Зарплата", personnel: "Документы", notifications: "Уведомления",

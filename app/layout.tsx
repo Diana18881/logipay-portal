@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import "./globals.css";
 import "./site.css";
+import "./mobile.css";
 import { ServiceWorker } from "./service-worker";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin", "cyrillic"] });

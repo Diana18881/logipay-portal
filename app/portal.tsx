@@ -7,6 +7,7 @@ import { AbsenceCalendar } from "./absences";
 import { EmptyState } from "./empty-state";
 import { AssistantWidget } from "./assistant-panel";
 import { DriverAppGate } from "./driver-app-gate";
+import { Icon, type IconName } from "./icons";
 import { isInstalledApp, isMobileDevice } from "./service-worker";
 import { ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
 import { driverLanguages, driverText, type DriverLocale } from "./driver-i18n";
@@ -623,7 +624,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
   };
   if (isDriver && appMode === "browser") return <DriverAppGate locale={locale} setLocale={changeLocale} logout={logout} />;
   return (
-    <main className={`app-shell role-${currentUser.role} theme-${theme} density-${density} ${isDriver ? "driver-mobile-shell" : ""}`}>
+    <main className={`app-shell section-${section} role-${currentUser.role} theme-${theme} density-${density} ${isDriver ? "driver-mobile-shell" : ""}`}>
       {mobileMenu ? <button className="backdrop" aria-label={isDriver ? t("menuClose") : "Menü schließen"} onClick={() => setMobileMenu(false)} /> : null}
       <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
         <div className="brand">
@@ -682,6 +683,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
         {currentUser.role === "management" && (paymentProblem || trialDaysLeft !== null) ? <a className={`billing-banner ${paymentProblem ? "billing-banner-alert" : ""}`} href="/abo">{paymentProblem ? "Zahlung fehlgeschlagen – bitte Zahlungsmethode im Abonnement prüfen." : `Testphase: noch ${trialDaysLeft} ${trialDaysLeft === 1 ? "Tag" : "Tage"}. Jetzt Abonnement abschließen →`}</a> : null}
         <header className="topbar">
           <button className="menu-toggle" aria-label={isDriver ? t("menuOpen") : "Menü öffnen"} onClick={() => setMobileMenu(true)}>☰</button>
+          <div className="topbar-brand"><span className="brand-mark"><span /><span /><span /></span><div><b>{isDriver ? `${t("hello", "Hallo")}, ${currentUser.fullName.split(" ")[0]}` : currentUser.companyName}</b><small>{isDriver ? currentUser.companyName : labels[currentUser.role]}</small></div></div>
           <div className="period-control" role="group" aria-label={isDriver ? t("planningPeriod") : "Planungszeitraum"}>
             <button type="button" className="week-step" aria-label="Vorige Woche" title="Vorige Woche" onClick={() => { if (kw > 1) setKw(kw - 1); else { setKw(53); setYear(year - 1); } }}>‹</button>
             <select value={kw} onChange={(e) => setKw(+e.target.value)} aria-label="Kalenderwoche">
@@ -721,7 +723,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
               <i />{offlineUploadCount ? <b>{offlineUploadCount}</b> : null}
             </span>
             {pushState !== "granted" && pushState !== "unsupported" ? (
-              <button className="tb-icon" type="button" onClick={() => void enablePush()} title={pushState === "denied" ? t("notificationsDenied") : t("notificationsEnable")} aria-label={t("notificationsEnable")}>🔔</button>
+              <button className="tb-icon" type="button" onClick={() => void enablePush()} title={pushState === "denied" ? t("notificationsDenied") : t("notificationsEnable")} aria-label={t("notificationsEnable")}><Icon name="bell" size={20} /></button>
             ) : null}
             {["management", "dispatcher"].includes(currentUser.role) ? (
               <button className="tb-icon tb-pdf" type="button" onClick={downloadPlanningReport} title="Planning Report als PDF herunterladen" aria-label="Planning Report PDF">PDF</button>
@@ -990,11 +992,11 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
       <AssistantWidget context={assistantContext} locale={locale} section={nav.find((item) => item.id === section)?.label || section} />
       {isDriver ? <nav className="driver-bottom-nav" aria-label={t("workArea")}>
         {([
-          ["driverFlow", "▶", "home"],
-          ["messages", "✉", "messages"],
-          ["expenses", "◈", "receipts"],
-        ] as Array<[Section, string, string]>).map(([id, icon, key]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id)}><span>{icon}</span><b>{t(key)}</b>{id === "messages" && unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}</button>)}
-        <button type="button" onClick={() => setMobileMenu(true)}><span>☰</span><b>{t("more", "Mehr")}</b>{unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}</button>
+          ["driverFlow", "route", "home"],
+          ["messages", "chat", "messages"],
+          ["expenses", "receipt", "receipts"],
+        ] as Array<[Section, IconName, string]>).map(([id, icon, key]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id)}><span><Icon name={icon} /></span><b>{t(key)}</b>{id === "messages" && unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}</button>)}
+        <button type="button" onClick={() => setMobileMenu(true)}><span><Icon name="more" /></span><b>{t("more", "Mehr")}</b>{unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}</button>
       </nav> : null}
       {settingsOpen ? <InterfaceSettings theme={theme} density={density} pinned={pinnedSections} sections={nav.filter((item) => item.roles.includes(currentUser.role))} setTheme={setTheme} setDensity={setDensity} setPinned={setPinnedSections} close={() => setSettingsOpen(false)} /> : null}
       {modal && (

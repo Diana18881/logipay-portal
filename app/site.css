@@ -190,7 +190,7 @@
 
 /* Animated product visual */
 .lp-stage { position: relative; display: grid; place-items: center; min-height: 470px; }
-.lp-phone { position: relative; width: 236px; padding: 10px; border-radius: 40px; background: #0b1a29; box-shadow: 0 40px 80px #0b1a2933, 0 0 0 1px #ffffff14 inset; animation: lp-float 7s ease-in-out infinite; }
+.lp-phone { position: relative; z-index: 2; width: 236px; padding: 10px; border-radius: 40px; background: #0b1a29; box-shadow: 0 40px 80px #0b1a2933, 0 0 0 1px #ffffff14 inset; animation: lp-float 7s ease-in-out infinite; }
 .lp-phone-notch { position: absolute; top: 16px; left: 50%; width: 70px; height: 18px; border-radius: 12px; background: #0b1a29; transform: translateX(-50%); z-index: 2; }
 .lp-screen { display: flex; flex-direction: column; gap: 9px; min-height: 420px; padding: 44px 16px 18px; border-radius: 31px; background: linear-gradient(180deg, #f4f9fa, #fff); color: var(--ink); }
 .lp-screen > small { color: #7b8e99; font-size: 11px; }
@@ -208,7 +208,7 @@
 .lp-screen-card { display: flex; justify-content: space-between; padding: 12px; border: 1px solid #e5edf0; border-radius: 12px; background: #fff; font-size: 12px; }
 .lp-screen-card span { color: #6c808b; }
 .lp-screen-button { margin-top: auto; padding: 13px; border-radius: 12px; background: var(--mint); color: #062019; font-size: 13px; font-weight: 800; text-align: center; animation: lp-pulse 3s ease-in-out infinite; }
-.lp-toast { position: absolute; display: flex; align-items: center; gap: 10px; padding: 10px 14px 10px 10px; border: 1px solid #e6eef1; border-radius: 14px; background: #ffffffeb; backdrop-filter: blur(8px); box-shadow: 0 16px 36px #0b1a2918; opacity: 0; animation: lp-toast 9s ease-in-out infinite; }
+.lp-toast { position: absolute; z-index: 3; display: flex; align-items: center; gap: 10px; padding: 10px 14px 10px 10px; border: 1px solid #e6eef1; border-radius: 14px; background: #ffffffeb; backdrop-filter: blur(8px); box-shadow: 0 16px 36px #0b1a2918; opacity: 0; animation: lp-toast 9s ease-in-out infinite; }
 .lp-toast > span { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--mint-pale); color: #0f8f7f; font-weight: 900; }
 .lp-toast b { display: block; font-size: 13px; }
 .lp-toast small { color: #708591; font-size: 11px; }
@@ -327,3 +327,34 @@
   .lp-features { grid-template-columns: repeat(3, 1fr); }
   .lp-pricing { grid-template-columns: 1fr 1fr; align-items: center; gap: 48px; }
 }
+
+/* Landing hero extras: dot grid, office board, feature marquee */
+.lp-hero::before { content: ""; position: absolute; inset: -60px -40vw 0; background-image: radial-gradient(#0b1a2914 1px, transparent 1.2px); background-size: 22px 22px; -webkit-mask-image: radial-gradient(60% 70% at 70% 40%, #000 30%, transparent 75%); mask-image: radial-gradient(60% 70% at 70% 40%, #000 30%, transparent 75%); pointer-events: none; }
+.lp-board { position: absolute; bottom: 6%; right: -2%; z-index: 0; width: min(320px, 80%); padding: 14px 16px 12px; border: 1px solid #e3ebee; border-radius: 18px; background: #ffffffe6; backdrop-filter: blur(6px); box-shadow: 0 30px 60px #0b1a2914; transform: rotate(4deg); animation: lp-board 9s ease-in-out infinite; }
+.lp-board-head { display: flex; align-items: center; gap: 5px; margin-bottom: 12px; }
+.lp-board-head span { width: 8px; height: 8px; border-radius: 50%; background: #dfe7ea; }
+.lp-board-head b { margin-left: 6px; color: #6c808b; font-size: 11px; font-weight: 700; }
+.lp-board-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+.lp-board-kpis div { padding: 8px; border-radius: 10px; background: #f3f8f9; }
+.lp-board-kpis small { display: block; color: #7b8e99; font-size: 10px; }
+.lp-board-kpis b { font-size: 18px; letter-spacing: -.4px; }
+.lp-bars { display: flex; align-items: flex-end; gap: 8px; height: 92px; padding: 0 2px; }
+.lp-bars i { flex: 1; border-radius: 6px 6px 3px 3px; background: linear-gradient(180deg, #2f9be0, var(--mint)); transform-origin: bottom; animation: lp-bar 2.8s cubic-bezier(.2,.7,.2,1) infinite alternate; }
+.lp-board-days { display: flex; gap: 8px; margin-top: 6px; padding: 0 2px; }
+.lp-board-days span { flex: 1; color: #93a4ad; font-size: 9px; text-align: center; }
+.lp-marquee { position: relative; overflow: hidden; padding: 18px 0; border-block: 1px solid #e8eff2; background: #fff; -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); }
+.lp-marquee-track { display: flex; width: max-content; animation: lp-marquee 38s linear infinite; }
+.lp-marquee-track > div { display: flex; gap: 10px; padding-right: 10px; }
+.lp-marquee span { padding: 8px 16px; border: 1px solid #e3ebee; border-radius: 999px; background: #f8fbfb; color: #33495a; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.lp-marquee span::before { content: "✓"; margin-right: 7px; color: var(--mint); font-weight: 900; }
+.lp-marquee:hover .lp-marquee-track { animation-play-state: paused; }
+@keyframes lp-board { 0%, 100% { transform: rotate(4deg) translateY(0); } 50% { transform: rotate(3deg) translateY(10px); } }
+@keyframes lp-bar { from { transform: scaleY(.35); } to { transform: scaleY(1); } }
+@keyframes lp-marquee { to { transform: translateX(-50%); } }
+@media (max-width: 959px) { .lp-board { width: 240px; right: 0; bottom: 2%; } .lp-bars { height: 64px; } }
+@media (max-width: 420px) { .lp-board { display: none; } }
+@media (prefers-reduced-motion: reduce) { .lp-marquee-track { animation: none; } }
+.lp-screen-msg { align-self: flex-start; max-width: 88%; margin-top: 4px; padding: 10px 12px; border-radius: 14px 14px 14px 4px; background: #e8f4fb; animation: lp-msg 6s ease-in-out infinite; }
+.lp-screen-msg small { color: #4f7f99; font-size: 9px; font-weight: 700; }
+.lp-screen-msg p { margin: 2px 0 0; color: #1d3b4d; font-size: 12px; line-height: 1.35; }
+@keyframes lp-msg { 0%, 20% { opacity: 0; transform: translateY(6px); } 28%, 92% { opacity: 1; transform: none; } 100% { opacity: 0; } }

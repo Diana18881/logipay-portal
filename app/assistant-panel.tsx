@@ -54,13 +54,14 @@ export function AssistantWidget({ context, locale, section }: { context: unknown
   const [open, setOpen] = useState(false);
   const [configured, setConfigured] = useState<boolean | null>(null);
   useEffect(() => {
-    if (!open || configured !== null) return;
-    fetch("/api/assistant").then((response) => response.json()).then((result: { configured?: boolean }) => setConfigured(Boolean(result.configured))).catch(() => setConfigured(true));
-  }, [open, configured]);
+    fetch("/api/assistant").then((response) => response.json()).then((result: { configured?: boolean }) => setConfigured(Boolean(result.configured))).catch(() => setConfigured(false));
+  }, []);
+  // Without a configured AI model the button is hidden, so customers never see setup hints.
+  if (!configured) return null;
   return <div className="assistant-widget">
     {open ? <div className="assistant-window" role="dialog" aria-label="Assistent">
       <header><span>✦</span><div><b>Assistent</b><small>Automatische Antworten zu Touren, Fahrern & Abrechnung</small></div><button type="button" onClick={() => setOpen(false)} aria-label="Schließen">✕</button></header>
-      {configured === false ? <div className="assistant-setup"><b>Assistent noch nicht aktiviert</b><p>Der Administrator muss in Vercel (Settings → Environment Variables) die Variablen <code>AI_GATEWAY_API_KEY</code> und <code>AI_MODEL</code> eintragen und die Seite neu deployen.</p></div> : <AssistantPanel context={context} locale={locale} section={section} />}
+      <AssistantPanel context={context} locale={locale} section={section} />
     </div> : null}
     <button type="button" className="assistant-fab" onClick={() => setOpen(!open)} aria-label="Assistent öffnen">{open ? "✕" : "✦"}</button>
   </div>;
