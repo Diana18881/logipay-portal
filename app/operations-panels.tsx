@@ -110,7 +110,7 @@ export function UserManagement({ rows, staff, resetRequests, action }: { rows: R
       <div><strong>Rollenbasierter Zugriff</strong><span>Management, Buchhaltung, Disposition und Fahrer erhalten getrennte Rechte.</span></div>
       <div><strong>Startpasswort</strong><span>Neue Benutzer müssen ihr temporäres Passwort beim ersten Login ändern.</span></div>
       <div><strong>Kontoschutz</strong><span>Sperre nach Fehlversuchen, 2FA und vollständiges Login-Journal.</span></div>
-      <div><strong>Firmenzugang</strong><span>Konten sind vorbereitet; externe Sites-Freigaben bleiben getrennt kontrollierbar.</span></div>
+      <div><strong>Firmenzugang</strong><span>Jede Firma hat eigene Zugänge und eine eigene, getrennte Datenbank.</span></div>
     </div>
     <div className="panel"><div className="panel-title"><div><h2>{editing ? "Benutzer bearbeiten" : "Benutzer einladen"}</h2><p>Account anlegen, Rolle vergeben und optional mit einem Fahrerprofil verbinden</p></div></div>
       <form className="advanced-form user-admin-form" onSubmit={submit} key={String(editing?.id || "new")}>

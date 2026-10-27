@@ -361,3 +361,5 @@
   .app-shell .month-person header strong { grid-column: 1 / -1; grid-row: auto; text-align: left; font-size: 22px; }
   .app-shell .month-lines td:last-child { width: 96px; }
 }
+.app-shell .expense-summary { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)) !important; }
+.app-shell .expense-summary > div strong, .app-shell .expense-summary > div b { font-size: clamp(20px, 2.4vw, 26px); overflow-wrap: anywhere; }

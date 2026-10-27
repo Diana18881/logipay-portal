@@ -9,6 +9,7 @@ import { AssistantWidget } from "./assistant-panel";
 import { DriverAppGate } from "./driver-app-gate";
 import { InviteDialog } from "./invite-dialog";
 import { ImportDialog } from "./import-dialog";
+import { ReadableLayout } from "./readable-layout";
 import { OfficeCharts, SetupGuide } from "./office-dashboard";
 import { Icon, type IconName } from "./icons";
 import { isInstalledApp, isMobileDevice } from "./service-worker";
@@ -1015,6 +1016,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
           </div>
         </div>
       </section>
+      <ReadableLayout />
       {importKind ? <ImportDialog kind={importKind} close={() => setImportKind(null)} done={(message) => { setImportKind(null); setNotice(message); void load(true); }} /> : null}
       <AssistantWidget context={assistantContext} locale={locale} section={nav.find((item) => item.id === section)?.label || section} />
       <nav className="driver-bottom-nav" aria-label={isDriver ? t("workArea") : "Navigation"}>

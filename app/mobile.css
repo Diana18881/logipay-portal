@@ -189,3 +189,28 @@
   .demo-banner a { font-size: 13px; }
   .demo-banner .demo-banner-cta { margin-left: auto; padding: 6px 12px; }
 }
+
+/* Phones: tables become cards, forms one column, nothing wider than the screen */
+@media (max-width: 760px) {
+
+  .app-shell .content form:not(.month-adjust):not(.invite-form) { grid-template-columns: minmax(0, 1fr) !important; }
+  .app-shell .content form > *, .app-shell .content label, .app-shell .content input, .app-shell .content select, .app-shell .content textarea { min-width: 0; max-width: 100%; }
+  .app-shell .content input[type="month"], .app-shell .content input[type="date"] { width: 100%; }
+  .app-shell .workspace, .app-shell .content { max-width: 100vw; overflow-x: clip; }
+}
+
+/* Phones and tablets in portrait: wide tables become cards */
+@media (max-width: 900px) {
+  .app-shell .content .table-wrap { overflow: visible; border: 0; background: transparent; }
+  .app-shell .content table.rt { min-width: 0 !important; width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; }
+  .app-shell .content table.rt thead { display: none; }
+  .app-shell .content table.rt tbody { display: grid; gap: 10px; }
+  .app-shell .content table.rt tr { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid #e4ecef; border-radius: 16px; background: #fff; }
+  .app-shell .content table.rt td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-width: 0; padding: 6px 0; border: 0; text-align: right; white-space: normal; overflow-wrap: anywhere; }
+  .app-shell .content table.rt td::before { content: attr(data-label); flex: none; max-width: 45%; color: #6c808b; font-size: 12px; font-weight: 700; letter-spacing: .3px; text-align: left; text-transform: uppercase; }
+  .app-shell .content table.rt td[data-label=""]::before { content: none; }
+  .app-shell .content table.rt td[data-label=""] { justify-content: flex-end; }
+  .app-shell .content table.rt td[colspan] { display: block; text-align: center; }
+  .app-shell .content table.rt td[colspan]::before { content: none; }
+  .app-shell.theme-dark .content table.rt tr { border-color: #22343f; background: #10232e; }
+}
