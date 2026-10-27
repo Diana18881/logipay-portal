@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { AppMovie } from "./app-movie";
 
 // Scroll story for the landing page: the daily chaos of spreadsheets, chats and paper
 // gets pulled into one LOGIPAY app. Scroll progress drives a CSS variable (--p from 0 to 1).
@@ -26,10 +27,11 @@ const icon: Record<Item["kind"], string> = { xlsx: "X", pdf: "PDF", chat: "✆",
 
 export function ChaosSection() {
   const ref = useRef<HTMLElement>(null);
+  const [playing, setPlaying] = useState(false);
   useEffect(() => {
     const section = ref.current;
     if (!section) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { section.style.setProperty("--p", "1"); return; }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { section.style.setProperty("--p", "1"); setPlaying(true); return; }
     let frame = 0;
     const update = () => {
       frame = 0;
@@ -37,6 +39,8 @@ export function ChaosSection() {
       const total = rect.height - window.innerHeight;
       const progress = total > 0 ? Math.min(1, Math.max(0, -rect.top / total)) : 1;
       section.style.setProperty("--p", progress.toFixed(3));
+      // The app "video" plays once the files have landed and while the section is on screen.
+      setPlaying(progress > 0.55 && rect.bottom > 0 && rect.top < window.innerHeight);
     };
     const onScroll = () => { if (!frame) frame = requestAnimationFrame(update); };
     update();
@@ -63,10 +67,7 @@ export function ChaosSection() {
             <div className="chaos-app-glow" />
             <div className="chaos-app-window">
               <header><i /><i /><i /><b>LOGIPAY</b></header>
-              <div className="chaos-app-logo"><span className="brand-mark"><span /><span /><span /></span></div>
-              <ul>
-                {["Lohn & DATEV", "Touren & Planung", "Belege & Spesen", "Fahrer & Dokumente", "Chat mit Fahrern"].map((label, index) => <li key={label} style={{ ["--i" as string]: index }}><em>✓</em>{label}</li>)}
-              </ul>
+              <AppMovie playing={playing} />
             </div>
           </div>
         </div>
