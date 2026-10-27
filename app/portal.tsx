@@ -6,6 +6,8 @@ import { EmployeeDocuments, MaintenanceCenter, PasswordChange, PayrollCenter, Se
 import { AbsenceCalendar } from "./absences";
 import { EmptyState } from "./empty-state";
 import { AssistantWidget } from "./assistant-panel";
+import { DriverAppGate } from "./driver-app-gate";
+import { isInstalledApp, isMobileDevice } from "./service-worker";
 import { ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
 import { driverLanguages, driverText, type DriverLocale } from "./driver-i18n";
 import { countOfflineUploads, flushOfflineUploads, loadPortalSnapshot, queueOfflineUpload, savePortalSnapshot } from "../lib/offline-client";
@@ -225,6 +227,11 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
   const [searchSource, setSearchSource] = useState<"top" | "hero">("top");
   const globalSearchRef = useRef<HTMLInputElement | null>(null);
   const [locale, setLocale] = useState<DriverLocale>("de");
+  const [appMode, setAppMode] = useState<"checking" | "app" | "browser">("checking");
+  useEffect(() => {
+    // Drivers on phones and tablets work only in the installed app (offline, camera, push).
+    setAppMode(isMobileDevice() && !isInstalledApp() ? "browser" : "app");
+  }, []);
   const [pushState, setPushState] = useState<"default" | "granted" | "denied" | "unsupported">("default");
   const [theme, setTheme] = useState<ThemeMode>("system");
   const [density, setDensity] = useState<DensityMode>("large");
@@ -614,6 +621,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
     if (id === "concerns" && ["management", "dispatcher"].includes(currentUser.role)) return openConcernCount;
     return 0;
   };
+  if (isDriver && appMode === "browser") return <DriverAppGate locale={locale} setLocale={changeLocale} logout={logout} />;
   return (
     <main className={`app-shell role-${currentUser.role} theme-${theme} density-${density} ${isDriver ? "driver-mobile-shell" : ""}`}>
       {mobileMenu ? <button className="backdrop" aria-label={isDriver ? t("menuClose") : "Menü schließen"} onClick={() => setMobileMenu(false)} /> : null}

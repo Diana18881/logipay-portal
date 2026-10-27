@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "LOGIPAY Fahrer-App & Portal",
     short_name: "LOGIPAY",
     description: "Touren, Belege, Nachrichten und Lohn – die App für Fahrer und Büro.",
-    start_url: "/?source=app",
+    start_url: "/login?source=app",
     scope: "/",
     display: "standalone",
     background_color: "#071a2e",
