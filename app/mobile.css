@@ -30,8 +30,14 @@
   .app-shell .topbar-brand b, .app-shell .topbar-brand small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .app-shell .topbar-brand b { color: #0b1a29; font-size: 16px; font-weight: 800; letter-spacing: -.2px; }
   .app-shell .topbar-brand small { color: #6c808b; font-size: 12px; }
-  .app-shell:not(.driver-mobile-shell) .topbar-brand { display: none; }
-  .driver-mobile-shell .menu-toggle { display: none !important; }
+  .app-shell .menu-toggle { display: none !important; }
+  /* Office on the phone: week picker only in planning, compact search button */
+  .app-shell:not(.driver-mobile-shell):not(.section-planning) .period-control { display: none !important; }
+  .app-shell:not(.driver-mobile-shell) .top-actions .tb-pdf,
+  .app-shell:not(.driver-mobile-shell) .top-actions .tb-chat,
+  .app-shell:not(.driver-mobile-shell) .top-actions .status-dot { display: none; }
+  .app-shell.section-planning .topbar-brand { display: none; }
+  .app-shell .assistant-fab { bottom: calc(92px + env(safe-area-inset-bottom)); }
 
   /* Drivers: the week picker only where it matters, no global search */
   .driver-mobile-shell:not(.section-planning) .period-control,
@@ -175,4 +181,11 @@
 /* The bottom bar is a phone control; on wider screens the sidebar navigates. */
 @media (min-width: 761px) {
   .app-shell .driver-bottom-nav { display: none !important; }
+}
+@media (max-width: 760px) {
+  .app-shell .page-heading > div > span { display: none; }
+  .demo-banner { gap: 6px 10px; padding: 8px 12px; font-size: 12.5px; }
+  .demo-banner span { min-width: 0; flex-basis: 100%; }
+  .demo-banner a { font-size: 13px; }
+  .demo-banner .demo-banner-cta { margin-left: auto; padding: 6px 12px; }
 }

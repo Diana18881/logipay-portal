@@ -1001,14 +1001,22 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
       </section>
       {importKind ? <ImportDialog kind={importKind} close={() => setImportKind(null)} done={(message) => { setImportKind(null); setNotice(message); void load(true); }} /> : null}
       <AssistantWidget context={assistantContext} locale={locale} section={nav.find((item) => item.id === section)?.label || section} />
-      {isDriver ? <nav className="driver-bottom-nav" aria-label={t("workArea")}>
-        {([
-          ["driverFlow", "route", "home"],
-          ["messages", "chat", "messages"],
-          ["expenses", "receipt", "receipts"],
-        ] as Array<[Section, IconName, string]>).map(([id, icon, key]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id)}><span><Icon name={icon} /></span><b>{t(key)}</b>{id === "messages" && unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}</button>)}
-        <button type="button" onClick={() => setMobileMenu(true)}><span><Icon name="more" /></span><b>{t("more", "Mehr")}</b>{unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}</button>
-      </nav> : null}
+      <nav className="driver-bottom-nav" aria-label={isDriver ? t("workArea") : "Navigation"}>
+        {(isDriver ? [
+          ["driverFlow", "route", t("home")],
+          ["messages", "chat", t("messages")],
+          ["expenses", "receipt", t("receipts")],
+        ] : currentUser.role === "accountant" ? [
+          ["overview", "home", "Start"],
+          ["expenses", "receipt", "Belege"],
+          ["documents", "euro", "Lohn"],
+        ] : [
+          ["overview", "home", "Start"],
+          ["planning", "calendar", "Planung"],
+          ["messages", "chat", "Chats"],
+        ] as Array<[Section, IconName, string]>).map(([id, icon, label]) => <button key={id} type="button" className={section === id ? "bottom-nav-active" : ""} onClick={() => setSection(id as Section)}><span><Icon name={icon as IconName} /></span><b>{label}</b>{id === "messages" && unreadChatCount ? <i>{Math.min(99, unreadChatCount)}</i> : null}</button>)}
+        <button type="button" onClick={() => setMobileMenu(true)}><span><Icon name="more" /></span><b>{isDriver ? t("more", "Mehr") : "Mehr"}</b>{unreadNotificationCount ? <i>{Math.min(99, unreadNotificationCount)}</i> : null}</button>
+      </nav>
       {settingsOpen ? <InterfaceSettings theme={theme} density={density} pinned={pinnedSections} sections={nav.filter((item) => item.roles.includes(currentUser.role))} setTheme={setTheme} setDensity={setDensity} setPinned={setPinnedSections} close={() => setSettingsOpen(false)} /> : null}
       {modal && (
         <Modal
