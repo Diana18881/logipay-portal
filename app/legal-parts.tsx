@@ -21,5 +21,6 @@ export const subprocessors = [
   ["Vercel Inc., 440 N Barranca Ave #4133, Covina, CA 91723, USA", "Hosting der Anwendung und Dateispeicher (Vercel Blob); Rechenzentrum Frankfurt am Main", "EU-Standardvertragsklauseln / EU-US Data Privacy Framework"],
   ["Turso (ChiselStrike Inc.), USA", "Betrieb der Datenbanken; Rechenzentrum in Irland (AWS eu-west-1)", "EU-Standardvertragsklauseln"],
   ["Resend, Inc., 2261 Market Street #5039, San Francisco, CA 94114, USA", "Versand von Anmeldecodes per E-Mail (E-Mail-Adresse, Name, Code)", "EU-Standardvertragsklauseln"],
+  ["OpenFreeMap (Zsolt Ero, Ungarn)", "Kartenkacheln für die Fahrzeugkarte im Portal; der Browser lädt die Kacheln direkt (IP-Adresse, keine Fahrzeugdaten)", "Sitz in der EU"],
   ["Stripe Payments Europe Ltd., 1 Grand Canal Street Lower, Dublin, Irland", "Abwicklung der Abonnement-Zahlungen (nur Daten des Kunden als Vertragspartner, keine Mitarbeiterdaten)", "Sitz in der EU"],
 ] as const;

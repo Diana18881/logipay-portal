@@ -12,6 +12,8 @@ import { ImportDialog } from "./import-dialog";
 import { ReadableLayout } from "./readable-layout";
 import { celebrate, SuccessBurst } from "./success-burst";
 import { FrameCamera } from "./frame-camera";
+import { Avatar, PhotoContext, uploadStaffPhoto } from "./avatar";
+import { FleetMap } from "./fleet-map";
 import { OfficeCharts, SetupGuide } from "./office-dashboard";
 import { Icon, type IconName } from "./icons";
 import { isInstalledApp, isMobileDevice } from "./service-worker";
@@ -246,6 +248,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
   const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
   const [notice, setNotice] = useState("");
   const [importKind, setImportKind] = useState<"staff" | "vehicles" | null>(null);
+  const photoMap = useMemo(() => new Map(data.staff.filter((row) => row.photo_key).map((row) => [String(row.id), (String(row.photo_key).split("/").pop() || "1").replace(/\.[a-z]+$/, "")])), [data.staff]);
   const [chatTripId, setChatTripId] = useState<number | null>(null);
   const [chatContactKey, setChatContactKey] = useState<string | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
@@ -270,6 +273,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
   const [online, setOnline] = useState(true);
   const [renderedAt] = useState(() => new Date().getTime());
   const isDriver = currentUser.role === "driver";
+  const ownStaff = isDriver ? data.staff.find((row) => Number(row.user_id) === currentUser.id) : undefined;
   const [lastSectionByGroup, setLastSectionByGroup] = useState<Record<string, Section>>({});
   const sectionRestored = useRef(false);
   const tabsRef = useRef<HTMLDivElement | null>(null);
@@ -652,6 +656,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
   };
   if (isDriver && appMode === "browser") return <DriverAppGate locale={locale} setLocale={changeLocale} logout={logout} />;
   return (
+    <PhotoContext.Provider value={photoMap}>
     <main className={`app-shell section-${section} role-${currentUser.role} theme-${theme} density-${density} ${isDriver ? "driver-mobile-shell" : ""}`}>
       {mobileMenu ? <button className="backdrop" aria-label={isDriver ? t("menuClose") : "Menü schließen"} onClick={() => setMobileMenu(false)} /> : null}
       <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
@@ -689,13 +694,10 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
         </nav>
         <div className="sidebar-bottom">
           <div className="profile">
-            <div className="avatar">
-              {currentUser.fullName
-                .split(" ")
-                .map((x) => x[0])
-                .join("")
-                .slice(0, 2)}
-            </div>
+            {ownStaff ? <label className="avatar-upload" title={t("photo", "Foto ändern")}>
+              <Avatar as="div" name={currentUser.fullName} staffId={ownStaff.id} className="avatar" />
+              <input type="file" accept="image/*" data-no-frame="1" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; try { await uploadStaffPhoto(ownStaff.id, file); celebrate(t("photo", "Foto gespeichert")); await load(true); } catch (error) { setNotice(error instanceof Error ? error.message : "Fehler"); } }} />
+            </label> : <Avatar as="div" name={currentUser.fullName} className="avatar" />}
             <div>
               <strong>{currentUser.fullName}</strong>
               <small>{isDriver ? t("driver") : labels[currentUser.role]}</small>
@@ -850,6 +852,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
                       onAddStaff={() => openModal("staff")} onImport={() => setImportKind("staff")} onAddVehicle={() => openModal("vehicle")}
                       onPlan={() => { setSection("planning"); openModal("planning"); }}
                       onInvite={() => { setSection("staff"); setNotice("Beim Fahrer auf „Einladen“ tippen – der Link geht per WhatsApp raus."); }} /> : null}
+                    {["management", "dispatcher"].includes(currentUser.role) ? <FleetMap tracking={data.tracking} planning={data.planning} open={() => setSection("tracking")} /> : null}
                     <OfficeCharts staff={data.staff} planning={data.planning} expenses={data.expenses} payroll={data.payroll} employeeDocuments={data.employeeDocuments} open={(target) => setSection(target as Section)} />
                     <div className="smart-dashboard-grid">
                       <section className="panel today-routes-panel">
@@ -880,6 +883,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
                   edit={(row) => openModal("staff", row)}
                   add={() => openModal("staff")}
                   action={action}
+                  reload={() => load(true)}
                 />
               )}
               {section === "absences" && <AbsenceCalendar staff={data.staff} absences={data.absences} canEdit={["management", "dispatcher"].includes(currentUser.role)} action={action} />}
@@ -1106,6 +1110,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
       )}
       {currentUser.mustChangePassword ? <PasswordChange required done={() => location.reload()} /> : null}
     </main>
+    </PhotoContext.Provider>
   );
 }
 
@@ -1790,7 +1795,7 @@ function Card({
     </article>
   );
 }
-function StaffList({ rows, events, canRate, showPay, isManager, open, edit, add, action }: { rows: Row[]; events: Row[]; canRate: boolean; showPay: boolean; isManager: boolean; open: (row: Row) => void; edit: (row: Row) => void; add: () => void; action: (payload: Record<string, unknown>) => Promise<void> }) {
+function StaffList({ rows, events, canRate, showPay, isManager, open, edit, add, action, reload }: { reload?: () => Promise<void>; rows: Row[]; events: Row[]; canRate: boolean; showPay: boolean; isManager: boolean; open: (row: Row) => void; edit: (row: Row) => void; add: () => void; action: (payload: Record<string, unknown>) => Promise<void> }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"active" | "archived" | "all">("active");
   const [sortByRating, setSortByRating] = useState(false);
@@ -1818,7 +1823,7 @@ function StaffList({ rows, events, canRate, showPay, isManager, open, edit, add,
     {visible.length ? <div className="card-list">{visible.map((person) => (
       <article key={String(person.id)} className="person-card">
         <button type="button" className="person-main" onClick={() => open(person)}>
-          <span className="person-avatar">{String(person.full_name || "?").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span>
+          <Avatar name={person.full_name} staffId={person.id} className="person-avatar" />
           <span className="person-text"><b>{person.full_name}</b><small>{[person.company, person.location, person.system_type ? `System ${person.system_type}` : ""].filter(Boolean).join(" · ") || "Keine Angaben"}</small></span>
         </button>
         {canRate ? (() => { const metrics = metricsOf(person); return <span className="person-rating" title={metrics.ratingCount ? `${metrics.ratingCount} Bewertung(en)` : "Noch nicht bewertet"}>{metrics.ratingCount ? <><b>{metrics.rating.toFixed(1)}</b><StarRatingDisplay value={metrics.rating} count={metrics.ratingCount} />{metrics.criteria ? (() => { const weakest = ratingCriteria.map(({ key, label }) => ({ label, value: metrics.criteria?.[key] ?? 5 })).sort((left, right) => left.value - right.value)[0]; return weakest.value < 4 ? <em className="person-weak" title="Schwächster Bereich">⚠ {weakest.label} {weakest.value.toFixed(1)}</em> : null; })() : null}</> : <small>Nicht bewertet</small>}</span>; })() : null}
@@ -1828,6 +1833,7 @@ function StaffList({ rows, events, canRate, showPay, isManager, open, edit, add,
           {isManager && person.status === "active" ? <button type="button" className="invite-action" onClick={() => setInvitePerson(person)}>{person.login_email ? "Neu einladen" : "Einladen"}</button> : null}
           {isManager ? <button type="button" className="edit-action" onClick={() => edit(person)}>Bearbeiten</button> : null}
           <details><summary aria-label="Mehr">⋯</summary><div>
+            {isManager ? <label className="menu-file">📷 Foto<input type="file" accept="image/*" data-no-frame="1" onChange={async (event) => { const file = event.target.files?.[0]; (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); if (!file) return; try { await uploadStaffPhoto(person.id, file); await reload?.(); } catch (error) { window.alert(error instanceof Error ? error.message : "Fehler"); } }} /></label> : null}
             {canRate && person.status === "active" ? <button type="button" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); setRating(person); setScores({ punctuality: 5, care: 5, communication: 5, vehicle: 5 }); }}>★ Bewertung senden</button> : null}
             {isManager ? <button type="button" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); setFormPerson(person); setFormReason(""); }}>📄 Dokument erstellen</button> : null}
             {isManager ? <button type="button" onClick={() => action({ action: person.status === "active" ? "archiveStaff" : "restoreStaff", id: person.id })}>{person.status === "active" ? "Ausscheiden" : "Reaktivieren"}</button> : null}

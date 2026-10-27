@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { driverText, type DriverLocale } from "./driver-i18n";
 import { queueOfflineUpload } from "../lib/offline-client";
 import { celebrate } from "./success-burst";
+import { Avatar } from "./avatar";
 
 type Row = Record<string, string | number | null>;
 type Action = (payload: Record<string, string | number | null>) => Promise<void>;
@@ -315,7 +316,6 @@ export function TripExecutionCenter({ rows, documents, messages, contacts = [], 
   const contactSubtitle = (contact: Row) => contact.role === "driver"
     ? `🚚 ${contact.license_plate || c.noPlate}${contact.location ? ` · ${contact.location}` : ""}`
     : roleLabel(contact.role);
-  const initials = (value: unknown) => String(value || "?").split(" ").map((part) => part[0]).join("").slice(0, 2);
   const requestItems: { de: string; pl: string; uk: string; ru: string }[] = [
     { de: "Ersatzteil", pl: "Część zamienna", uk: "Запчастина", ru: "Запчасть" },
     { de: "AdBlue", pl: "AdBlue", uk: "AdBlue", ru: "AdBlue" },
@@ -363,16 +363,16 @@ export function TripExecutionCenter({ rows, documents, messages, contacts = [], 
       {peopleMode
         ? <div className="chat-thread-list">{contactRows.length ? contactRows.map(({ contact, latest, unread }) => {
           const key = contactKey(contact);
-          return <button key={key} type="button" className={chatContactKey === key ? "chat-thread-active" : ""} onClick={() => setChatContactKey(key)}><span className={`chat-thread-avatar chat-role-${contact.role}`}>{initials(contact.full_name)}</span><span className="chat-thread-copy"><strong>{contact.full_name}</strong><small>{contactSubtitle(contact)}</small><em>{latest || contact.user_id ? String(previewText(latest)).slice(0, 58) : peopleCopy.noLogin}</em></span><span className="chat-thread-meta"><time>{threadDate(latest)}</time>{unread ? <b>{unread}</b> : latest ? <i>✓</i> : null}</span></button>;
+          return <button key={key} type="button" className={chatContactKey === key ? "chat-thread-active" : ""} onClick={() => setChatContactKey(key)}><Avatar name={contact.full_name} staffId={contact.staff_id} className={`chat-thread-avatar chat-role-${contact.role}`} /><span className="chat-thread-copy"><strong>{contact.full_name}</strong><small>{contactSubtitle(contact)}</small><em>{latest || contact.user_id ? String(previewText(latest)).slice(0, 58) : peopleCopy.noLogin}</em></span><span className="chat-thread-meta"><time>{threadDate(latest)}</time>{unread ? <b>{unread}</b> : latest ? <i>✓</i> : null}</span></button>;
         }) : <div className="empty-state">{peopleCopy.empty}</div>}</div>
         : <div className="chat-thread-list">{chatRows.length ? chatRows.map(({ row, latest, unread }) => {
-          return <button key={row.id} type="button" className={Number(chatTrip?.id) === Number(row.id) ? "chat-thread-active" : ""} onClick={() => setChatTrip(row)}><span className="chat-thread-avatar">{initials(row.driver_name || row.license_plate || "T")}</span><span className="chat-thread-copy"><strong>{row.driver_name || c.driver}</strong><small>🚚 {row.license_plate || c.noPlate}{row.block_id ? ` · ${row.block_id}` : ""}</small><em>{String(previewText(latest)).slice(0, 58)}</em></span><span className="chat-thread-meta"><time>{threadDate(latest)}</time>{unread ? <b>{unread}</b> : <i>✓</i>}</span></button>;
+          return <button key={row.id} type="button" className={Number(chatTrip?.id) === Number(row.id) ? "chat-thread-active" : ""} onClick={() => setChatTrip(row)}><Avatar name={row.driver_name || row.license_plate || "T"} staffId={row.staff_id} className="chat-thread-avatar" /><span className="chat-thread-copy"><strong>{row.driver_name || c.driver}</strong><small>🚚 {row.license_plate || c.noPlate}{row.block_id ? ` · ${row.block_id}` : ""}</small><em>{String(previewText(latest)).slice(0, 58)}</em></span><span className="chat-thread-meta"><time>{threadDate(latest)}</time>{unread ? <b>{unread}</b> : <i>✓</i>}</span></button>;
         }) : <div className="empty-state">{inboxCopy.empty}</div>}</div>}
     </aside>
     <section className="chat-conversation panel">{(peopleMode ? chatContact : chatTrip) ? <>
       {peopleMode && chatContact
-        ? <header className="chat-conversation-header"><div className={`chat-thread-avatar chat-role-${chatContact.role}`}>{initials(chatContact.full_name)}</div><div><h2>{chatContact.full_name}</h2><p>{contactSubtitle(chatContact)}{chatContact.role === "driver" && chatContact.company ? ` · ${chatContact.company}` : ""}</p></div><span className="trip-live-status">{roleLabel(chatContact.role)}</span></header>
-        : chatTrip ? <header className="chat-conversation-header"><div className="chat-thread-avatar">{initials(chatTrip.driver_name || chatTrip.license_plate || "T")}</div><div><h2>{chatTrip.driver_name || c.driver}</h2><p>🚚 {chatTrip.license_plate || c.noPlate}{chatTrip.block_id ? ` · ${chatTrip.block_id}` : ""}</p></div><span className={`trip-live-status trip-live-${String(chatTrip.status).toLowerCase()}`}>{driver ? c.status[String(chatTrip.status) as keyof typeof c.status] || chatTrip.status : chatTrip.status}</span></header> : null}
+        ? <header className="chat-conversation-header"><Avatar name={chatContact.full_name} staffId={chatContact.staff_id} className={`chat-thread-avatar chat-role-${chatContact.role}`} /><div><h2>{chatContact.full_name}</h2><p>{contactSubtitle(chatContact)}{chatContact.role === "driver" && chatContact.company ? ` · ${chatContact.company}` : ""}</p></div><span className="trip-live-status">{roleLabel(chatContact.role)}</span></header>
+        : chatTrip ? <header className="chat-conversation-header"><Avatar name={chatTrip.driver_name || chatTrip.license_plate || "T"} staffId={chatTrip.staff_id} className="chat-thread-avatar" /><div><h2>{chatTrip.driver_name || c.driver}</h2><p>🚚 {chatTrip.license_plate || c.noPlate}{chatTrip.block_id ? ` · ${chatTrip.block_id}` : ""}</p></div><span className={`trip-live-status trip-live-${String(chatTrip.status).toLowerCase()}`}>{driver ? c.status[String(chatTrip.status) as keyof typeof c.status] || chatTrip.status : chatTrip.status}</span></header> : null}
       <div className="trip-chat-stream chat-center-stream">{activeMessages.length ? activeMessages.map((message) => {
         const own = Number(message.sender_user_id) === currentUserId;
         return (

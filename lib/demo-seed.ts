@@ -70,8 +70,33 @@ async function ensureDemoWeek() {
   return true;
 }
 
+/** Keeps the demo trucks "driving": fresh positions near the last ones, at most every 10 minutes. */
+async function refreshDemoPositions() {
+  const latest = await env.DB.prepare("SELECT MAX(recorded_at) AS at FROM truck_positions").first<{ at: string | null }>();
+  if (latest?.at && Date.now() - new Date(latest.at).getTime() < 10 * 60_000) return;
+  const trackers = await env.DB.prepare(
+    `SELECT t.id, t.license_plate, p.latitude, p.longitude, p.odometer_km, p.address FROM truck_trackers t
+     JOIN truck_positions p ON p.id=(SELECT id FROM truck_positions WHERE tracker_id=t.id ORDER BY recorded_at DESC LIMIT 1)`,
+  ).all<{ id: number; license_plate: string; latitude: number; longitude: number; odometer_km: number | null; address: string | null }>();
+  const now = new Date().toISOString();
+  const statements = trackers.results.flatMap((tracker, index) => {
+    const moving = index % 4 !== 3;
+    const step = moving ? 0.04 : 0;
+    const latitude = Math.min(54.2, Math.max(51.4, Number(tracker.latitude) + (index % 2 ? -step : step) * 0.6));
+    const longitude = Math.min(11.5, Math.max(7.8, Number(tracker.longitude) + (index % 3 ? step : -step)));
+    return [
+      env.DB.prepare("INSERT INTO truck_positions (tracker_id, license_plate, latitude, longitude, speed_kph, heading, ignition, odometer_km, address, source, recorded_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'demo', ?, ?)")
+        .bind(tracker.id, tracker.license_plate, latitude, longitude, moving ? 62 + index * 7 : 0, moving ? 90 : 0, moving ? 1 : 0, Number(tracker.odometer_km || 0) + (moving ? 4 : 0), tracker.address, now, now),
+      env.DB.prepare("UPDATE truck_trackers SET last_connected_at=?, updated_at=? WHERE id=?").bind(now, now, tracker.id),
+    ];
+  });
+  if (statements.length) await env.DB.batch(statements);
+  await env.DB.prepare("DELETE FROM truck_positions WHERE source='demo' AND recorded_at < datetime('now','-2 days')").run();
+}
+
 export async function seedDemoHistory() {
   await upgradeDemoStaff();
+  await refreshDemoPositions();
   if (await ensureDemoWeek()) await env.DB.prepare("DELETE FROM payroll_calculations WHERE period=?").bind(new Date().toISOString().slice(0, 7)).run();
   const current = new Date().toISOString().slice(0, 7);
   const existing = await env.DB.prepare("SELECT COUNT(*) AS count FROM payroll_calculations").first<{ count: number }>();

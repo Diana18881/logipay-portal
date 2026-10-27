@@ -24,7 +24,7 @@ export function FrameCamera({ locale }: { locale: string }) {
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
       const input = (event.target as HTMLElement | null)?.closest?.("input[type=file]") as HTMLInputElement | null;
-      if (!input || bypass.current || !/image/.test(input.accept || "") || !navigator.mediaDevices?.getUserMedia) return;
+      if (!input || bypass.current || input.dataset.noFrame || !/image/.test(input.accept || "") || !navigator.mediaDevices?.getUserMedia) return;
       event.preventDefault();
       setError("");
       setTarget(input);
