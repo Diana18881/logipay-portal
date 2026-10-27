@@ -85,7 +85,10 @@ function fileDocuments(root: string): DocumentsStore {
 
 export function createBlobDocuments(): DocumentsStore {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (token) return blobDocuments(token);
+  // Only deployments use the cloud store; local development never touches production files,
+  // even when a pulled .env.local contains the token (opt in with LOGIPAY_USE_BLOB=1).
+  const onVercel = Boolean(process.env.VERCEL_ENV) || process.env.LOGIPAY_USE_BLOB === "1";
+  if (token && onVercel) return blobDocuments(token);
   if (process.env.VERCEL_ENV) throw new Error("BLOB_READ_WRITE_TOKEN fehlt. Blob Store in Vercel anlegen.");
   return fileDocuments(path.resolve(process.env.LOGIPAY_DATA_DIR || ".data", "blobs"));
 }
