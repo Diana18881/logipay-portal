@@ -77,12 +77,22 @@ async function login(request: Request, payload: LoginPayload, email: string, pas
       secret = generateTwoFactorSecret();
       await env.DB.prepare("UPDATE users SET two_factor_secret=? WHERE id=?").bind(secret, user.id).run();
     }
+    // The key is only shown until the first successful code; afterwards it never leaves the server again.
+    const setup = user.two_factor_enabled
+      ? { setup: false }
+      : { setup: true, secret, otpauth: `otpauth://totp/LOGIPAY:${encodeURIComponent(user.email)}?secret=${secret}&issuer=LOGIPAY&algorithm=SHA1&digits=6&period=30` };
     if (!payload?.twoFactorCode) {
-      return Response.json({ requiresTwoFactor: true, setup: !user.two_factor_enabled, secret, otpauth: `otpauth://totp/LOGIPAY:${encodeURIComponent(user.email)}?secret=${secret}&issuer=LOGIPAY` }, { status: 202 });
+      return Response.json({ requiresTwoFactor: true, ...setup }, { status: 202 });
     }
     if (!(await verifyTwoFactorCode(secret, payload.twoFactorCode))) {
-      await env.DB.prepare("INSERT INTO login_audit (user_id, email, success, ip_address, user_agent, created_at) VALUES (?, ?, 0, ?, ?, ?)").bind(user.id, email, ipAddress, userAgent, now.toISOString()).run();
-      return Response.json({ error: "Falscher Zwei-Faktor-Code", requiresTwoFactor: true }, { status: 401 });
+      const attempts = Number(user.failed_attempts || 0) + 1;
+      const lockedUntil = attempts >= 5 ? new Date(now.getTime() + 15 * 60_000).toISOString() : null;
+      await env.DB.batch([
+        env.DB.prepare("UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?").bind(attempts >= 5 ? 0 : attempts, lockedUntil, user.id),
+        env.DB.prepare("INSERT INTO login_audit (user_id, email, success, ip_address, user_agent, created_at) VALUES (?, ?, 0, ?, ?, ?)").bind(user.id, email, ipAddress, userAgent, now.toISOString()),
+      ]);
+      if (lockedUntil) return Response.json({ error: "Zu viele falsche Codes. Konto für 15 Minuten gesperrt." }, { status: 423 });
+      return Response.json({ error: `Falscher Code. Noch ${5 - attempts} Versuche.`, requiresTwoFactor: true, ...setup }, { status: 401 });
     }
     if (!user.two_factor_enabled) await env.DB.prepare("UPDATE users SET two_factor_enabled=1 WHERE id=?").bind(user.id).run();
   }
