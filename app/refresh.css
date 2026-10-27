@@ -114,3 +114,10 @@
 @media (prefers-reduced-motion: reduce) { .app-shell .trip-chat-message { animation: none !important; } }
 .app-shell .composer-row { align-items: center; }
 .app-shell .composer-row textarea { min-height: 44px !important; height: 44px; padding: 11px 4px !important; line-height: 22px; resize: none; }
+
+/* View-only demo banner */
+.demo-banner { position: sticky; top: 0; z-index: 35; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 16px; background: linear-gradient(90deg, #0b1a29, #0f3a4d); color: #d6e4ea; font-size: 14px; }
+.demo-banner b { color: #5ff0d8; }
+.demo-banner span { flex: 1; min-width: 200px; }
+.demo-banner a { color: #fff; font-weight: 700; text-decoration: none; }
+.demo-banner .demo-banner-cta { padding: 7px 14px; border-radius: 10px; background: #16b8a3; color: #062019; }

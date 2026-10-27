@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { pricePerDriverCents } from "../lib/billing";
-import { contactEmail } from "../lib/legal";
 import { TRIAL_DAYS } from "../lib/tenants";
 import { LandingMotion, PriceCalculator } from "./landing-motion";
 import { SiteFooter, SiteHeader } from "./site-chrome";
@@ -42,7 +41,6 @@ const trust = [
 export function Landing() {
   const priceCents = pricePerDriverCents();
   const price = (priceCents / 100).toLocaleString("de-DE", { maximumFractionDigits: 2 });
-  const email = contactEmail();
   return (
     <div className="site lp">
       <LandingMotion />
@@ -57,8 +55,9 @@ export function Landing() {
             <p className="lp-lead lp-rise lp-d2">Disposition, Belege, Fahrer-App und Lohnvorbereitung in einem Portal. Ihr Steuerbüro bekommt den DATEV-Export.</p>
             <div className="lp-actions lp-rise lp-d3">
               <Link href="/registrieren" className="site-button lp-cta">{TRIAL_DAYS} Tage kostenlos testen <span aria-hidden="true">→</span></Link>
-              {email ? <a href={`mailto:${email}?subject=${encodeURIComponent("LOGIPAY Live-Demo")}`} className="site-button site-button-ghost">Live-Demo anfragen</a> : <Link href="#preise" className="site-button site-button-ghost">Preise ansehen</Link>}
+              <a href="/api/auth/demo" className="site-button site-button-ghost">Demo ansehen <span aria-hidden="true">▶</span></a>
             </div>
+            <p className="lp-demo-hint lp-rise lp-d4">Ohne Anmeldung: <a href="/api/auth/demo">Büro-Ansicht</a> · <a href="/api/auth/demo?as=fahrer">Fahrer-App</a></p>
             <ul className="lp-checks lp-rise lp-d4"><li>Ohne Kreditkarte</li><li>Server in der EU</li><li>Monatlich kündbar</li></ul>
           </div>
 
@@ -141,7 +140,7 @@ export function Landing() {
         <section className="lp-final" data-reveal>
           <h2>Bereit für weniger Papierkram?</h2>
           <p>{TRIAL_DAYS} Tage kostenlos. Keine Kreditkarte. In einer Minute eingerichtet.</p>
-          <Link href="/registrieren" className="site-button lp-cta">Jetzt kostenlos starten <span aria-hidden="true">→</span></Link>
+          <div className="lp-final-actions"><Link href="/registrieren" className="site-button lp-cta">Jetzt kostenlos starten <span aria-hidden="true">→</span></Link><a href="/api/auth/demo" className="site-button site-button-ghost">Demo ansehen</a></div>
         </section>
       </main>
       <SiteFooter />

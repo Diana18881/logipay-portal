@@ -528,3 +528,7 @@
 .lp-hero.lp-hero-dark { align-items: flex-start; background: #0b1a33; }
 .lp-hero-dark .lp-hero-text { margin: 0; width: 100%; }
 .lp-app-copy > p { max-width: 560px; margin: 14px 0 20px; color: #b9cbd5; font-size: 17px; }
+.lp-demo-hint { margin: 16px 0 0; color: #9fb6c2; font-size: 14px; }
+.lp-demo-hint a { color: #8ff0de; font-weight: 700; }
+.lp-final-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.lp-final .site-button-ghost { border-color: #ffffff40; background: transparent; color: #fff; }

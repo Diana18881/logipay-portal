@@ -231,8 +231,8 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
   const [appMode, setAppMode] = useState<"checking" | "app" | "browser">("checking");
   useEffect(() => {
     // Drivers on phones and tablets work only in the installed app (offline, camera, push).
-    setAppMode(isMobileDevice() && !isInstalledApp() ? "browser" : "app");
-  }, []);
+    setAppMode(isMobileDevice() && !isInstalledApp() && !currentUser.readOnly ? "browser" : "app");
+  }, [currentUser.readOnly]);
   const [pushState, setPushState] = useState<"default" | "granted" | "denied" | "unsupported">("default");
   const [theme, setTheme] = useState<ThemeMode>("system");
   const [density, setDensity] = useState<DensityMode>("large");
@@ -681,7 +681,8 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
         </div>
       </aside>
       <section className="workspace">
-        {currentUser.role === "management" && (paymentProblem || trialDaysLeft !== null) ? <a className={`billing-banner ${paymentProblem ? "billing-banner-alert" : ""}`} href="/abo">{paymentProblem ? "Zahlung fehlgeschlagen – bitte Zahlungsmethode im Abonnement prüfen." : `Testphase: noch ${trialDaysLeft} ${trialDaysLeft === 1 ? "Tag" : "Tage"}. Jetzt Abonnement abschließen →`}</a> : null}
+        {currentUser.readOnly ? <div className="demo-banner"><span><b>Demo</b> · nur Ansicht – Änderungen werden nicht gespeichert.</span><a href={isDriver ? "/api/auth/demo" : "/api/auth/demo?as=fahrer"}>{isDriver ? "Büro-Ansicht" : "Fahrer-Ansicht"}</a><a className="demo-banner-cta" href="/registrieren">Kostenlos testen →</a></div> : null}
+        {currentUser.role === "management" && !currentUser.readOnly && (paymentProblem || trialDaysLeft !== null) ? <a className={`billing-banner ${paymentProblem ? "billing-banner-alert" : ""}`} href="/abo">{paymentProblem ? "Zahlung fehlgeschlagen – bitte Zahlungsmethode im Abonnement prüfen." : `Testphase: noch ${trialDaysLeft} ${trialDaysLeft === 1 ? "Tag" : "Tage"}. Jetzt Abonnement abschließen →`}</a> : null}
         <header className="topbar">
           <button className="menu-toggle" aria-label={isDriver ? t("menuOpen") : "Menü öffnen"} onClick={() => setMobileMenu(true)}>☰</button>
           <div className="topbar-brand"><span className="brand-mark"><span /><span /><span /></span><div><b>{isDriver ? `${t("hello", "Hallo")}, ${currentUser.fullName.split(" ")[0]}` : currentUser.companyName}</b><small>{isDriver ? currentUser.companyName : labels[currentUser.role]}</small></div></div>

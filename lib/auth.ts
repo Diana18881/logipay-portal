@@ -14,6 +14,7 @@ export type PortalUser = {
   twoFactorEnabled: boolean;
   companyId: string;
   companyName: string;
+  readOnly: boolean;
 };
 
 const COOKIE_NAME = SESSION_COOKIE;
@@ -72,11 +73,14 @@ export async function hashPassword(password: string) {
   return `pbkdf2_sha256$${iterations}$${bytesToBase64(salt)}$${bytesToBase64(derived)}`;
 }
 
-export async function createSession(userId: number) {
+/** Prefix of view-only demo sessions; the request proxy blocks every change made with such a session. */
+export const READ_ONLY_PREFIX = "ro-";
+
+export async function createSession(userId: number, options: { readOnly?: boolean } = {}) {
   const tenant = currentTenantId();
   if (!tenant) throw new Error("Keine Firma ausgewählt");
   const random = crypto.getRandomValues(new Uint8Array(32));
-  const token = tenant + "." + bytesToBase64(random).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  const token = tenant + "." + (options.readOnly ? READ_ONLY_PREFIX : "") + bytesToBase64(random).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
   const tokenHash = await sha256(token);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_DAYS * 24 * 60 * 60 * 1000);
@@ -182,6 +186,7 @@ export async function getPortalUser(): Promise<PortalUser | null> {
     twoFactorEnabled: Boolean(row.two_factor_enabled),
     companyId,
     companyName: company.name,
+    readOnly: token.startsWith(`${companyId}.${READ_ONLY_PREFIX}`),
   };
 }
 
