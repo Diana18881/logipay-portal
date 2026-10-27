@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { pricePerDriverCents } from "../lib/billing";
 import { TRIAL_DAYS } from "../lib/tenants";
+import { ChaosSection } from "./chaos-section";
 import { LandingMotion, PriceCalculator } from "./landing-motion";
 import { SiteFooter, SiteHeader } from "./site-chrome";
 import { Truck3D } from "./truck-3d";
@@ -62,6 +63,8 @@ export function Landing() {
           </div>
 
         </section>
+
+        <ChaosSection />
 
         <div className="lp-marquee" aria-hidden="true">
           <div className="lp-marquee-track">{[0, 1].map((copy) => <div key={copy}>{marquee.map((item) => <span key={`${copy}-${item}`}>{item}</span>)}</div>)}</div>

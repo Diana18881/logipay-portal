@@ -542,3 +542,68 @@
 .invite-form input[readonly] { color: #9fb6c2; }
 .invite-form small { color: #9fb6c2; }
 .invite-form .site-button { width: 100%; margin-top: 4px; }
+
+/* ───────── Scroll story: chaos → one app ───────── */
+.chaos { --p: 0; position: relative; height: 280vh; background: radial-gradient(60% 50% at 50% 40%, #12385299, transparent 70%), linear-gradient(180deg, #0b1a29 0%, #071226 100%); color: #fff; }
+.chaos-sticky { position: sticky; top: 0; height: 100vh; display: grid; grid-template-rows: auto 1fr; overflow: hidden; padding: 84px 16px 24px; }
+.chaos-sticky::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(#ffffff08 1px, transparent 1px), linear-gradient(90deg, #ffffff08 1px, transparent 1px); background-size: 44px 44px; -webkit-mask-image: radial-gradient(70% 60% at 50% 55%, #000, transparent); mask-image: radial-gradient(70% 60% at 50% 55%, #000, transparent); pointer-events: none; }
+.chaos-copy { position: relative; z-index: 3; display: grid; text-align: center; }
+.chaos-copy p { grid-area: 1 / 1; max-width: 760px; margin: 0 auto; }
+.chaos-copy b { display: block; margin-top: 8px; font-size: clamp(24px, 4.4vw, 46px); line-height: 1.12; letter-spacing: -1px; font-weight: 800; }
+.chaos-before { --a: clamp(0, calc((var(--p) - .5) / .25), 1); opacity: calc(1 - var(--a)); transform: translateY(calc(var(--a) * -16px)); }
+.chaos-after { --a: clamp(0, calc((var(--p) - .58) / .22), 1); opacity: var(--a); transform: translateY(calc((1 - var(--a)) * 16px)); }
+.chaos-after b { background: linear-gradient(100deg, #5ff0d8, #7cc6ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.chaos-before .lp-kicker { color: #f6a96b; }
+.chaos-after .lp-kicker { color: #5ff0d8; }
+.chaos-stage { position: relative; z-index: 2; }
+
+.chaos-item { --q: clamp(0, calc((var(--p) - .08 - var(--d) * .03) / .42), 1);
+  position: absolute; left: 50%; top: 50%; display: flex; align-items: center; gap: 10px; width: min(250px, 62vw); padding: 10px 12px; border-radius: 14px; background: #fff; color: #0b1a29; box-shadow: 0 18px 40px #0007;
+  transform: translate(-50%, -50%) translate(calc(var(--x) * 1.05vmin * (1 - var(--q))), calc(var(--y) * 1.05vmin * (1 - var(--q)))) rotate(calc(var(--r) * (1 - var(--q)))) scale(calc(1 - var(--q) * .82));
+  opacity: calc(1 - var(--q) * var(--q) * var(--q));
+  animation: chaos-float 4.5s ease-in-out infinite alternate; animation-delay: calc(var(--d) * -.37s); }
+.chaos-item span { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 9px; background: #1d7044; color: #fff; font-size: 13px; font-weight: 900; }
+.chaos-item b { display: block; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.chaos-item small { display: block; overflow: hidden; color: #6c808b; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.chaos-item > div { min-width: 0; }
+.chaos-pdf span { background: #c8372a; font-size: 11px; }
+.chaos-csv span { background: #3e5563; font-size: 11px; }
+.chaos-chat { background: #dcf8c6; }
+.chaos-chat span { border-radius: 50%; background: #25d366; font-size: 18px; }
+.chaos-note { background: #fff1a8; box-shadow: 0 14px 30px #0006; }
+.chaos-note span { background: #e5a33b; font-size: 18px; }
+.chaos-paper { background: #f3efe6; }
+.chaos-paper span { background: #8a7a5c; font-size: 16px; }
+@keyframes chaos-float { from { translate: 0 -6px; } to { translate: 0 8px; } }
+
+.chaos-app { --a: clamp(0, calc((var(--p) - .42) / .3), 1); position: absolute; left: 50%; top: 50%; width: min(340px, 82vw); transform: translate(-50%, -50%) scale(calc(.55 + var(--a) * .45)); opacity: clamp(0, calc(var(--p) * 4), 1); }
+.chaos-app-glow { position: absolute; inset: -40%; border-radius: 50%; background: radial-gradient(circle, #16b8a3aa 0%, #1b8fc955 35%, transparent 68%); opacity: calc(.25 + var(--a) * .75); filter: blur(10px); animation: chaos-pulse 2.6s ease-in-out infinite; }
+.chaos-app-window { position: relative; overflow: hidden; border: 1px solid #ffffff22; border-radius: 22px; background: linear-gradient(180deg, #ffffff, #f2f8f9); color: #0b1a29; box-shadow: 0 40px 90px #000a; }
+.chaos-app-window header { display: flex; align-items: center; gap: 6px; padding: 12px 14px; background: #0b1a29; color: #fff; }
+.chaos-app-window header i { width: 9px; height: 9px; border-radius: 50%; background: #ffffff40; }
+.chaos-app-window header b { margin-left: 8px; font-size: 13px; letter-spacing: 2px; }
+.chaos-app-logo { display: grid; place-items: center; padding: 18px 0 6px; }
+.chaos-app-logo .brand-mark { transform: scale(1.4); }
+.chaos-app ul { display: grid; gap: 8px; margin: 0; padding: 12px 16px 18px; list-style: none; }
+.chaos-app li { --l: clamp(0, calc((var(--p) - .62 - var(--i) * .045) / .1), 1); display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #fff; box-shadow: 0 1px 0 #e4ecef; font-size: 15px; font-weight: 700; opacity: var(--l); transform: translateX(calc((1 - var(--l)) * -18px)); }
+.chaos-app li em { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, #12a593, #1b8fc9); color: #fff; font-size: 13px; font-style: normal; }
+@keyframes chaos-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+
+@media (min-width: 960px) {
+  .chaos-sticky { padding-top: 110px; }
+  .chaos-item { width: 270px; transform: translate(-50%, -50%) translate(calc(var(--x) * 1.25vmin * (1 - var(--q)) * 1.4), calc(var(--y) * 1.05vmin * (1 - var(--q)))) rotate(calc(var(--r) * (1 - var(--q)))) scale(calc(1 - var(--q) * .82)); }
+  .chaos-app { width: 380px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chaos { height: auto; }
+  .chaos-sticky { position: relative; height: auto; min-height: 640px; }
+  .chaos-item { display: none; }
+  .chaos-item, .chaos-app-glow { animation: none; }
+}
+@media (min-width: 960px) {
+  .chaos-item { transform: translate(-50%, -50%) translate(calc(var(--x) * 1.6vmin * (1 - var(--q))), calc(var(--y) * .72vmin * (1 - var(--q)))) rotate(calc(var(--r) * (1 - var(--q)))) scale(calc(1 - var(--q) * .82)); }
+  .chaos-stage { margin-top: 24px; }
+}
+@media (max-width: 959px) {
+  .chaos-item { transform: translate(-50%, -50%) translate(calc(var(--x) * .9vmin * (1 - var(--q))), calc(var(--y) * .95vmin * (1 - var(--q)))) rotate(calc(var(--r) * (1 - var(--q)))) scale(calc(1 - var(--q) * .82)); }
+}
