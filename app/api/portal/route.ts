@@ -91,7 +91,7 @@ export async function GET(request: Request) {
     user.role === "driver"
       ? await staffStmt.bind(user.id, user.fullName).all()
       : await staffStmt.all();
-  const vehicles =
+  const vehiclesQuery = (async () =>
     user.role === "driver"
       ? await env.DB.prepare(
           "SELECT DISTINCT v.* FROM vehicles v JOIN weekly_planning p ON p.license_plate=v.license_plate JOIN staff s ON s.id=p.staff_id WHERE s.user_id=? ORDER BY v.license_plate",
@@ -100,9 +100,9 @@ export async function GET(request: Request) {
           .all()
       : await env.DB.prepare(
           "SELECT * FROM vehicles ORDER BY status, license_plate",
-        ).all();
+        ).all())();
   const driverStaffId = (staffResult.results as { id: number }[])[0]?.id;
-  const planning =
+  const planningQuery = (async () =>
     user.role === "driver"
       ? await env.DB.prepare(
           "SELECT * FROM weekly_planning WHERE planning_year = ? AND calendar_week = ? AND (staff_id = ? OR driver_name = ?) ORDER BY company",
@@ -113,28 +113,30 @@ export async function GET(request: Request) {
           "SELECT * FROM weekly_planning WHERE planning_year = ? AND calendar_week = ? ORDER BY company, driver_name",
         )
           .bind(year, kw)
-          .all();
+          .all())();
   const staffIds = (staffResult.results as { id: number }[]).map((s) => s.id);
-  let documents: unknown[] = [];
-  if (
-    user.role !== "dispatcher" &&
-    (user.role !== "driver" || staffIds.length)
-  ) {
-    const stmt =
-      user.role === "driver"
-        ? env.DB.prepare(
-            "SELECT d.*, s.full_name FROM salary_documents d JOIN staff s ON s.id=d.staff_id WHERE d.staff_id=? ORDER BY d.period DESC",
-          )
-        : env.DB.prepare(
-            "SELECT d.*, s.full_name FROM salary_documents d JOIN staff s ON s.id=d.staff_id ORDER BY d.period DESC",
-          );
-    documents = (
-      user.role === "driver"
-        ? await stmt.bind(staffIds[0]).all()
-        : await stmt.all()
-    ).results;
-  }
-  const concerns =
+  const documentsQuery = (async (): Promise<unknown[]> => {
+    if (
+      user.role !== "dispatcher" &&
+      (user.role !== "driver" || staffIds.length)
+    ) {
+      const stmt =
+        user.role === "driver"
+          ? env.DB.prepare(
+              "SELECT d.*, s.full_name FROM salary_documents d JOIN staff s ON s.id=d.staff_id WHERE d.staff_id=? ORDER BY d.period DESC",
+            )
+          : env.DB.prepare(
+              "SELECT d.*, s.full_name FROM salary_documents d JOIN staff s ON s.id=d.staff_id ORDER BY d.period DESC",
+            );
+      return (
+        user.role === "driver"
+          ? await stmt.bind(staffIds[0]).all()
+          : await stmt.all()
+      ).results;
+    }
+    return [];
+  })();
+  const concernsQuery = (async () =>
     user.role === "driver"
       ? await env.DB.prepare(
           "SELECT * FROM driver_concerns WHERE staff_id=? OR notes=? ORDER BY created_at DESC",
@@ -143,13 +145,13 @@ export async function GET(request: Request) {
           .all()
       : await env.DB.prepare(
           "SELECT * FROM driver_concerns ORDER BY period DESC, completion_status, company",
-        ).all();
-  const voiceMessages = user.role === "driver"
+        ).all())();
+  const voiceMessagesQuery = (async () => user.role === "driver"
     ? await env.DB.prepare("SELECT vm.*, s.full_name FROM voice_messages vm JOIN staff s ON s.id=vm.staff_id WHERE vm.user_id=? ORDER BY vm.created_at DESC LIMIT 100").bind(user.id).all()
     : ["management", "dispatcher"].includes(user.role)
       ? await env.DB.prepare("SELECT vm.*, s.full_name FROM voice_messages vm JOIN staff s ON s.id=vm.staff_id ORDER BY vm.status='Neu' DESC, vm.created_at DESC LIMIT 200").all()
-      : { results: [] };
-  const files =
+      : { results: [] })();
+  const filesQuery = (async () =>
     user.role === "driver"
       ? await env.DB.prepare(
           "SELECT vf.*, s.full_name AS driver_name FROM vehicle_files vf JOIN staff s ON s.id=vf.staff_id WHERE s.user_id=? ORDER BY vf.created_at DESC",
@@ -160,56 +162,56 @@ export async function GET(request: Request) {
         ? await env.DB.prepare(
             "SELECT vf.*, s.full_name AS driver_name FROM vehicle_files vf LEFT JOIN staff s ON s.id=vf.staff_id ORDER BY vf.created_at DESC",
           ).all()
-        : { results: [] };
-  const vehicleComments = user.role === "driver"
+        : { results: [] })();
+  const vehicleCommentsQuery = (async () => user.role === "driver"
     ? await env.DB.prepare(
         "SELECT vc.* FROM vehicle_comments vc WHERE vc.license_plate IN (SELECT DISTINCT license_plate FROM weekly_planning WHERE license_plate IS NOT NULL AND license_plate!='' AND (staff_id=? OR driver_name=?)) ORDER BY vc.created_at DESC LIMIT 300",
       ).bind(driverStaffId || -1, user.fullName).all()
     : ["management", "dispatcher"].includes(user.role)
       ? await env.DB.prepare("SELECT * FROM vehicle_comments ORDER BY created_at DESC LIMIT 500").all()
-      : { results: [] };
-  const fuelCodes = user.role === "driver"
+      : { results: [] })();
+  const fuelCodesQuery = (async () => user.role === "driver"
     ? await env.DB.prepare(
         "SELECT id, license_plate, fuel_type, code_value, active, updated_at FROM vehicle_fuel_codes WHERE active=1 AND license_plate IN (SELECT DISTINCT license_plate FROM weekly_planning WHERE license_plate IS NOT NULL AND license_plate!='' AND (staff_id=? OR driver_name=?)) ORDER BY license_plate, fuel_type",
       ).bind(driverStaffId || -1, user.fullName).all()
     : user.role === "management"
       ? await env.DB.prepare("SELECT id, license_plate, fuel_type, code_value, active, updated_at FROM vehicle_fuel_codes ORDER BY license_plate, fuel_type").all()
-      : { results: [] };
-  const fuelStops = user.role === "driver"
+      : { results: [] })();
+  const fuelStopsQuery = (async () => user.role === "driver"
     ? await env.DB.prepare(
         "SELECT fs.*, s.full_name AS driver_name FROM fuel_stops fs JOIN staff s ON s.id=fs.staff_id WHERE fs.staff_id=? ORDER BY fs.refueled_at DESC LIMIT 150",
       ).bind(driverStaffId || -1).all()
     : ["management", "accountant", "dispatcher"].includes(user.role)
       ? await env.DB.prepare("SELECT fs.*, s.full_name AS driver_name FROM fuel_stops fs JOIN staff s ON s.id=fs.staff_id ORDER BY fs.refueled_at DESC LIMIT 500").all()
-      : { results: [] };
-  const driverPerformance = ["management", "dispatcher"].includes(user.role)
+      : { results: [] })();
+  const driverPerformanceQuery = (async () => ["management", "dispatcher"].includes(user.role)
     ? await env.DB.prepare(
         "SELECT dpe.*, s.full_name, s.company, s.location, s.system_type, s.status AS staff_status FROM driver_performance_events dpe JOIN staff s ON s.id=dpe.staff_id ORDER BY dpe.event_date DESC, dpe.created_at DESC LIMIT 1000",
       ).all()
-    : { results: [] };
-  const employeeDocuments =
+    : { results: [] })();
+  const employeeDocumentsQuery = (async () =>
     user.role === "dispatcher"
       ? { results: [] }
       : user.role === "driver"
         ? await env.DB.prepare("SELECT d.*, s.full_name FROM employee_documents d JOIN staff s ON s.id=d.staff_id WHERE d.staff_id=? ORDER BY d.created_at DESC").bind(driverStaffId || -1).all()
-        : await env.DB.prepare("SELECT d.*, s.full_name FROM employee_documents d JOIN staff s ON s.id=d.staff_id ORDER BY d.created_at DESC").all();
-  const payroll =
+        : await env.DB.prepare("SELECT d.*, s.full_name FROM employee_documents d JOIN staff s ON s.id=d.staff_id ORDER BY d.created_at DESC").all())();
+  const payrollQuery = (async () =>
     user.role === "dispatcher"
       ? { results: [] }
       : user.role === "driver"
         ? await env.DB.prepare("SELECT p.*, s.full_name FROM payroll_calculations p JOIN staff s ON s.id=p.staff_id WHERE p.staff_id=? ORDER BY p.period DESC").bind(driverStaffId || -1).all()
-        : await env.DB.prepare("SELECT p.*, s.full_name FROM payroll_calculations p JOIN staff s ON s.id=p.staff_id ORDER BY p.period DESC, s.full_name").all();
-  const maintenance =
+        : await env.DB.prepare("SELECT p.*, s.full_name FROM payroll_calculations p JOIN staff s ON s.id=p.staff_id ORDER BY p.period DESC, s.full_name").all())();
+  const maintenanceQuery = (async () =>
     user.role === "accountant"
       ? { results: [] }
       : user.role === "driver"
         ? await env.DB.prepare("SELECT m.* FROM vehicle_maintenance m WHERE m.license_plate IN (SELECT license_plate FROM weekly_planning WHERE staff_id=?) ORDER BY m.created_at DESC").bind(driverStaffId || -1).all()
-        : await env.DB.prepare("SELECT * FROM vehicle_maintenance ORDER BY created_at DESC").all();
+        : await env.DB.prepare("SELECT * FROM vehicle_maintenance ORDER BY created_at DESC").all())();
   const latestTrackingSql = `SELECT t.id, t.license_plate, t.device_id, t.provider, t.enabled, t.last_connected_at,
       p.latitude, p.longitude, p.speed_kph, p.heading, p.ignition, p.odometer_km, p.address, p.source, p.recorded_at, p.received_at
     FROM truck_trackers t
     LEFT JOIN truck_positions p ON p.id=(SELECT tp.id FROM truck_positions tp WHERE tp.tracker_id=t.id ORDER BY tp.recorded_at DESC, tp.id DESC LIMIT 1)`;
-  const tracking = user.role === "accountant"
+  const trackingQuery = (async () => user.role === "accountant"
     ? { results: [] }
     : user.role === "driver"
       ? await env.DB.prepare(`${latestTrackingSql}
@@ -219,40 +221,40 @@ export async function GET(request: Request) {
           ORDER BY t.license_plate`)
         .bind(driverStaffId || -1, user.fullName)
         .all()
-      : await env.DB.prepare(`${latestTrackingSql} ORDER BY t.license_plate`).all();
-  const loginAudit = user.role === "management"
+      : await env.DB.prepare(`${latestTrackingSql} ORDER BY t.license_plate`).all())();
+  const loginAuditQuery = (async () => user.role === "management"
     ? await env.DB.prepare("SELECT * FROM login_audit ORDER BY created_at DESC LIMIT 100").all()
-    : { results: [] };
-  const resetRequests = user.role === "management"
+    : { results: [] })();
+  const resetRequestsQuery = (async () => user.role === "management"
     ? await env.DB.prepare("SELECT * FROM password_reset_requests WHERE status='open' ORDER BY created_at DESC").all()
-    : { results: [] };
-  const audit = ["management", "accountant"].includes(user.role)
+    : { results: [] })();
+  const auditQuery = (async () => ["management", "accountant"].includes(user.role)
     ? await env.DB.prepare("SELECT a.*, u.full_name AS user_name FROM audit_log a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 150").all()
-    : { results: [] };
-  const portalUsers = user.role === "management"
+    : { results: [] })();
+  const portalUsersQuery = (async () => user.role === "management"
     ? await env.DB.prepare("SELECT u.id, u.email, u.full_name, u.role, u.must_change_password, u.active, u.failed_attempts, u.locked_until, u.two_factor_enabled, s.id AS staff_id FROM users u LEFT JOIN staff s ON s.user_id=u.id ORDER BY u.active DESC, u.role, u.full_name").all()
-    : { results: [] };
-  const tachograph = user.role === "accountant"
+    : { results: [] })();
+  const tachographQuery = (async () => user.role === "accountant"
     ? { results: [] }
     : user.role === "driver"
       ? await env.DB.prepare("SELECT t.*, s.full_name FROM tachograph_records t JOIN staff s ON s.id=t.staff_id WHERE t.staff_id=? ORDER BY t.record_date DESC, t.id DESC LIMIT 120").bind(driverStaffId || -1).all()
-      : await env.DB.prepare("SELECT t.*, s.full_name FROM tachograph_records t JOIN staff s ON s.id=t.staff_id ORDER BY t.record_date DESC, t.id DESC LIMIT 300").all();
+      : await env.DB.prepare("SELECT t.*, s.full_name FROM tachograph_records t JOIN staff s ON s.id=t.staff_id ORDER BY t.record_date DESC, t.id DESC LIMIT 300").all())();
   const tripOperationsSql = `SELECT o.*, p.planning_year, p.calendar_week, p.company, p.staff_id, p.driver_name, p.location, p.license_plate, p.block_id, p.start_time
     FROM trip_operations o JOIN weekly_planning p ON p.id=o.planning_id`;
-  const tripOperations = user.role === "accountant"
+  const tripOperationsQuery = (async () => user.role === "accountant"
     ? { results: [] }
     : user.role === "driver"
       ? await env.DB.prepare(`${tripOperationsSql} WHERE p.planning_year=? AND p.calendar_week=? AND (p.staff_id=? OR p.driver_name=?) ORDER BY p.start_time, p.company`).bind(year, kw, driverStaffId || -1, user.fullName).all()
-      : await env.DB.prepare(`${tripOperationsSql} WHERE p.planning_year=? AND p.calendar_week=? ORDER BY p.start_time, p.company`).bind(year, kw).all();
-  const departureConfirmations = user.role === "accountant"
+      : await env.DB.prepare(`${tripOperationsSql} WHERE p.planning_year=? AND p.calendar_week=? ORDER BY p.start_time, p.company`).bind(year, kw).all())();
+  const departureConfirmationsQuery = (async () => user.role === "accountant"
     ? { results: [] }
     : await env.DB.prepare(`SELECT c.* FROM planning_departure_confirmations c JOIN weekly_planning p ON p.id=c.planning_id WHERE p.planning_year=? AND p.calendar_week=? ORDER BY c.shift_date, c.planning_id`)
-      .bind(year, kw).all();
-  const tripDocuments = user.role === "accountant"
+      .bind(year, kw).all())();
+  const tripDocumentsQuery = (async () => user.role === "accountant"
     ? { results: [] }
     : user.role === "driver"
       ? await env.DB.prepare("SELECT d.* FROM trip_documents d JOIN trip_operations o ON o.id=d.trip_operation_id JOIN weekly_planning p ON p.id=o.planning_id WHERE p.staff_id=? OR p.driver_name=? ORDER BY d.created_at DESC").bind(driverStaffId || -1, user.fullName).all()
-      : await env.DB.prepare("SELECT d.*, p.license_plate, p.driver_name FROM trip_documents d JOIN trip_operations o ON o.id=d.trip_operation_id JOIN weekly_planning p ON p.id=o.planning_id ORDER BY d.created_at DESC LIMIT 300").all();
+      : await env.DB.prepare("SELECT d.*, p.license_plate, p.driver_name FROM trip_documents d JOIN trip_operations o ON o.id=d.trip_operation_id JOIN weekly_planning p ON p.id=o.planning_id ORDER BY d.created_at DESC LIMIT 300").all())();
   const tripMessagesSql = `SELECT m.*, u.full_name AS sender_name, p.driver_name, p.license_plate, p.block_id,
       EXISTS(SELECT 1 FROM trip_message_reads own_read WHERE own_read.message_id=m.id AND own_read.user_id=?) AS read_by_me,
       (SELECT COUNT(*) FROM trip_message_reads recipient_read WHERE recipient_read.message_id=m.id AND recipient_read.user_id!=m.sender_user_id) AS recipient_read_count
@@ -260,39 +262,41 @@ export async function GET(request: Request) {
     JOIN users u ON u.id=m.sender_user_id
     JOIN trip_operations o ON o.id=m.trip_operation_id
     JOIN weekly_planning p ON p.id=o.planning_id`;
-  const tripMessages = user.role === "accountant"
+  const tripMessagesQuery = (async () => user.role === "accountant"
     ? { results: [] }
     : user.role === "driver"
       ? await env.DB.prepare(`${tripMessagesSql} WHERE p.planning_year=? AND p.calendar_week=? AND (p.staff_id=? OR p.driver_name=?) ORDER BY m.created_at, m.id`)
         .bind(user.id, year, kw, driverStaffId || -1, user.fullName).all()
       : await env.DB.prepare(`${tripMessagesSql} WHERE p.planning_year=? AND p.calendar_week=? ORDER BY m.created_at, m.id`)
-        .bind(user.id, year, kw).all();
-  const chatContacts = await loadChatContacts(user);
-  const directMessages = await loadDirectMessages(user);
-  const expenses = user.role === "driver"
+        .bind(user.id, year, kw).all())();
+  const chatContactsQuery = (async () => await loadChatContacts(user))();
+  const directMessagesQuery = (async () => await loadDirectMessages(user))();
+  const expensesQuery = (async () => user.role === "driver"
     ? await env.DB.prepare("SELECT e.*, s.full_name FROM expenses e JOIN staff s ON s.id=e.staff_id WHERE e.staff_id=? ORDER BY e.expense_date DESC, e.id DESC").bind(driverStaffId || -1).all()
-    : await env.DB.prepare("SELECT e.*, s.full_name FROM expenses e JOIN staff s ON s.id=e.staff_id ORDER BY e.expense_date DESC, e.id DESC LIMIT 500").all();
-  const notifications = user.role === "management"
+    : await env.DB.prepare("SELECT e.*, s.full_name FROM expenses e JOIN staff s ON s.id=e.staff_id ORDER BY e.expense_date DESC, e.id DESC LIMIT 500").all())();
+  const notificationsQuery = (async () => user.role === "management"
     ? await env.DB.prepare("SELECT * FROM notifications ORDER BY read_at IS NOT NULL, created_at DESC LIMIT 250").all()
     : await env.DB.prepare(
         "SELECT * FROM notifications WHERE user_id=? OR role_scope=? OR role_scope='all' ORDER BY read_at IS NOT NULL, created_at DESC LIMIT 150",
-      ).bind(user.id, user.role).all();
-  const checklists = user.role === "accountant"
+      ).bind(user.id, user.role).all())();
+  const checklistsQuery = (async () => user.role === "accountant"
     ? { results: [] }
     : user.role === "driver"
       ? await env.DB.prepare("SELECT c.*, s.full_name FROM vehicle_checklists c JOIN staff s ON s.id=c.staff_id WHERE c.staff_id=? ORDER BY c.created_at DESC LIMIT 120").bind(driverStaffId || -1).all()
-      : await env.DB.prepare("SELECT c.*, s.full_name FROM vehicle_checklists c JOIN staff s ON s.id=c.staff_id ORDER BY c.created_at DESC LIMIT 300").all();
-  const payrollPeriods = user.role === "dispatcher"
+      : await env.DB.prepare("SELECT c.*, s.full_name FROM vehicle_checklists c JOIN staff s ON s.id=c.staff_id ORDER BY c.created_at DESC LIMIT 300").all())();
+  const payrollPeriodsQuery = (async () => user.role === "dispatcher"
     ? { results: [] }
-    : await env.DB.prepare("SELECT pp.*, closer.full_name AS closed_by_name, opener.full_name AS reopened_by_name FROM payroll_periods pp LEFT JOIN users closer ON closer.id=pp.closed_by LEFT JOIN users opener ON opener.id=pp.reopened_by ORDER BY pp.period DESC LIMIT 36").all();
-  const absences = user.role === "driver"
+    : await env.DB.prepare("SELECT pp.*, closer.full_name AS closed_by_name, opener.full_name AS reopened_by_name FROM payroll_periods pp LEFT JOIN users closer ON closer.id=pp.closed_by LEFT JOIN users opener ON opener.id=pp.reopened_by ORDER BY pp.period DESC LIMIT 36").all())();
+  const absencesQuery = (async () => user.role === "driver"
     ? await env.DB.prepare("SELECT a.*, s.full_name FROM absences a JOIN staff s ON s.id=a.staff_id WHERE a.staff_id=? AND a.end_date >= date('now','-400 day')").bind(driverStaffId || -1).all()
-    : await env.DB.prepare("SELECT a.*, s.full_name FROM absences a JOIN staff s ON s.id=a.staff_id WHERE a.end_date >= date('now','-400 day') ORDER BY a.start_date").all();
-  const workDays = user.role === "dispatcher"
+    : await env.DB.prepare("SELECT a.*, s.full_name FROM absences a JOIN staff s ON s.id=a.staff_id WHERE a.end_date >= date('now','-400 day') ORDER BY a.start_date").all())();
+  const workDaysQuery = (async () => user.role === "dispatcher"
     ? { results: [] }
     : user.role === "driver"
       ? await env.DB.prepare("SELECT * FROM work_days WHERE staff_id=? AND work_date >= date('now','-400 day')").bind(driverStaffId || -1).all()
-      : await env.DB.prepare("SELECT * FROM work_days WHERE work_date >= date('now','-400 day')").all();
+      : await env.DB.prepare("SELECT * FROM work_days WHERE work_date >= date('now','-400 day')").all())();
+  // Every list is independent; fetch them in parallel instead of one round trip after another.
+  const [vehicles, planning, concerns, voiceMessages, files, vehicleComments, fuelCodes, fuelStops, driverPerformance, employeeDocuments, payroll, maintenance, tracking, loginAudit, resetRequests, audit, portalUsers, tachograph, tripOperations, departureConfirmations, tripDocuments, tripMessages, chatContacts, directMessages, expenses, notifications, checklists, payrollPeriods, absences, workDays, documents] = await Promise.all([vehiclesQuery, planningQuery, concernsQuery, voiceMessagesQuery, filesQuery, vehicleCommentsQuery, fuelCodesQuery, fuelStopsQuery, driverPerformanceQuery, employeeDocumentsQuery, payrollQuery, maintenanceQuery, trackingQuery, loginAuditQuery, resetRequestsQuery, auditQuery, portalUsersQuery, tachographQuery, tripOperationsQuery, departureConfirmationsQuery, tripDocumentsQuery, tripMessagesQuery, chatContactsQuery, directMessagesQuery, expensesQuery, notificationsQuery, checklistsQuery, payrollPeriodsQuery, absencesQuery, workDaysQuery, documentsQuery]);
   return json({
     user,
     year,

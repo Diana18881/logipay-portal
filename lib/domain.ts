@@ -2,7 +2,24 @@ import { currentTenantId, env } from "@logipay/env";
 import { seedDemoCompany } from "./demo-seed";
 import { DEMO_TENANT } from "./tenants";
 
+// Schema checks and notification sync cost ~100 queries; run them at most once a minute per company and process.
+const domainReady = new Map<string, { at: number; pending?: Promise<void> }>();
+const DOMAIN_TTL = 60_000;
+
 export async function ensureDomainDatabase() {
+  const tenant = currentTenantId() || "";
+  const state = domainReady.get(tenant);
+  if (state?.pending) return state.pending;
+  if (state && Date.now() - state.at < DOMAIN_TTL) return;
+  const pending = ensureDomainDatabaseNow().then(
+    () => { domainReady.set(tenant, { at: Date.now() }); },
+    (error) => { domainReady.delete(tenant); throw error; },
+  );
+  domainReady.set(tenant, { at: state?.at ?? 0, pending });
+  return pending;
+}
+
+async function ensureDomainDatabaseNow() {
   await env.DB.batch([
     env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS staff (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, full_name TEXT NOT NULL, system_type TEXT, compensation TEXT, location TEXT, company TEXT, vacation TEXT, status TEXT NOT NULL DEFAULT 'active', hired_at TEXT, terminated_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
