@@ -18,7 +18,7 @@ export function DraftNotice() {
 }
 
 export const subprocessors = [
-  ["Vercel Inc., 440 N Barranca Ave #4133, Covina, CA 91723, USA", "Hosting der Anwendung und Dateispeicher (Vercel Blob); Rechenzentrum Frankfurt am Main (fra1)", "EU-Standardvertragsklauseln / EU-US Data Privacy Framework"],
-  ["Turso (ChiselStrike Inc.), USA", "Betrieb der Datenbanken; Speicherort in der EU", "EU-Standardvertragsklauseln"],
+  ["Vercel Inc., 440 N Barranca Ave #4133, Covina, CA 91723, USA", "Hosting der Anwendung und Dateispeicher (Vercel Blob); Rechenzentrum Frankfurt am Main", "EU-Standardvertragsklauseln / EU-US Data Privacy Framework"],
+  ["Turso (ChiselStrike Inc.), USA", "Betrieb der Datenbanken; Rechenzentrum in Irland (AWS eu-west-1)", "EU-Standardvertragsklauseln"],
   ["Stripe Payments Europe Ltd., 1 Grand Canal Street Lower, Dublin, Irland", "Abwicklung der Abonnement-Zahlungen (nur Daten des Kunden als Vertragspartner, keine Mitarbeiterdaten)", "Sitz in der EU"],
 ] as const;

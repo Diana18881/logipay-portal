@@ -42,6 +42,8 @@ export function ensureControlDatabase() {
 
 async function ensureDemoCompany() {
   const now = new Date().toISOString();
+  const existing = await env.CONTROL.prepare("SELECT id FROM companies WHERE id = ?").bind(DEMO_TENANT).first();
+  if (!existing) await provisionDatabase(DEMO_TENANT);
   await env.CONTROL.prepare(
     "INSERT OR IGNORE INTO companies (id, name, status, trial_ends_at, is_demo, created_at, updated_at) VALUES (?, 'Muster Transporte (Demo)', 'active', NULL, 1, ?, ?)",
   ).bind(DEMO_TENANT, now, now).run();
@@ -133,7 +135,8 @@ async function provisionDatabase(companyId: string) {
     headers: { authorization: `Bearer ${platform.token}`, "content-type": "application/json" },
     body: JSON.stringify({ name: tenantDatabaseName(companyId), group: platform.group }),
   });
-  if (!response.ok) throw new Error(`Datenbank konnte nicht angelegt werden (${response.status})`);
+  // 409: the database already exists, e.g. after an interrupted earlier attempt.
+  if (!response.ok && response.status !== 409) throw new Error(`Datenbank konnte nicht angelegt werden (${response.status})`);
 }
 
 async function dropDatabase(companyId: string) {

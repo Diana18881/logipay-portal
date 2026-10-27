@@ -16,7 +16,7 @@ const features = [
 const faqs = [
   { q: "Was zählt als aktiver Fahrer?", a: "Jede Person, die im Portal als aktiver Mitarbeiter geführt wird. Archivierte Mitarbeiter kosten nichts. Büro-Zugänge für Geschäftsleitung, Buchhaltung und Disposition sind inklusive." },
   { q: "Ersetzt LOGIPAY mein Lohnprogramm?", a: "Nein. LOGIPAY sammelt alle Lohndaten aus dem Betriebsalltag und übergibt sie per DATEV-Export an Ihr Steuerbüro oder Lohnprogramm. Die Entgeltabrechnung mit Steuern und Sozialversicherung bleibt dort." },
-  { q: "Wo liegen meine Daten?", a: "Auf Servern in der EU (Frankfurt am Main). Jede Firma hat eine eigene, getrennte Datenbank. Einen Vertrag zur Auftragsverarbeitung (AVV) nach Art. 28 DSGVO schließen Sie bei der Registrierung ab." },
+  { q: "Wo liegen meine Daten?", a: "Ausschließlich in der EU: Anwendung und Dateien in Frankfurt am Main, Datenbanken in Irland. Jede Firma hat eine eigene, getrennte Datenbank. Einen Vertrag zur Auftragsverarbeitung (AVV) nach Art. 28 DSGVO schließen Sie bei der Registrierung ab." },
   { q: "Brauchen Fahrer eine App aus dem App Store?", a: "Nein. Die Fahrer-App wird direkt aus dem Browser auf dem Handy installiert, funktioniert auf Android und iPhone, auch offline, und spricht Deutsch, Polnisch, Ukrainisch und Russisch." },
   { q: "Wie kündige ich?", a: "Monatlich, mit einem Klick im Kundenportal. Vorher können Sie alle Daten als Datei exportieren. Danach werden Ihre Daten vollständig gelöscht." },
 ];
@@ -37,7 +37,7 @@ export function Landing() {
               <Link href="/registrieren" className="site-button">{TRIAL_DAYS} Tage kostenlos testen</Link>
               {email ? <a href={`mailto:${email}?subject=${encodeURIComponent("LOGIPAY Live-Demo")}`} className="site-button site-button-ghost">Live-Demo anfragen</a> : <Link href="#preise" className="site-button site-button-ghost">Preise ansehen</Link>}
             </div>
-            <ul className="hero-points"><li>Keine Kreditkarte für den Test</li><li>Server in Deutschland</li><li>Monatlich kündbar</li></ul>
+            <ul className="hero-points"><li>Keine Kreditkarte für den Test</li><li>Server in der EU</li><li>Monatlich kündbar</li></ul>
           </div>
           <div className="hero-visual" aria-hidden="true">
             <div className="mock-window">
@@ -75,7 +75,7 @@ export function Landing() {
           <p className="eyebrow">DATENSCHUTZ & SICHERHEIT</p>
           <h2>Gebaut für Personaldaten</h2>
           <div className="trust-grid">
-            <div><b>EU-Server</b><span>Hosting und Datenbank in Frankfurt am Main</span></div>
+            <div><b>EU-Server</b><span>Anwendung und Dateien in Frankfurt, Datenbanken in Irland</span></div>
             <div><b>Getrennte Datenbank</b><span>Jede Firma hat ihre eigene Datenbank und eigenen Dateispeicher</span></div>
             <div><b>Zwei-Faktor-Anmeldung</b><span>Pflicht für Geschäftsleitung und Buchhaltung</span></div>
             <div><b>Änderungsprotokoll</b><span>Jede Änderung und jeder Dokumentenzugriff wird protokolliert</span></div>
