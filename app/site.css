@@ -607,3 +607,48 @@
 @media (max-width: 959px) {
   .chaos-item { transform: translate(-50%, -50%) translate(calc(var(--x) * .9vmin * (1 - var(--q))), calc(var(--y) * .95vmin * (1 - var(--q)))) rotate(calc(var(--r) * (1 - var(--q)))) scale(calc(1 - var(--q) * .82)); }
 }
+
+/* ───────── Product tour ───────── */
+.tour-tabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 18px; padding: 4px; border-radius: 16px; background: #e4eef0; scrollbar-width: none; }
+.tour-tabs::-webkit-scrollbar { display: none; }
+.tour-tabs button { position: relative; flex: 1 0 auto; min-height: 44px; padding: 0 16px; border: 0; border-radius: 12px; background: transparent; color: #4f6472; font-size: 15px; font-weight: 750; white-space: nowrap; overflow: hidden; cursor: pointer; }
+.tour-tabs button.active { background: #fff; color: #0b1a29; box-shadow: 0 2px 10px #0b1a2914; }
+.tour-tabs button i { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; transform-origin: left; transform: scaleX(0); background: linear-gradient(90deg, #12a593, #1b8fc9); }
+.tour-tabs button.active i { animation: tour-progress linear forwards; }
+@keyframes tour-progress { to { transform: scaleX(1); } }
+.tour-stage { position: relative; display: grid; place-items: center; min-height: 260px; }
+.tour-browser { position: relative; width: 100%; overflow: hidden; border: 1px solid #d6e4e8; border-radius: 18px; background: #fff; box-shadow: 0 40px 90px #0b1a2926, 0 0 0 8px #ffffff80; transition: opacity .5s ease, transform .5s ease; }
+.tour-browser.is-hidden { opacity: .25; transform: scale(.97); filter: blur(1px); }
+.tour-bar { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-bottom: 1px solid #e4ecef; background: #f5f9fa; }
+.tour-bar span { width: 10px; height: 10px; border-radius: 50%; background: #dbe5e8; }
+.tour-bar span:nth-child(1) { background: #ff6159; } .tour-bar span:nth-child(2) { background: #ffbd2e; } .tour-bar span:nth-child(3) { background: #28c941; }
+.tour-bar em { margin-left: 10px; padding: 3px 12px; border-radius: 8px; background: #fff; color: #6c808b; font-size: 12px; font-style: normal; }
+.tour-screens { position: relative; aspect-ratio: 16 / 10; }
+.tour-screens img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top left; opacity: 0; transform: scale(1.02); transition: opacity .7s ease, transform 1.2s ease; }
+.tour-screens img.active { opacity: 1; transform: none; }
+.tour-phone { position: absolute; right: 4%; bottom: -24px; width: min(30%, 210px); padding: 7px; border-radius: 30px; background: #0b1a29; box-shadow: 0 30px 70px #0b1a2955; opacity: 0; transform: translateY(40px) scale(.9); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.7,.2,1); pointer-events: none; }
+.tour-phone.is-active { opacity: 1; transform: none; }
+.tour-phone img { display: block; width: 100%; border-radius: 24px; }
+.tour-caption { margin-top: 34px; max-width: 640px; text-align: center; animation: tour-caption .5s ease both; }
+.tour-caption b { display: block; color: #0b1a29; font-size: 22px; font-weight: 800; }
+.tour-caption p { margin: 6px 0 0; color: #5d717e; font-size: 16px; }
+@keyframes tour-caption { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (max-width: 700px) {
+  .tour-phone { right: 50%; width: 46%; transform: translate(50%, 40px) scale(.9); }
+  .tour-phone.is-active { transform: translate(50%, 0); }
+  .tour-browser { border-radius: 12px; box-shadow: 0 20px 50px #0b1a2926; }
+  .tour-caption { margin-top: 28px; }
+}
+@media (min-width: 960px) {
+  .tour-stage { padding: 0 6%; }
+  .tour-phone { right: 2%; bottom: -40px; width: 230px; }
+}
+@media (prefers-reduced-motion: reduce) { .tour-screens img, .tour-phone, .tour-browser { transition: none; } .tour-tabs button.active i { animation: none; transform: scaleX(1); } }
+
+/* Feature icons as line icons on gradient tiles */
+.lp-features article > span { color: #0e8577; }
+.lp-features article > span svg { display: block; }
+@media (max-width: 700px) {
+  .tour-stage.phone-mode .tour-browser { display: none; }
+  .tour-stage.phone-mode .tour-phone { position: relative; right: auto; bottom: auto; width: 62%; margin: 0 auto; transform: none; }
+}

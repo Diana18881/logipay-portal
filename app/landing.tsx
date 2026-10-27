@@ -2,6 +2,8 @@ import Link from "next/link";
 import { pricePerDriverCents } from "../lib/billing";
 import { TRIAL_DAYS } from "../lib/tenants";
 import { ChaosSection } from "./chaos-section";
+import { Icon, type IconName } from "./icons";
+import { ProductTour } from "./product-tour";
 import { LandingMotion, PriceCalculator } from "./landing-motion";
 import { SiteFooter, SiteHeader } from "./site-chrome";
 import { Truck3D } from "./truck-3d";
@@ -13,13 +15,13 @@ const steps = [
   { title: "Monat abschließen", text: "Touren, Belege und Zuschläge fließen in die Lohnwerte. Ein Klick erzeugt den DATEV-Export." },
 ];
 
-const features = [
-  { icon: "€", title: "Lohn & DATEV", text: "Grundlohn, Zuschläge, Spesen und Abzüge pro Monat – als LODAS-Datei für Ihr Steuerbüro." },
-  { icon: "▦", title: "Wochenplanung", text: "Fahrer, Fahrzeuge und Aufträge pro Kalenderwoche planen und live verfolgen." },
-  { icon: "◫", title: "Belege per Foto", text: "Fahrer fotografieren Tank- und Spesenbelege, die Buchhaltung prüft und erstattet." },
-  { icon: "◷", title: "Fristen im Blick", text: "Führerschein, Fahrerkarte, Code 95, ADR und TÜV – das Portal erinnert rechtzeitig." },
-  { icon: "⌖", title: "GPS & Lenkzeiten", text: "Positionen und Fahrzeiten aus Telematik-Systemen, mit Warnung vor Überschreitung." },
-  { icon: "✉", title: "Chat & Sprachnachrichten", text: "Direkt zwischen Disposition und Fahrer – oder pro Tour." },
+const features: { icon: IconName; title: string; text: string }[] = [
+  { icon: "euro", title: "Lohn & DATEV", text: "Grundlohn, Zuschläge, Spesen und Abzüge pro Monat – als LODAS-Datei für Ihr Steuerbüro." },
+  { icon: "calendar", title: "Wochenplanung", text: "Fahrer, Fahrzeuge und Aufträge pro Kalenderwoche planen und live verfolgen." },
+  { icon: "receipt", title: "Belege per Foto", text: "Fahrer fotografieren Tank- und Spesenbelege, die Buchhaltung prüft und erstattet." },
+  { icon: "bell", title: "Fristen im Blick", text: "Führerschein, Fahrerkarte, Code 95, ADR und TÜV – das Portal erinnert rechtzeitig." },
+  { icon: "route", title: "GPS & Lenkzeiten", text: "Positionen und Fahrzeiten aus Telematik-Systemen, mit Warnung vor Überschreitung." },
+  { icon: "chat", title: "Chat & Sprachnachrichten", text: "Direkt zwischen Disposition und Fahrer – oder pro Tour." },
 ];
 
 const faqs = [
@@ -70,6 +72,8 @@ export function Landing() {
           <div className="lp-marquee-track">{[0, 1].map((copy) => <div key={copy}>{marquee.map((item) => <span key={`${copy}-${item}`}>{item}</span>)}</div>)}</div>
         </div>
 
+        <ProductTour />
+
         <section className="lp-section">
           <div className="lp-head" data-reveal><span className="lp-kicker">So einfach geht&apos;s</span><h2>In drei Schritten startklar</h2></div>
           <ol className="lp-steps">{steps.map((step, index) => <li key={step.title} data-reveal style={{ transitionDelay: `${index * 90}ms` }}><span>{index + 1}</span><h3>{step.title}</h3><p>{step.text}</p></li>)}</ol>
@@ -77,7 +81,7 @@ export function Landing() {
 
         <section id="funktionen" className="lp-section">
           <div className="lp-head" data-reveal><span className="lp-kicker">Funktionen</span><h2>Alles zwischen Disposition und Lohnbüro</h2></div>
-          <div className="lp-features">{features.map((feature, index) => <article key={feature.title} data-reveal style={{ transitionDelay: `${(index % 3) * 80}ms` }}><span>{feature.icon}</span><h3>{feature.title}</h3><p>{feature.text}</p></article>)}</div>
+          <div className="lp-features">{features.map((feature, index) => <article key={feature.title} data-reveal style={{ transitionDelay: `${(index % 3) * 80}ms` }}><span><Icon name={feature.icon} size={24} /></span><h3>{feature.title}</h3><p>{feature.text}</p></article>)}</div>
         </section>
 
         <section id="fahrer-app" className="lp-section">

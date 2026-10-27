@@ -54,8 +54,25 @@ async function upgradeDemoStaff() {
   await env.DB.prepare("DELETE FROM payroll_calculations WHERE period=?").bind(new Date().toISOString().slice(0, 7)).run();
 }
 
+/** Every demo driver gets work this week, so the monthly close shows complete numbers. */
+async function ensureDemoWeek() {
+  const { year, week } = isoWeek(new Date());
+  const missing = await env.DB.prepare(
+    "SELECT s.id, s.full_name, s.location FROM staff s WHERE s.status='active' AND NOT EXISTS (SELECT 1 FROM weekly_planning p WHERE p.staff_id=s.id AND p.planning_year=? AND p.calendar_week=?) ORDER BY s.id",
+  ).bind(year, week).all<{ id: number; full_name: string; location: string | null }>();
+  if (!missing.results.length) return false;
+  const stamp = new Date().toISOString();
+  const customers = ["Weser Food", "Elbe Pharma", "Hansa Handel", "Nordsee Fisch"];
+  await env.DB.batch(missing.results.map((person, index) => env.DB.prepare(
+    `INSERT INTO weekly_planning (planning_year, calendar_week, company, staff_id, driver_name, location, license_plate, work_days, start_time, block_id, status, comments, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', '', ?, ?)`,
+  ).bind(year, week, customers[index % customers.length], person.id, person.full_name, person.location || "Hamburg", index % 2 ? "HH-MT 103" : "HB-MT 201", index % 2 ? "1,2,3,4,5" : "2,3,4,5,6", index === 0 ? "22:00" : "05:30", `T-${4001 + index}`, stamp, stamp)));
+  return true;
+}
+
 export async function seedDemoHistory() {
   await upgradeDemoStaff();
+  if (await ensureDemoWeek()) await env.DB.prepare("DELETE FROM payroll_calculations WHERE period=?").bind(new Date().toISOString().slice(0, 7)).run();
   const current = new Date().toISOString().slice(0, 7);
   const existing = await env.DB.prepare("SELECT COUNT(*) AS count FROM payroll_calculations").first<{ count: number }>();
   if (Number(existing?.count || 0) > 0) {
