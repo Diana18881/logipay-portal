@@ -171,3 +171,8 @@
   .app-shell.theme-system .panel, .app-shell.theme-system .card, .app-shell.theme-system .driver-flow-steps li { border-color: #22343f; background: #10232e; color: #d6e4e8; }
   .app-shell.theme-system .driver-language-select, .app-shell.theme-system .tb-icon, .app-shell.theme-system .mobile-global-search { border-color: #22343f; background-color: #10232e; color: #e9f2f4; }
 }
+
+/* The bottom bar is a phone control; on wider screens the sidebar navigates. */
+@media (min-width: 761px) {
+  .app-shell .driver-bottom-nav { display: none !important; }
+}
