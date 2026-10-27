@@ -363,3 +363,54 @@
 }
 .app-shell .expense-summary { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)) !important; }
 .app-shell .expense-summary > div strong, .app-shell .expense-summary > div b { font-size: clamp(20px, 2.4vw, 26px); overflow-wrap: anywhere; }
+
+/* ───── Unified dialogs, sheets and toasts ───── */
+.app-shell .modal-backdrop, .app-shell .driver-event-backdrop, .app-shell .settings-backdrop, .invite-dialog-backdrop {
+  background: #071226a6 !important; backdrop-filter: blur(6px); animation: ui-fade .2s ease both;
+}
+.app-shell .modal, .app-shell .driver-event-backdrop > div, .invite-dialog {
+  border: 1px solid #e4ecef; border-radius: 24px !important; background: #fff; box-shadow: 0 40px 100px #0718264d !important; animation: ui-pop .28s cubic-bezier(.2,.8,.2,1) both;
+}
+.app-shell .modal-head { padding: 20px 22px 14px; border-bottom: 1px solid #eef3f5; }
+.app-shell .modal-head h2 { color: #0b1a29; font-size: 21px; font-weight: 800; letter-spacing: -.3px; }
+.app-shell .modal-head button { width: 40px; height: 40px; border: 0; border-radius: 12px; background: #f1f5f6; color: #3e5563; font-size: 22px; }
+.app-shell .modal .entry-form { gap: 14px; padding: 18px 22px 22px; }
+.app-shell .modal .form-intro, .app-shell .modal .form-section { border-radius: 14px; background: #f5f9fa; }
+.app-shell .toast { left: 50%; right: auto; bottom: 24px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: min(520px, calc(100vw - 32px)); padding: 13px 18px; border: 0; border-radius: 16px !important; background: #0b1a29; color: #fff; box-shadow: 0 20px 50px #0718264d; font-weight: 650; animation: ui-toast .35s cubic-bezier(.2,.8,.2,1) both !important; }
+.app-shell .toast > span { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 50%; background: #16b8a3; color: #062019; font-size: 13px; font-weight: 900; }
+.app-shell .inline-notice { border: 1px solid #cfeee8; border-radius: 14px; background: #effaf8; color: #10695e; }
+@keyframes ui-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ui-pop { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes ui-toast { from { opacity: 0; transform: translate(-50%, 20px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (max-width: 760px) {
+  .app-shell .modal-backdrop { align-items: flex-end !important; padding: 0 !important; }
+  .app-shell .modal { width: 100% !important; max-width: none !important; max-height: 92vh; border-radius: 24px 24px 0 0 !important; animation: ui-sheet .32s cubic-bezier(.2,.8,.2,1) both; }
+  .app-shell .modal-head { position: sticky; top: 0; z-index: 2; background: #fff; }
+  .app-shell .modal-head::before { content: ""; position: absolute; top: 7px; left: 50%; width: 40px; height: 4px; margin-left: -20px; border-radius: 4px; background: #d6e2e6; }
+  .app-shell .toast { bottom: calc(96px + env(safe-area-inset-bottom)); }
+}
+@keyframes ui-sheet { from { transform: translateY(100%); } to { transform: none; } }
+
+/* ───── Dark theme for the newer screens ───── */
+.app-shell.theme-dark { --dk-bg: #0b1820; --dk-card: #10232e; --dk-card2: #13293a; --dk-line: #22343f; --dk-text: #e6eff2; --dk-muted: #9fb3bd; }
+@media (prefers-color-scheme: dark) { .app-shell.theme-system { --dk-bg: #0b1820; --dk-card: #10232e; --dk-card2: #13293a; --dk-line: #22343f; --dk-text: #e6eff2; --dk-muted: #9fb3bd; } }
+.app-shell:is(.theme-dark, .theme-system) :is(.setup-guide, .setup-guide li, .kpi-row button, .chart-card, .month-person, .month-kpis div:not(.month-total), .month-head, .month-rules, .month-empty, .invite-dialog, .modal, .modal-head, .secondary-button, .month-person-actions button, .month-person-actions a, .setup-actions button, .compare-table) {
+  border-color: var(--dk-line, #e4ecef); background: var(--dk-card, #fff); color: var(--dk-text, inherit);
+}
+.app-shell:is(.theme-dark, .theme-system) :is(.month-figures span, .month-adjust, .expiring-card li, .setup-guide li > span, .month-days span, .chart-bars) { background: var(--dk-card2, #f6f9fa); }
+.app-shell:is(.theme-dark, .theme-system) :is(.setup-guide header h2, .setup-guide li b, .kpi-row b, .chart-card h3, .month-person header b, .month-person header strong, .month-kpis div:not(.month-total) b, .month-figures span, .month-lines b, .modal-head h2, .empty-hint strong) { color: var(--dk-text, #0b1a29); }
+.app-shell:is(.theme-dark, .theme-system) :is(.setup-guide li small, .kpi-row small, .chart-card header span, .month-person header small, .month-kpis small, .month-figures small, .month-lines small, .month-steps li, .month-rules-toggle small, .expiring-card li small) { color: var(--dk-muted, #5d717e); }
+.app-shell:is(.theme-dark, .theme-system) .month-lines td { border-color: var(--dk-line, #eef3f5); color: var(--dk-text, inherit); }
+.app-shell:is(.theme-dark, .theme-system) .month-warnings { border-color: #6b5420; background: #2a2210; }
+.app-shell:is(.theme-dark, .theme-system) .month-warnings ul, .app-shell:is(.theme-dark, .theme-system) .month-warnings h3 { color: #f2d6a6; }
+.app-shell:is(.theme-dark, .theme-system) .modal-head button { background: var(--dk-card2, #f1f5f6); color: var(--dk-text, #3e5563); }
+.app-shell:is(.theme-dark, .theme-system) .chart-bar small { color: var(--dk-muted, #7a8e99); }
+.app-shell.theme-dark .page-heading h1, .app-shell.theme-dark .panel-title h2, .app-shell.theme-dark .trip-route b, .app-shell.theme-dark .lp-head h2 { color: #e6eff2; }
+.app-shell.theme-dark .page-heading > div > span { color: #9fb3bd; }
+.app-shell.theme-dark .secondary-button { color: #e6eff2; }
+@media (prefers-color-scheme: dark) {
+  .app-shell.theme-system .page-heading h1, .app-shell.theme-system .panel-title h2, .app-shell.theme-system .trip-route b { color: #e6eff2; }
+  .app-shell.theme-system .page-heading > div > span { color: #9fb3bd; }
+  .app-shell.theme-system .secondary-button { color: #e6eff2; }
+}
+/* Light theme keeps the light variables (the dark selectors fall back to light values) */
