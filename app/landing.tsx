@@ -4,6 +4,7 @@ import { contactEmail } from "../lib/legal";
 import { TRIAL_DAYS } from "../lib/tenants";
 import { LandingMotion, PriceCalculator } from "./landing-motion";
 import { SiteFooter, SiteHeader } from "./site-chrome";
+import { Truck3D } from "./truck-3d";
 import { TruckScene } from "./truck-scene";
 
 const steps = [
@@ -47,8 +48,9 @@ export function Landing() {
       <LandingMotion />
       <SiteHeader />
       <main>
-        <section className="lp-hero">
-          <div className="lp-hero-glow" aria-hidden="true" />
+        <section className="lp-hero lp-hero-dark">
+          <div className="lp-hero-scene" aria-hidden="true"><TruckScene /><Truck3D /></div>
+          <div className="lp-hero-shade" aria-hidden="true" />
           <div className="lp-hero-text">
             <span className="lp-pill lp-rise">Für Transport- und Logistikfirmen</span>
             <h1 className="lp-rise lp-d1">Weniger Papier.<br /><span className="lp-gradient">Mehr Touren.</span></h1>
@@ -60,25 +62,6 @@ export function Landing() {
             <ul className="lp-checks lp-rise lp-d4"><li>Ohne Kreditkarte</li><li>Server in der EU</li><li>Monatlich kündbar</li></ul>
           </div>
 
-          <div className="lp-stage" aria-hidden="true">
-            <TruckScene />
-            <div className="lp-phone">
-              <div className="lp-phone-notch" />
-              <div className="lp-screen">
-                <small>Heute · 06:00</small>
-                <b>Hamburg → Bremen</b>
-                <div className="lp-route"><i className="lp-route-dot" /><span className="lp-route-line"><em /></span><i className="lp-route-dot lp-route-end" /></div>
-                <div className="lp-status"><span>Beladen</span><span>Unterwegs</span><span>Zugestellt</span></div>
-                <div className="lp-screen-card"><span>Fahrzeugcheck</span><b>✓ OK</b></div>
-                <div className="lp-screen-card"><span>Lenkzeit übrig</span><b>4:20 h</b></div>
-                <div className="lp-screen-msg"><small>Disposition · 05:52</small><p>Rampe 4 ist frei – gute Fahrt!</p></div>
-                <div className="lp-screen-button">Beleg fotografieren</div>
-              </div>
-            </div>
-            <div className="lp-toast lp-toast-1"><span>✓</span><div><b>Beleg erkannt</b><small>Diesel · 312,40 €</small></div></div>
-            <div className="lp-toast lp-toast-2"><span>▦</span><div><b>Neue Tour</b><small>Morgen 05:30 · Lüneburg</small></div></div>
-            <div className="lp-toast lp-toast-3"><span>€</span><div><b>DATEV-Export bereit</b><small>Oktober · 24 Fahrer</small></div></div>
-          </div>
         </section>
 
         <div className="lp-marquee" aria-hidden="true">
@@ -97,17 +80,37 @@ export function Landing() {
 
         <section id="fahrer-app" className="lp-section">
           <div className="lp-app" data-reveal>
-            <span className="lp-kicker lp-kicker-light">Fahrer-App</span>
-            <h2>Einfach genug für jeden Fahrer</h2>
-            <p>Große Knöpfe, klare Schritte, vier Sprachen. Installiert mit einem Fingertipp – ohne App Store.</p>
-            <ul className="lp-langs"><li>Deutsch</li><li>Polski</li><li>Українська</li><li>Русский</li></ul>
-            <ul className="lp-app-list">
-              <li>Tour, Abfahrt und Zustellung mit Unterschrift</li>
-              <li>Belege und Lieferscheine mit der Kamera</li>
-              <li>Funktioniert ohne Netz, sendet später automatisch</li>
-              <li>Push-Nachrichten bei neuen Touren</li>
-            </ul>
-            <Link href="/app" className="site-button lp-button-light">So installieren Fahrer die App</Link>
+            <div className="lp-app-visual" aria-hidden="true">
+              <div className="lp-phone">
+                <div className="lp-phone-notch" />
+                <div className="lp-screen">
+                  <small>Heute · 06:00</small>
+                  <b>Hamburg → Bremen</b>
+                  <div className="lp-route"><i className="lp-route-dot" /><span className="lp-route-line"><em /></span><i className="lp-route-dot lp-route-end" /></div>
+                  <div className="lp-status"><span>Beladen</span><span>Unterwegs</span><span>Zugestellt</span></div>
+                  <div className="lp-screen-card"><span>Fahrzeugcheck</span><b>✓ OK</b></div>
+                  <div className="lp-screen-card"><span>Lenkzeit übrig</span><b>4:20 h</b></div>
+                  <div className="lp-screen-msg"><small>Disposition · 05:52</small><p>Rampe 4 ist frei – gute Fahrt!</p></div>
+                  <div className="lp-screen-button">Beleg fotografieren</div>
+                </div>
+              </div>
+              <div className="lp-toast lp-toast-1"><span>✓</span><div><b>Beleg erkannt</b><small>Diesel · 312,40 €</small></div></div>
+              <div className="lp-toast lp-toast-2"><span>▦</span><div><b>Neue Tour</b><small>Morgen 05:30 · Lüneburg</small></div></div>
+              <div className="lp-toast lp-toast-3"><span>€</span><div><b>DATEV-Export bereit</b><small>Oktober · 24 Fahrer</small></div></div>
+            </div>
+            <div className="lp-app-copy">
+              <span className="lp-kicker lp-kicker-light">Fahrer-App</span>
+              <h2>Einfach genug für jeden Fahrer</h2>
+              <p>Große Knöpfe, klare Schritte, vier Sprachen. Installiert mit einem Fingertipp – ohne App Store.</p>
+              <ul className="lp-langs"><li>Deutsch</li><li>Polski</li><li>Українська</li><li>Русский</li></ul>
+              <ul className="lp-app-list">
+                <li>Tour, Abfahrt und Zustellung mit Unterschrift</li>
+                <li>Belege und Lieferscheine mit der Kamera</li>
+                <li>Funktioniert ohne Netz, sendet später automatisch</li>
+                <li>Push-Nachrichten bei neuen Touren</li>
+              </ul>
+              <Link href="/app" className="site-button lp-button-light">So installieren Fahrer die App</Link>
+            </div>
           </div>
         </section>
 
