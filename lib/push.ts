@@ -27,7 +27,9 @@ export async function pushNewNotifications(since: string) {
     const { default: webpush } = await import("web-push");
     webpush.setVapidDetails(process.env.VAPID_SUBJECT || "mailto:admin@logipay.local", publicKey, privateKey);
     for (const note of notes) {
-      const targets = subs.filter((sub: Sub & { role: string }) => note.user_id ? sub.user_id === note.user_id : note.role_scope === "all" || sub.role === note.role_scope);
+      // Dispatch notices also reach management: small companies often have no separate dispatcher.
+      const targets = subs.filter((sub: Sub & { role: string }) => note.user_id ? sub.user_id === note.user_id
+        : note.role_scope === "all" || sub.role === note.role_scope || (note.role_scope === "dispatcher" && sub.role === "management"));
       const payload = JSON.stringify({ title: note.title, body: note.message, tag: `logipay-${note.id}`, url: "/?section=notifications" });
       await Promise.all(targets.map(async (sub: Sub) => {
         try {
