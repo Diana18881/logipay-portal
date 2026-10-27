@@ -39,6 +39,46 @@ function isoWeek(date: Date) {
   return { year: target.getUTCFullYear(), week: Math.ceil(((target.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7) };
 }
 
+/** Six months of fictional history so the demo dashboard shows real-looking charts. */
+export async function seedDemoHistory() {
+  const existing = await env.DB.prepare("SELECT COUNT(*) AS count FROM payroll_calculations").first<{ count: number }>();
+  if (Number(existing?.count || 0) > 0) return;
+  const people = await env.DB.prepare("SELECT id, compensation FROM staff WHERE status='active' ORDER BY id").all<{ id: number; compensation: string }>();
+  if (!people.results.length) return;
+  const now = new Date();
+  const stamp = now.toISOString();
+  const statements = [];
+  for (let back = 5; back >= 0; back--) {
+    const month = new Date(now.getFullYear(), now.getMonth() - back, 1);
+    const period = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
+    for (const [index, person] of people.results.entries()) {
+      const base = Number(String(person.compensation).match(/\d{4}/)?.[0] || 2400);
+      const extra = ((index * 37 + back * 53) % 9) * 25;
+      const night = ((index + back) % 3) * 60;
+      const total = base + extra + night;
+      if (back > 0) statements.push(env.DB.prepare(
+        "INSERT OR IGNORE INTO payroll_calculations (staff_id, period, base_salary, tour_count, bonuses, expenses, night_bonus, sunday_bonus, holiday_bonus, reimbursements, deductions, net_amount, payment_status, calculation_details, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, 'paid', '{\"source\":\"demo\"}', ?, ?)",
+      ).bind(person.id, period, base, 20 + (index % 3), extra, 0, night, total, stamp, stamp));
+      if (index < 5) {
+        const day = String(3 + ((index * 5 + back * 3) % 24)).padStart(2, "0");
+        const amount = 140 + ((index * 61 + back * 97) % 260) + 0.4;
+        statements.push(env.DB.prepare(
+          "INSERT INTO expenses (staff_id, license_plate, expense_date, category, merchant, gross_amount, vat_amount, status, recognition_status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Geprüft', 'Demo-Beleg', ?, ?)",
+        ).bind(person.id, ["HH-MT 101", "HH-MT 102", "HB-MT 201", "H-MT 301", "HH-MT 103"][index], `${period}-${day}`, index % 2 ? "Parken" : "Diesel", index % 2 ? "Parkhaus" : "Tankstelle", amount, Math.round(amount * 0.16 * 100) / 100, back === 0 ? "Eingereicht" : "Erstattet", stamp, stamp));
+      }
+    }
+  }
+  const soon = (days: number) => new Date(now.getTime() + days * 86_400_000).toISOString().slice(0, 10);
+  const docs = [[0, "Fahrerkarte", 18], [2, "Führerschein", 41], [4, "Code 95", 9]] as const;
+  for (const [index, category, days] of docs) {
+    const person = people.results[index];
+    if (person) statements.push(env.DB.prepare(
+      "INSERT OR IGNORE INTO employee_documents (staff_id, category, file_name, object_key, content_type, size_bytes, expires_at, uploaded_by, created_at) VALUES (?, ?, ?, ?, 'application/pdf', 0, ?, 1, ?)",
+    ).bind(person.id, category, `${category}.pdf`, `demo/${person.id}/${category}`, soon(days), stamp));
+  }
+  if (statements.length) await env.DB.batch(statements);
+}
+
 export async function seedDemoCompany() {
   const existing = await env.DB.prepare("SELECT COUNT(*) AS count FROM staff").first<{ count: number }>();
   if (Number(existing?.count || 0) > 0) return;

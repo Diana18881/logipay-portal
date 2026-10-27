@@ -9,7 +9,7 @@ import { syncSeats } from "../../../lib/billing";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const loginActions = new Set(["addPortalUser", "updatePortalUser", "addStaff", "updateStaff"]);
-const seatActions = new Set(["addStaff", "archiveStaff", "restoreStaff", "addPortalUser", "updatePortalUser"]);
+const seatActions = new Set(["importStaff", "addStaff", "archiveStaff", "restoreStaff", "addPortalUser", "updatePortalUser"]);
 const normalizeDays = (value: unknown) => {
   const days = String(value || "1,2,3,4,5,6,7")
     .split(",")
@@ -633,6 +633,40 @@ export async function POST(request: Request) {
         .bind(eventType === "late" ? "Fahrerverspätung" : eventType === "no_show" ? "Fahrer nicht erschienen" : "Fahrerunfall", `${person.full_name}${eventType === "late" ? ` · ${minutesLate} Min.` : ""}${notes ? ` · ${notes}` : ""}`, String(result.meta.last_row_id), eventType === "accident" || eventType === "no_show" ? "urgent" : "warning", now).run();
     auditDetails = { oldValue: null, newValue: { staffId, driverName: person.full_name, eventDate, eventType, rating, scoreDelta, minutesLate, notes } };
     body.id = Number(result.meta.last_row_id);
+  } else if ((action === "importStaff" || action === "importVehicles") && user.role === "management") {
+    let rows: Record<string, string>[] = [];
+    try { rows = JSON.parse(String(body.rows || "[]")); } catch { return json({ error: "Ungültige Importdaten" }, 400); }
+    if (!Array.isArray(rows) || !rows.length || rows.length > 500) return json({ error: "1 bis 500 Einträge pro Import" }, 400);
+    const clean = (value: unknown, max = 120) => String(value ?? "").trim().slice(0, max);
+    let imported = 0;
+    let skipped = 0;
+    if (action === "importStaff") {
+      const existing = new Set((await env.DB.prepare("SELECT lower(full_name) AS name FROM staff").all<{ name: string }>()).results.map((row) => row.name));
+      const statements = [];
+      for (const row of rows) {
+        const name = clean(row.fullName);
+        if (!name || existing.has(name.toLowerCase())) { skipped += 1; continue; }
+        existing.add(name.toLowerCase());
+        statements.push(env.DB.prepare("INSERT INTO staff (full_name, personnel_number, system_type, compensation, location, company, vacation, status, hired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, '', 'active', ?, ?, ?)")
+          .bind(name, clean(row.personnelNumber, 20) || null, clean(row.systemType, 20) || "5/2", clean(row.compensation), clean(row.location), clean(row.company), /^\d{4}-\d{2}-\d{2}$/.test(String(row.hiredAt)) ? row.hiredAt : now.slice(0, 10), now, now));
+      }
+      if (statements.length) await env.DB.batch(statements);
+      imported = statements.length;
+    } else {
+      const existing = new Set((await env.DB.prepare("SELECT upper(license_plate) AS plate FROM vehicles").all<{ plate: string }>()).results.map((row) => row.plate));
+      const statements = [];
+      for (const row of rows) {
+        const plate = clean(row.licensePlate, 20).toUpperCase();
+        if (!plate || existing.has(plate)) { skipped += 1; continue; }
+        existing.add(plate);
+        statements.push(env.DB.prepare("INSERT INTO vehicles (license_plate, company, location, status, inspection_due, notes, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, '', ?, ?)")
+          .bind(plate, clean(row.company), clean(row.location), /^\d{4}-\d{2}-\d{2}$/.test(String(row.inspectionDue)) ? row.inspectionDue : null, now, now));
+      }
+      if (statements.length) await env.DB.batch(statements);
+      imported = statements.length;
+    }
+    auditDetails = { oldValue: null, newValue: { imported, skipped } };
+    responseBody = { ok: true, imported, skipped };
   } else if (action === "addStaff" && user.role === "management") {
     let userId: number | null = null;
     if (body.loginEmail && body.loginPassword) {

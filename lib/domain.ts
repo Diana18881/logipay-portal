@@ -1,5 +1,5 @@
 import { currentTenantId, env } from "@logipay/env";
-import { seedDemoCompany } from "./demo-seed";
+import { seedDemoCompany, seedDemoHistory } from "./demo-seed";
 import { DEMO_TENANT } from "./tenants";
 
 // Schema checks and notification sync cost ~100 queries; run them at most once a minute per company and process.
@@ -303,7 +303,10 @@ async function ensureDomainDatabaseNow() {
       "ALTER TABLE driver_concerns ADD COLUMN staff_id INTEGER",
     ).run();
   }
-  if (currentTenantId() === DEMO_TENANT) await seedDemoCompany();
+  if (currentTenantId() === DEMO_TENANT) {
+    await seedDemoCompany();
+    await seedDemoHistory();
+  }
   const syncNow = new Date().toISOString();
   await env.DB.prepare(
     `INSERT OR IGNORE INTO trip_operations (planning_id, status, pickup_address, delivery_address, eta, delay_reason, recipient_name, signature_name, updated_by, created_at, updated_at)

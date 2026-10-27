@@ -8,6 +8,8 @@ import { EmptyState } from "./empty-state";
 import { AssistantWidget } from "./assistant-panel";
 import { DriverAppGate } from "./driver-app-gate";
 import { InviteDialog } from "./invite-dialog";
+import { ImportDialog } from "./import-dialog";
+import { OfficeCharts, SetupGuide } from "./office-dashboard";
 import { Icon, type IconName } from "./icons";
 import { isInstalledApp, isMobileDevice } from "./service-worker";
 import { ChecklistCenter, ExpenseCenter, NotificationsCenter, TachographCenter, TripExecutionCenter, UserManagement } from "./operations-panels";
@@ -221,6 +223,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
   const [editing, setEditing] = useState<Row | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<Row | null>(null);
   const [notice, setNotice] = useState("");
+  const [importKind, setImportKind] = useState<"staff" | "vehicles" | null>(null);
   const [chatTripId, setChatTripId] = useState<number | null>(null);
   const [chatContactKey, setChatContactKey] = useState<string | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
@@ -759,20 +762,16 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
               <span>{isDriver ? t("centralData") : sectionDescriptions[section] || "Zentrale Daten statt einzelner Excel-Tabellen"}</span>
             </div>
             {section === "staff" && currentUser.role === "management" ? (
-              <button
-                className="primary-button"
-                onClick={() => openModal("staff")}
-              >
-                ＋ Mitarbeiter einstellen
-              </button>
+              <div className="heading-actions">
+                <button type="button" className="secondary-button" onClick={() => setImportKind("staff")}>Aus Excel importieren</button>
+                <button className="primary-button" onClick={() => openModal("staff")}>＋ Mitarbeiter einstellen</button>
+              </div>
             ) : section === "vehicles" &&
               ["management", "dispatcher"].includes(currentUser.role) ? (
-              <button
-                className="primary-button"
-                onClick={() => openModal("vehicle")}
-              >
-                ＋ Fahrzeug anlegen
-              </button>
+              <div className="heading-actions">
+                {currentUser.role === "management" ? <button type="button" className="secondary-button" onClick={() => setImportKind("vehicles")}>Aus Excel importieren</button> : null}
+                <button className="primary-button" onClick={() => openModal("vehicle")}>＋ Fahrzeug anlegen</button>
+              </div>
             ) : section === "planning" && currentUser.role !== "driver" ? (
               <button
                 className="primary-button"
@@ -823,6 +822,11 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
                         {searchOpen && searchSource === "hero" ? renderSearchResults() : null}
                       </div>
                     </div>
+                    {currentUser.role === "management" && !currentUser.readOnly ? <SetupGuide staff={data.staff} vehicles={data.vehicles} planning={data.planning}
+                      onAddStaff={() => openModal("staff")} onImport={() => setImportKind("staff")} onAddVehicle={() => openModal("vehicle")}
+                      onPlan={() => { setSection("planning"); openModal("planning"); }}
+                      onInvite={() => { setSection("staff"); setNotice("Beim Fahrer auf „Einladen“ tippen – der Link geht per WhatsApp raus."); }} /> : null}
+                    <OfficeCharts staff={data.staff} planning={data.planning} expenses={data.expenses} payroll={data.payroll} employeeDocuments={data.employeeDocuments} open={(target) => setSection(target as Section)} />
                     <div className="smart-dashboard-grid">
                       <section className="panel today-routes-panel">
                         <div className="panel-title"><div><h2>Heute im Einsatz</h2><p>{new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "2-digit", month: "long" }).format(new Date())} · KW {kw}</p></div><button type="button" onClick={() => setSection("planning")}>Alle öffnen →</button></div>
@@ -992,6 +996,7 @@ export function Portal({ currentUser, trialDaysLeft = null, paymentProblem = fal
           </div>
         </div>
       </section>
+      {importKind ? <ImportDialog kind={importKind} close={() => setImportKind(null)} done={(message) => { setImportKind(null); setNotice(message); void load(true); }} /> : null}
       <AssistantWidget context={assistantContext} locale={locale} section={nav.find((item) => item.id === section)?.label || section} />
       {isDriver ? <nav className="driver-bottom-nav" aria-label={t("workArea")}>
         {([
