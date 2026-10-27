@@ -166,6 +166,9 @@ const sectionDescriptions: Partial<Record<Section, string>> = {
   documents: "Monatsabrechnungen berechnen, prüfen und sicher abschließen",
   personnel: "Verträge, Führerscheine und persönliche Dokumente schützen",
   notifications: "Offene Aufgaben und alle Meldungen aus dem Betrieb an einem Ort",
+  users: "Zugänge für Büro und Fahrer anlegen, Rollen vergeben, Passwörter zurücksetzen",
+  security: "Anmeldungen, Änderungen und Dokumentenzugriffe nachvollziehen",
+  reports: "PDF- und Excel-Berichte für Planung, Finanzamt, Auftraggeber und DATEV",
 };
 
 function isoWeekOf(date: Date) {

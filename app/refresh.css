@@ -220,3 +220,55 @@
 .import-dialog .primary-button { width: 100%; }
 .import-back { width: 100%; margin-top: 8px; min-height: 44px; border: 0; background: transparent; color: #5d717e; font-weight: 650; cursor: pointer; }
 .app-shell .setup-actions .primary-button { border: 0; background: #0b1a29; color: #fff; }
+
+/* ───── Readability floor for older screens ───── */
+.app-shell .content small:not(.chart-bar small) { font-size: 12.5px; line-height: 1.45; }
+.app-shell .content label { font-size: 13px; }
+.app-shell .content input:not([type="checkbox"]):not([type="radio"]),
+.app-shell .content select,
+.app-shell .content textarea { min-height: 44px; border-color: #d6e2e6; border-radius: 12px; font-size: 15px; }
+.app-shell .content input:focus, .app-shell .content select:focus, .app-shell .content textarea:focus { border-color: #16b8a3; outline: 3px solid #16b8a326; }
+
+/* Tables */
+.app-shell .table-wrap { border-radius: 14px; }
+.app-shell .content table { font-size: 14px; }
+.app-shell .content th { padding: 12px 14px; background: #f5f9fa; color: #5d717e; font-size: 12px; font-weight: 750; letter-spacing: .6px; text-transform: uppercase; }
+.app-shell .content td { padding: 12px 14px; color: #1d3140; font-size: 14px; }
+.app-shell .content tbody tr { transition: background .15s; }
+.app-shell .content tbody tr:hover { background: #f7fbfb; }
+
+/* Status chips and pills */
+.app-shell .status-pill, .app-shell .ok-chip, .app-shell .status-chip, .app-shell [class$="-chip"] { padding: 4px 10px; border-radius: 999px; font-size: 12.5px !important; font-weight: 700; }
+
+/* Small cards (security, summaries) */
+.app-shell .security-card strong { font-size: 16px; }
+.app-shell .security-card span { font-size: 13.5px; line-height: 1.45; }
+.app-shell .expense-summary > div span, .app-shell .expense-summary > div small { font-size: 12px; letter-spacing: .4px; }
+.app-shell .expense-summary > div strong, .app-shell .expense-summary > div b { font-size: 26px; }
+
+/* Dark theme keeps contrast */
+.app-shell.theme-dark .content th { background: #13293a; color: #a9bfca; }
+.app-shell.theme-dark .content td { color: #d6e4e8; }
+.app-shell.theme-dark .content tbody tr:hover { background: #13293a; }
+@media (prefers-color-scheme: dark) {
+  .app-shell.theme-system .content th { background: #13293a; color: #a9bfca; }
+  .app-shell.theme-system .content td { color: #d6e4e8; }
+  .app-shell.theme-system .content tbody tr:hover { background: #13293a; }
+}
+
+/* Empty states */
+.app-shell .empty-hint { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 20px; text-align: center; }
+.app-shell .empty-art { position: relative; width: 96px; height: 96px; margin-bottom: 8px; }
+.app-shell .empty-art i { position: absolute; border-radius: 50%; }
+.app-shell .empty-art i:nth-child(1) { inset: 0; background: radial-gradient(circle at 30% 30%, #e3f6f2, #d8ecf7); }
+.app-shell .empty-art i:nth-child(2) { top: -4px; right: 2px; width: 14px; height: 14px; background: #16b8a3; opacity: .35; }
+.app-shell .empty-art i:nth-child(3) { bottom: 6px; left: -6px; width: 10px; height: 10px; background: #1b8fc9; opacity: .3; }
+.app-shell .empty-art span { position: absolute; inset: 18px; display: grid; place-items: center; border-radius: 22px; background: #fff; color: #0e8577; font-size: 26px; box-shadow: 0 10px 24px #0b1a2914; }
+.app-shell .empty-hint strong { color: #0b1a29; font-size: 18px; font-weight: 800; }
+.app-shell .empty-hint p { max-width: 420px; margin: 0; color: #5d717e; font-size: 14.5px; line-height: 1.5; }
+.app-shell .empty-hint .primary-button { margin-top: 8px; }
+.app-shell .empty-state { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 90px; padding: 24px; border-radius: 14px; background: #f6f9fa; color: #5d717e; font-size: 14.5px; text-align: center; }
+.app-shell .empty-state::before { content: "○"; display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 12px; background: #e3f6f2; color: #0e8577; font-size: 15px; }
+.app-shell.theme-dark .empty-art span { background: #13293a; }
+.app-shell.theme-dark .empty-hint strong { color: #e9f2f4; }
+.app-shell.theme-dark .empty-state { background: #13293a; color: #a9bfca; }
