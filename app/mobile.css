@@ -214,3 +214,30 @@
   .app-shell .content table.rt td[colspan]::before { content: none; }
   .app-shell.theme-dark .content table.rt tr { border-color: #22343f; background: #10232e; }
 }
+
+/* Vehicle file on phones: the base grid rules in globals.css come after its media queries, so restate them here. */
+@media (max-width: 760px) {
+  .vehicle-registry-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vehicle-fleet-grid { grid-template-columns: 1fr; padding: 10px; gap: 8px; }
+  .vehicle-fleet-card { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 14px; }
+  .vehicle-fleet-card .vehicle-card-symbol { width: 40px; height: 40px; }
+  .vehicle-fleet-card .vehicle-card-main small { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vehicle-fleet-card .vehicle-card-main strong { font-size: 16px; white-space: nowrap; }
+  .vehicle-fleet-card .vehicle-card-main span { font-size: 12px; }
+  .vehicle-fleet-card .vehicle-card-side { grid-column: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; }
+  .vehicle-fleet-card .vehicle-card-side b { font-size: 11px; }
+  .vehicle-fleet-card .vehicle-card-side small { display: none; }
+  .vehicle-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .vehicle-overview-grid > div { min-height: 96px; padding: 12px; }
+  .vehicle-overview-grid span { font-size: 10px; overflow-wrap: anywhere; }
+  .vehicle-overview-grid small { font-size: 11px; margin-top: 6px; }
+  .app-shell .vehicle-overview-grid strong { font-size: 15px; margin-top: 8px; overflow-wrap: anywhere; }
+  .vehicle-master-data { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vehicle-master-data > div { min-height: 0; padding: 12px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .vehicle-master-data > div:nth-child(odd) { border-right: 1px solid var(--line); }
+  .vehicle-master-data > div:nth-last-child(-n+2) { border-bottom: 0; }
+  .vehicle-master-data span { font-size: 11px; }
+  .app-shell .vehicle-master-data b { font-size: 14px; overflow-wrap: anywhere; }
+  .vehicle-record-tabs { overflow-x: auto; scrollbar-width: none; }
+  .vehicle-record-tabs button { flex: 0 0 auto; white-space: nowrap; }
+}

@@ -2212,9 +2212,6 @@ details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padd
 .quality-list span { color: #617483; font-size: 9px; }
 
 @media (max-width: 1100px) {
-  .vehicle-fleet-grid,.vehicle-photo-gallery { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .vehicle-registry-hero { align-items: flex-start; flex-direction: column; }
-  .vehicle-overview-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .payroll-form { grid-template-columns: repeat(3,minmax(130px,1fr)); }
   .security-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .tracking-summary { grid-template-columns: repeat(3,minmax(0,1fr)); }
@@ -2225,24 +2222,6 @@ details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padd
   .expense-filter-bar { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 720px) {
-  .vehicle-registry-hero { padding: 23px; }
-  .vehicle-registry-kpis { width: 100%; grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .vehicle-fleet-toolbar,.vehicle-record-header { align-items: flex-start; flex-direction: column; }
-  .vehicle-fleet-toolbar label { width: 100%; }
-  .vehicle-fleet-grid,.vehicle-photo-gallery,.vehicle-overview-grid,.vehicle-master-data { grid-template-columns: 1fr; }
-  .vehicle-master-data > div { border-right: 0; border-bottom: 1px solid var(--line); }
-  .vehicle-master-data > div:last-child { border-bottom: 0; }
-  .vehicle-fleet-card { grid-template-columns: 34px minmax(0,1fr); }
-  .vehicle-card-side { grid-column: 2; display: flex; align-items: center; gap: 8px; text-align: left; }
-  .vehicle-card-side b,.vehicle-card-side small { margin-top: 0; }
-  .vehicle-record-tabs { padding: 0 10px; }
-  .vehicle-record-content { padding: 16px; }
-  .vehicle-photo-preview { height: 210px; }
-  .vehicle-assignment-list article { grid-template-columns: 40px minmax(0,1fr); }
-  .vehicle-assignment-list article > div:nth-child(3),.vehicle-assignment-list article > .badge { grid-column: 2; }
-  .vehicle-repair-list article { grid-template-columns: 38px minmax(0,1fr); }
-  .vehicle-repair-list article > div:last-child { grid-column: 2; text-align: left; }
-  .vehicle-upload-form { grid-template-columns: 1fr; }
   .payroll-form, .advanced-form, .import-toolbar { grid-template-columns: 1fr; }
   .security-grid { grid-template-columns: 1fr; }
   .schedule-filter { max-width: none; }
@@ -2438,6 +2417,33 @@ details pre { max-width: 520px; white-space: pre-wrap; background: #f5f8fa; padd
 .vehicle-repair-list article > div:last-child { text-align: right; }
 .vehicle-repair-list article > div:last-child b { margin-bottom: 7px; color: #2a4756; font-size: 10px; }
 .vehicle-upload-form { padding-top: 18px; grid-template-columns: 1.1fr 1fr 1.5fr 1.5fr auto; }
+
+/* Vehicle file: responsive rules after the base rules so they win. */
+@media (max-width: 1100px) {
+  .vehicle-fleet-grid,.vehicle-photo-gallery { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .vehicle-registry-hero { align-items: flex-start; flex-direction: column; }
+  .vehicle-overview-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 720px) {
+  .vehicle-registry-hero { padding: 23px; }
+  .vehicle-registry-kpis { width: 100%; grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .vehicle-fleet-toolbar,.vehicle-record-header { align-items: flex-start; flex-direction: column; }
+  .vehicle-fleet-toolbar label { width: 100%; }
+  .vehicle-fleet-grid,.vehicle-photo-gallery,.vehicle-overview-grid,.vehicle-master-data { grid-template-columns: 1fr; }
+  .vehicle-master-data > div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .vehicle-master-data > div:last-child { border-bottom: 0; }
+  .vehicle-fleet-card { grid-template-columns: 34px minmax(0,1fr); }
+  .vehicle-card-side { grid-column: 2; display: flex; align-items: center; gap: 8px; text-align: left; }
+  .vehicle-card-side b,.vehicle-card-side small { margin-top: 0; }
+  .vehicle-record-tabs { padding: 0 10px; }
+  .vehicle-record-content { padding: 16px; }
+  .vehicle-photo-preview { height: 210px; }
+  .vehicle-assignment-list article { grid-template-columns: 40px minmax(0,1fr); }
+  .vehicle-assignment-list article > div:nth-child(3),.vehicle-assignment-list article > .badge { grid-column: 2; }
+  .vehicle-repair-list article { grid-template-columns: 38px minmax(0,1fr); }
+  .vehicle-repair-list article > div:last-child { grid-column: 2; text-align: left; }
+  .vehicle-upload-form { grid-template-columns: 1fr; }
+}
 .upload-form {
   display: grid;
   grid-template-columns: 1.4fr 1fr 1.8fr auto;
