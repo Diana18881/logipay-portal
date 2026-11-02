@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { pricePerDriverCents } from "../lib/billing";
 import { TRIAL_DAYS } from "../lib/tenants";
+import { HeroVideo } from "./hero-video";
 import { ChaosSection } from "./chaos-section";
 import { CompareSection } from "./compare-section";
 import { TestimonialsSection } from "./testimonials-section";
@@ -50,16 +51,7 @@ export function Landing() {
       <SiteHeader />
       <main>
         <section className="lp-hero lp-hero-dark">
-          {/* Photo: pexels.com/photo/11053644 (Pexels licence, free for commercial use; number plate blurred). */}
-          <div className="lp-hero-scene lp-hero-photo" aria-hidden="true">
-            <div className="lp-photo-frame">
-              <picture>
-                <source media="(max-width: 759px)" srcSet="/hero/truck-dusk-phone.webp" />
-                <img src="/hero/truck-dusk.webp" alt="" fetchPriority="high" decoding="async" />
-              </picture>
-              <i className="lp-glow lp-glow-bar" /><i className="lp-glow lp-glow-l" /><i className="lp-glow lp-glow-r" />
-            </div>
-          </div>
+          <div className="lp-hero-scene lp-hero-photo" aria-hidden="true"><HeroVideo /></div>
           <div className="lp-hero-shade" aria-hidden="true" />
           <div className="lp-hero-text">
             <span className="lp-pill lp-rise">Für Transport- und Logistikfirmen</span>

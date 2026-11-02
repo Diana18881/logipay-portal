@@ -775,35 +775,22 @@
 @keyframes splash-load { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
 @keyframes ui-fade { from { opacity: 0; } to { opacity: 1; } }
 
-/* Hero with a real photo of a truck at dusk (Pexels licence) and a slow cinematic camera move.
-   The frame keeps the photo's aspect ratio and covers the hero, so the headlight glows stay on the lamps. */
+/* Hero with real footage of trucks on a motorway (see hero-video.tsx).
+   The frame keeps the video's aspect ratio and covers the hero. */
 .lp-hero-photo { overflow: hidden; background: #0b1a33; container-type: size; }
-.lp-photo-frame { --ar: .8668; --fx: .3; --fy: 1; position: absolute; width: max(100cqw, calc(100cqh * var(--ar))); height: max(100cqh, calc(100cqw / var(--ar)));
+.lp-photo-frame { --ar: 1.7778; --fx: .5; --fy: .6; position: absolute; width: max(100cqw, calc(100cqh * var(--ar))); height: max(100cqh, calc(100cqw / var(--ar)));
   left: calc((100cqw - max(100cqw, calc(100cqh * var(--ar)))) * var(--fx)); top: calc((100cqh - max(100cqh, calc(100cqw / var(--ar)))) * var(--fy));
-  transform-origin: 25% 70%; animation: lp-photo-in 1.6s ease-out both, lp-photo-drift 24s ease-in-out 1.6s infinite alternate; }
-.lp-photo-frame picture, .lp-photo-frame img { display: block; width: 100%; height: 100%; }
-.lp-photo-frame img { object-fit: cover; }
-@keyframes lp-photo-in { from { opacity: 0; transform: scale(1.1); filter: brightness(.4); } to { opacity: 1; transform: scale(1.02); filter: none; } }
-@keyframes lp-photo-drift { from { transform: scale(1.02); } to { transform: scale(1.1); } }
-.lp-glow { position: absolute; width: 9%; aspect-ratio: 1; translate: -50% -50%; border-radius: 50%; background: radial-gradient(circle, #fff8e6 0%, #ffe8b080 24%, transparent 64%); mix-blend-mode: screen; pointer-events: none; animation: lp-glow 2.6s ease-in-out infinite alternate; }
-.lp-glow-l { left: 20.1%; top: 69.5%; }
-.lp-glow-r { left: 28%; top: 69.2%; animation-delay: -.9s; }
-.lp-glow-bar { left: 24.2%; top: 56.2%; width: 14%; aspect-ratio: 3; animation-delay: -1.7s; }
-@keyframes lp-glow { from { opacity: .3; scale: .8; } to { opacity: .9; scale: 1.15; } }
-.lp-hero-photo + .lp-hero-shade { background: linear-gradient(180deg, #0b1a33 0%, #0b1a33cc 30%, #0b1a3300 62%); }
-/* Phones: the text sits on the night sky, the truck drives in below it. */
-@media (max-width: 759px) {
-  .lp-hero.lp-hero-dark:has(.lp-hero-photo) { min-height: 0; padding-bottom: min(84vw, 380px); background: #0b1a33; }
-  .lp-hero-photo { background: linear-gradient(180deg, #0b1a33 0%, #1d2d48 55%, #2b3b55 100%); }
-  .lp-photo-frame { width: 150cqw; height: auto; aspect-ratio: var(--ar); left: -12cqw; top: auto; bottom: -24cqw; -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 30%); mask-image: linear-gradient(180deg, transparent 0%, #000 30%); }
-}
+  animation: lp-photo-in 1.4s ease-out both; }
+.lp-photo-frame video { display: block; width: 100%; height: 100%; object-fit: cover; filter: brightness(.92) saturate(1.05); }
+@keyframes lp-photo-in { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: none; } }
+.lp-hero-photo + .lp-hero-shade { background: linear-gradient(180deg, #0b1a33 0%, #0b1a33d9 34%, #0b1a3326 70%, #0b1a3366 100%); }
 .lp-hero:has(.lp-hero-photo)::after { display: none; }
-@media (min-width: 760px) {
-  .lp-photo-frame { --ar: 1.7778; --fx: .85; --fy: .85; transform-origin: 75% 80%; }
-  .lp-glow { width: 5%; }
-  .lp-glow-l { left: 79.9%; top: 89.8%; }
-  .lp-glow-r { left: 72%; top: 89.4%; }
-  .lp-glow-bar { left: 75.8%; top: 62.6%; width: 8%; }
-  .lp-hero-photo + .lp-hero-shade { background: linear-gradient(90deg, #071226f0 0%, #071226b3 36%, #07122600 64%), linear-gradient(0deg, #07122680, transparent 30%); }
+/* Phones: the text sits on the dark sky, the footage runs as a wide band below it. */
+@media (max-width: 759px) {
+  .lp-hero.lp-hero-dark:has(.lp-hero-photo) { min-height: 0; padding-bottom: min(92vw, 420px); background: #0b1a33; }
+  .lp-photo-frame { --ar: 1.3333; width: 112cqw; height: auto; aspect-ratio: var(--ar); left: -6cqw; top: auto; bottom: 0; -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 26%); mask-image: linear-gradient(180deg, transparent 0%, #000 26%); }
 }
-@media (prefers-reduced-motion: reduce) { .lp-photo-frame, .lp-glow { animation: none; } }
+@media (min-width: 760px) {
+  .lp-hero-photo + .lp-hero-shade { background: linear-gradient(90deg, #071226f2 0%, #071226c4 30%, #0712264d 58%, #07122600 75%), linear-gradient(180deg, #07122699, transparent 30%, transparent 75%, #07122680); }
+}
+@media (prefers-reduced-motion: reduce) { .lp-photo-frame { animation: none; } }
