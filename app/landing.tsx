@@ -8,8 +8,6 @@ import { Icon, type IconName } from "./icons";
 import { ProductTour } from "./product-tour";
 import { LandingMotion, PriceCalculator } from "./landing-motion";
 import { SiteFooter, SiteHeader } from "./site-chrome";
-import { Truck3D } from "./truck-3d";
-import { TruckScene } from "./truck-scene";
 
 const steps = [
   { title: "Firma anlegen", text: "In einer Minute registriert. Ihre Firma bekommt eine eigene, getrennte Datenbank." },
@@ -52,7 +50,16 @@ export function Landing() {
       <SiteHeader />
       <main>
         <section className="lp-hero lp-hero-dark">
-          <div className="lp-hero-scene" aria-hidden="true"><TruckScene /><Truck3D /></div>
+          {/* Photo: pexels.com/photo/11053644 (Pexels licence, free for commercial use; number plate blurred). */}
+          <div className="lp-hero-scene lp-hero-photo" aria-hidden="true">
+            <div className="lp-photo-frame">
+              <picture>
+                <source media="(max-width: 759px)" srcSet="/hero/truck-dusk-phone.webp" />
+                <img src="/hero/truck-dusk.webp" alt="" fetchPriority="high" decoding="async" />
+              </picture>
+              <i className="lp-glow lp-glow-bar" /><i className="lp-glow lp-glow-l" /><i className="lp-glow lp-glow-r" />
+            </div>
+          </div>
           <div className="lp-hero-shade" aria-hidden="true" />
           <div className="lp-hero-text">
             <span className="lp-pill lp-rise">Für Transport- und Logistikfirmen</span>
