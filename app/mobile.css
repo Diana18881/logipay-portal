@@ -241,3 +241,11 @@
   .vehicle-record-tabs { overflow-x: auto; scrollbar-width: none; }
   .vehicle-record-tabs button { flex: 0 0 auto; white-space: nowrap; }
 }
+
+/* Staff cards: the name block must never shrink below its content (it used to collapse to 0 and the rating sat on top of it). */
+.app-shell .person-main { flex: 1 1 220px; min-width: 200px; }
+@media (max-width: 1180px) {
+  .app-shell .person-card { flex-wrap: wrap; row-gap: 10px; }
+  .app-shell .person-main { flex: 1 1 100%; }
+  .app-shell .person-actions { margin-left: auto; }
+}

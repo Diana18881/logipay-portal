@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState } from "react";
 
 /** staffId → photo version; filled by the portal from the staff list. */
 export const PhotoContext = createContext<Map<string, string>>(new Map());
@@ -10,7 +10,8 @@ const initials = (name: unknown) => String(name || "?").split(" ").filter(Boolea
 export function Avatar({ name, staffId, className = "", as: Tag = "span" }: { name: unknown; staffId?: unknown; className?: string; as?: "span" | "div" }) {
   const photos = useContext(PhotoContext);
   const version = staffId != null ? photos.get(String(staffId)) : undefined;
-  if (version) return <Tag className={`${className} has-photo`}><img src={`/api/staff-photo/${staffId}?v=${encodeURIComponent(version)}`} alt="" loading="lazy" /></Tag>;
+  const [failed, setFailed] = useState<string | null>(null);
+  if (version && failed !== version) return <Tag className={`${className} has-photo`}><img src={`/api/staff-photo/${staffId}?v=${encodeURIComponent(version)}`} alt="" loading="lazy" onError={() => setFailed(version)} /></Tag>;
   return <Tag className={className}>{initials(name)}</Tag>;
 }
 
