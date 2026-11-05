@@ -5,15 +5,18 @@ import { useEffect, useState } from "react";
 // Cookie notice for the public site. LOGIPAY only sets technically necessary cookies (login, "remember device"),
 // so this informs instead of asking for consent (§ 25 Abs. 2 TDDDG). The choice is remembered in this browser.
 const KEY = "logipay_cookie_notice";
+const OPEN_EVENT = "logipay:cookie-notice";
 
 export function CookieNotice() {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     let seen = false;
     try { seen = localStorage.getItem(KEY) === "1"; } catch { /* storage blocked: show the notice */ }
-    if (seen) return;
+    const reopen = () => setOpen(true);
+    window.addEventListener(OPEN_EVENT, reopen);
+    if (seen) return () => window.removeEventListener(OPEN_EVENT, reopen);
     const timer = window.setTimeout(() => setOpen(true), 700);
-    return () => window.clearTimeout(timer);
+    return () => { window.clearTimeout(timer); window.removeEventListener(OPEN_EVENT, reopen); };
   }, []);
   if (!open) return null;
   const close = () => {
@@ -35,4 +38,9 @@ export function CookieNotice() {
       </div>
     </div>
   );
+}
+
+/** Footer link that shows the cookie notice again. */
+export function CookieNoticeLink() {
+  return <button type="button" className="site-footer-link" onClick={() => window.dispatchEvent(new Event(OPEN_EVENT))}>Cookie-Hinweis</button>;
 }

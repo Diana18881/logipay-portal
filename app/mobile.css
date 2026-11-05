@@ -249,3 +249,17 @@
   .app-shell .person-main { flex: 1 1 100%; }
   .app-shell .person-actions { margin-left: auto; }
 }
+
+/* Login on tablets: one column like on phones (the two-column layout overflowed at 760–1000 px). */
+@media (max-width: 1000px) {
+  .login-page { grid-template-columns: 1fr; }
+  .login-brand { display: none; }
+  .login-panel { min-height: 100vh; padding: 35px 24px; }
+}
+/* Planning card status: "Planbar" and "5 Tage" must not touch */
+.app-shell .assignment-state { gap: 4px 10px; flex-wrap: wrap; }
+/* "GPS live" sits in the map header now, never on top of a truck marker */
+.app-shell .map-live-metrics .map-signal-badge { position: static; align-self: center; font-size: 12px; white-space: nowrap; }
+/* Drag handle in the planning pool gets its own column instead of overlapping the name */
+.dispatch-pool-list > button { grid-template-columns: 32px minmax(0, 1fr) 18px; }
+.dispatch-pool-list > button > i { justify-self: center; overflow: hidden; font-style: normal; }

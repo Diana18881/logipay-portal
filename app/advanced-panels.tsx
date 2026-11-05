@@ -496,7 +496,7 @@ export function TruckTracking({ rows, vehicles, operations, canManage, locale, a
     const lats = points.map((row) => Number(row.latitude)); const lngs = points.map((row) => Number(row.longitude));
     const minLat = Math.min(...lats); const maxLat = Math.max(...lats); const minLng = Math.min(...lngs); const maxLng = Math.max(...lngs);
     const latRange = Math.max(maxLat - minLat, 0.01); const lngRange = Math.max(maxLng - minLng, 0.01);
-    return points.map((row) => ({ row, x: 7 + ((Number(row.longitude) - minLng) / lngRange) * 86, y: 93 - ((Number(row.latitude) - minLat) / latRange) * 86 }));
+    return points.map((row) => ({ row, x: 14 + ((Number(row.longitude) - minLng) / lngRange) * 70, y: 84 - ((Number(row.latitude) - minLat) / latRange) * 66 }));
   }, [history, rows]);
   const trailPoints = mapPoints.slice(0, Math.min(history.length, 50));
   const trailSegments = trailPoints.slice(1).map((point, index) => {
@@ -531,7 +531,7 @@ export function TruckTracking({ rows, vehicles, operations, canManage, locale, a
       <section className="tracker-map-panel">
         <div className="tracker-map-heading">
           <div><span className={`tracker-dot tracker-${status.tone}`} /><div><h2>{selected?.license_plate || "Live-Tracking"}</h2><p>{status.label} · {signalAge == null ? (driverView ? c.noSignal : "kein Signal") : `${driverView ? c.lastSignal : "letztes Signal vor"} ${signalAge} ${driverView ? c.minutes : "Min."}`}</p></div></div>
-          <div className="map-live-metrics"><span><b>{Math.round(Number(selected?.speed_kph || 0))}</b> km/h</span><span><b>{stops}</b> Stopps</span><span><b>{activeOperation?.eta ? dateText(activeOperation.eta) : "—"}</b> ETA</span></div>
+          <div className="map-live-metrics"><span><b>{Math.round(Number(selected?.speed_kph || 0))}</b> km/h</span><span><b>{stops}</b> Stopps</span><span><b>{activeOperation?.eta ? dateText(activeOperation.eta) : "—"}</b> ETA</span><span className={`map-signal-badge ${status.tone === "offline" ? "signal-lost" : ""}`}>{status.tone === "offline" ? "GPS-Signal verloren" : "GPS live"}</span></div>
         </div>
         <div className="tracker-private-map">
           <div className="tracker-grid-lines" />
@@ -541,7 +541,6 @@ export function TruckTracking({ rows, vehicles, operations, canManage, locale, a
           {mapPoints.slice(Math.min(history.length, 50)).map((point) => { const pointStatus = trackerStatus(point.row, clock); return <button key={`fleet-${point.row.id}`} type="button" className={`map-fleet-marker tracker-${pointStatus.tone} ${String(point.row.license_plate) === activePlate ? "map-fleet-active" : ""}`} style={{ left: `${point.x}%`, top: `${point.y}%` }} onClick={() => setSelectedPlate(String(point.row.license_plate))}><span>▰</span><b>{point.row.license_plate}</b></button>; })}
           {hasPosition && !mapPoints.length ? <div className={`truck-marker tracker-${status.tone}`}><span>▰</span><strong>{selected?.license_plate}</strong></div> : !hasPosition ? <div className="empty-state">{driverView ? c.noPosition : "Noch keine GPS-Position vorhanden."}</div> : null}
           <div className="tracker-location-label"><strong>{selected?.address || "GPS-Position"}</strong><span>{hasPosition ? `${latitude!.toFixed(5)}, ${longitude!.toFixed(5)}` : "—"}</span></div>
-          <div className={`map-signal-badge ${status.tone === "offline" ? "signal-lost" : ""}`}>{status.tone === "offline" ? "GPS-Signal verloren" : "GPS live"}</div>
         </div>
         {selected ? <div className="tracking-detail-grid">
           <div><span>{driverView ? c.speed : "Geschwindigkeit"}</span><strong>{Math.round(Number(selected.speed_kph || 0))} km/h</strong></div>

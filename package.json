@@ -13,7 +13,8 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .vercel",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "test:ui": "node tests/ui.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
@@ -42,6 +43,7 @@
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "nitro": "^3.0.1-alpha.1",
+    "puppeteer-core": "^24.43.1",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",

@@ -1,0 +1,51 @@
+# Daily robot check of the live site: every function end to end, then every screen at phone, tablet and desktop width.
+# GitHub sends an e-mail when a run fails. Start it by hand under Actions → "Site checks" → "Run workflow".
+name: Site checks
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Site to check"
+        default: "https://logipay-portal.vercel.app"
+
+env:
+  BASE: ${{ inputs.base || 'https://logipay-portal.vercel.app' }}
+
+jobs:
+  functions:
+    name: Functions (registration, drivers, tours, receipts, payroll, DATEV …)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node tests/e2e.mjs "$BASE"
+
+  screens:
+    name: Screens (phone, tablet, desktop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Chrome
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          echo "CHROME_PATH=$(npx @puppeteer/browsers install chrome@stable --path "$RUNNER_TEMP/chrome" | tail -1 | cut -d' ' -f2-)" >> "$GITHUB_ENV"
+      - run: node tests/ui.mjs "$BASE"
+        env:
+          UI_OUT: ui-report
+      - name: Screenshots of the problems
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-report
+          path: ui-report
+          retention-days: 14

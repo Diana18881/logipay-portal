@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CookieNoticeLink } from "./cookie-notice";
 
 export function SiteHeader({ cta = true }: { cta?: boolean }) {
   return (
@@ -25,6 +26,7 @@ export function SiteFooter() {
         <Link href="/agb">AGB</Link>
         <Link href="/avv">Auftragsverarbeitung (AVV)</Link>
         <Link href="/app">Fahrer-App installieren</Link>
+        <CookieNoticeLink />
       </nav>
     </footer>
   );
