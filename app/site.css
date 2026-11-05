@@ -775,22 +775,30 @@
 @keyframes splash-load { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
 @keyframes ui-fade { from { opacity: 0; } to { opacity: 1; } }
 
-/* Hero with real footage of trucks on a motorway (see hero-video.tsx).
-   The frame keeps the video's aspect ratio and covers the hero. */
+/* Hero with a high-resolution photo of a truck (Wikimedia Commons, CC BY-SA 4.0, credit shown in the hero).
+   The frame keeps the photo's aspect ratio and covers the hero. */
 .lp-hero-photo { overflow: hidden; background: #0b1a33; container-type: size; }
-.lp-photo-frame { --ar: 1.7778; --fx: .5; --fy: .6; position: absolute; width: max(100cqw, calc(100cqh * var(--ar))); height: max(100cqh, calc(100cqw / var(--ar)));
+.lp-photo-frame { --ar: 1.7778; --fx: .7; --fy: .55; position: absolute; width: max(100cqw, calc(100cqh * var(--ar))); height: max(100cqh, calc(100cqw / var(--ar)));
   left: calc((100cqw - max(100cqw, calc(100cqh * var(--ar)))) * var(--fx)); top: calc((100cqh - max(100cqh, calc(100cqw / var(--ar)))) * var(--fy));
-  animation: lp-photo-in 1.4s ease-out both; }
-.lp-photo-frame video { display: block; width: 100%; height: 100%; object-fit: cover; filter: brightness(.92) saturate(1.05); }
-@keyframes lp-photo-in { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: none; } }
-.lp-hero-photo + .lp-hero-shade { background: linear-gradient(180deg, #0b1a33 0%, #0b1a33d9 34%, #0b1a3326 70%, #0b1a3366 100%); }
+  animation: lp-photo-in 1.2s ease-out both; }
+.lp-photo-frame picture, .lp-photo-frame img { display: block; width: 100%; height: 100%; }
+.lp-photo-frame img { object-fit: cover; }
+@keyframes lp-photo-in { from { opacity: 0; } to { opacity: 1; } }
+.lp-hero-photo + .lp-hero-shade { background: linear-gradient(180deg, #0b1a33 0%, #0b1a33d9 34%, #0b1a3300 62%); }
 .lp-hero:has(.lp-hero-photo)::after { display: none; }
-/* Phones: the text sits on the dark sky, the footage runs as a wide band below it. */
+.lp-photo-credit { position: absolute; right: 12px; bottom: 8px; z-index: 2; color: #ffffff8c; font-size: 11px; text-decoration: none; text-shadow: 0 1px 3px #0009; }
+.lp-photo-credit:hover { color: #fff; text-decoration: underline; }
+/* Phones: the text sits on the dark background, the photo shows below it. */
 @media (max-width: 759px) {
-  .lp-hero.lp-hero-dark:has(.lp-hero-photo) { min-height: 0; padding-bottom: min(92vw, 420px); background: #0b1a33; }
-  .lp-photo-frame { --ar: 1.3333; width: 112cqw; height: auto; aspect-ratio: var(--ar); left: -6cqw; top: auto; bottom: 0; -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 26%); mask-image: linear-gradient(180deg, transparent 0%, #000 26%); }
+  .lp-hero.lp-hero-dark:has(.lp-hero-photo) { min-height: 0; padding-bottom: min(82vw, 400px); background: #0b1a33; }
+  .lp-photo-frame { --ar: 1.3333; width: 100cqw; height: auto; aspect-ratio: var(--ar); left: 0; top: auto; bottom: 0; -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 22%); mask-image: linear-gradient(180deg, transparent 0%, #000 22%); }
 }
 @media (min-width: 760px) {
-  .lp-hero-photo + .lp-hero-shade { background: linear-gradient(90deg, #071226f2 0%, #071226c4 30%, #0712264d 58%, #07122600 75%), linear-gradient(180deg, #07122699, transparent 30%, transparent 75%, #07122680); }
+  .lp-hero-photo + .lp-hero-shade { background: linear-gradient(90deg, #071226f5 0%, #071226d9 30%, #07122666 52%, #07122600 68%), linear-gradient(180deg, #07122680, transparent 25%, transparent 80%, #07122666); }
+}
+/* Tablets / small laptops: push the truck right so it does not sit behind the text. */
+@media (min-width: 760px) and (max-width: 1279px) {
+  .lp-photo-frame { --fx: .12; }
+  .lp-hero-photo + .lp-hero-shade { background: linear-gradient(90deg, #071226f5 0%, #071226e0 38%, #07122680 58%, #07122600 76%), linear-gradient(180deg, #07122680, transparent 25%, transparent 80%, #07122666); }
 }
 @media (prefers-reduced-motion: reduce) { .lp-photo-frame { animation: none; } }

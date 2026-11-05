@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { pricePerDriverCents } from "../lib/billing";
 import { TRIAL_DAYS } from "../lib/tenants";
-import { HeroVideo } from "./hero-video";
 import { ChaosSection } from "./chaos-section";
 import { CompareSection } from "./compare-section";
 import { TestimonialsSection } from "./testimonials-section";
@@ -51,7 +50,15 @@ export function Landing() {
       <SiteHeader />
       <main>
         <section className="lp-hero lp-hero-dark">
-          <div className="lp-hero-scene lp-hero-photo" aria-hidden="true"><HeroVideo /></div>
+          <div className="lp-hero-scene lp-hero-photo" aria-hidden="true">
+            <div className="lp-photo-frame">
+              <picture>
+                <source media="(max-width: 759px)" srcSet="/hero/truck-phone.webp" />
+                <img src="/hero/truck-1600.webp" srcSet="/hero/truck-1600.webp 1600w, /hero/truck-2560.webp 2560w" sizes="100vw" alt="" fetchPriority="high" />
+              </picture>
+            </div>
+          </div>
+          <a className="lp-photo-credit" href="https://commons.wikimedia.org/wiki/File:Volvo_FH_(2024).jpg" target="_blank" rel="noopener noreferrer">Foto: Lars Ardarve, CC BY-SA 4.0</a>
           <div className="lp-hero-shade" aria-hidden="true" />
           <div className="lp-hero-text">
             <span className="lp-pill lp-rise">Für Transport- und Logistikfirmen</span>
