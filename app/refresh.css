@@ -503,3 +503,8 @@
 .app-shell.theme-dark .alert-group > summary b, .app-shell.theme-dark .alert-group li { color: #e6eff2; }
 .app-shell.theme-dark .alert-group li { border-color: #22343f; }
 @media (max-width: 760px) { .app-shell .alert-group ul { padding-left: 14px; } }
+/* Frame shape per subject: cards (Führerschein, Fahrerkarte) are ID-1 landscape, pages are A4, vehicles wide */
+.frame-card .frame-camera-box { width: 88%; height: auto; aspect-ratio: 1.586; max-height: 62%; }
+.frame-page .frame-camera-box { width: auto; height: 68%; aspect-ratio: .707; max-width: 86%; }
+.frame-vehicle .frame-camera-box { width: 94%; height: 48%; }
+.frame-photo .frame-camera-box { width: 88%; height: 60%; }

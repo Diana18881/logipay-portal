@@ -72,7 +72,7 @@ export function EmployeeDocuments({ rows, staff, audit, driver, locale, action, 
         {!driver ? <select name="staffId" required defaultValue=""><option value="">Mitarbeiter wählen</option>{staff.map((person) => <option key={person.id} value={String(person.id)}>{person.full_name}</option>)}</select> : null}
         <select name="category" required defaultValue=""><option value="">{driver ? c.type : "Dokumentart"}</option>{(driver ? ["Führerschein", "Fahrerkarte", "Aufenthaltstitel", "Krankmeldung"] : ["Arbeitsvertrag", "Führerschein", "Fahrerkarte", "Aufenthaltstitel", "Krankmeldung", "Lohnabrechnung", "Sonstiges"]).map((category) => <option key={category}>{category}</option>)}</select>
         <label>{driver ? c.expiry : "Ablaufdatum (optional)"}<input name="expiresAt" type="date" /></label>
-        <input name="file" type="file" accept="application/pdf,image/*" required onChange={(event) => { const file = event.target.files?.[0]; if (file) void scan(file); }} />
+        <input name="file" type="file" accept="application/pdf,image/*" data-frame="document" required onChange={(event) => { const file = event.target.files?.[0]; if (file) void scan(file); }} />
         <button className="primary-button">{driver ? c.upload : "Sicher hochladen"}</button>
       </form>
       {scanResult ? <div className="scan-result-card"><strong>Dokument erkannt · {Math.round(Number(scanResult.confidence || 0) * 100)} %</strong><span>{[scanResult.date, scanResult.documentNumber, scanResult.licensePlate, scanResult.merchant].filter(Boolean).join(" · ") || "Metadaten werden im Prüfprotokoll gespeichert"}</span></div> : null}
