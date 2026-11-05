@@ -6,6 +6,7 @@ import "./refresh.css";
 import "./mobile.css";
 import { ServiceWorker } from "./service-worker";
 import { AppSplash } from "./app-splash";
+import { CookieNotice } from "./cookie-notice";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin", "cyrillic"] });
 
@@ -44,5 +45,5 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#071a2e" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="de"><body className={`${geist.variable} ${geist.className}`}><AppSplash />{children}<ServiceWorker /></body></html>;
+  return <html lang="de"><body className={`${geist.variable} ${geist.className}`}><AppSplash />{children}<CookieNotice /><ServiceWorker /></body></html>;
 }

@@ -20,8 +20,8 @@ export default function DatenschutzPage() {
       <p>Die Daten, die Kunden im Portal über ihre Beschäftigten speichern (z. B. Fahrer, Touren, Lohndaten, Dokumente, GPS-Positionen), verarbeiten wir ausschließlich im Auftrag und nach Weisung des jeweiligen Kunden (Art. 28 DSGVO). Verantwortlicher ist dann der Kunde als Arbeitgeber. Betroffene wenden sich mit Anfragen bitte an ihren Arbeitgeber. Die Einzelheiten regelt der <a href="/avv">Vertrag zur Auftragsverarbeitung</a>.</p>
       <h2>3. Daten beim Besuch der Website</h2>
       <p>Beim Aufruf der Website verarbeitet unser Hosting-Dienstleister technisch notwendige Daten (IP-Adresse, Zeitpunkt, aufgerufene Seite, Browsertyp) zur Auslieferung und zur Abwehr von Angriffen. Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO. Die Protokolle werden nach kurzer Zeit gelöscht.</p>
-      <h2>4. Cookies</h2>
-      <p>Wir verwenden ausschließlich technisch notwendige Cookies: ein Cookie für die Anmeldung im Portal (Sitzungs-Cookie, Laufzeit 7 Tage) und – nur wenn Sie „Dieses Gerät merken“ wählen – ein Cookie, das den Anmeldecode auf diesem Gerät für 30 Tage erspart. Es gibt keine Analyse-, Werbe- oder Tracking-Cookies. Eine Einwilligung ist daher nicht erforderlich (§ 25 Abs. 2 TDDDG).</p>
+      <h2 id="cookies">4. Cookies</h2>
+      <p>Wir verwenden ausschließlich technisch notwendige Cookies: ein Cookie für die Anmeldung im Portal (Sitzungs-Cookie, Laufzeit 7 Tage) und – nur wenn Sie „Dieses Gerät merken“ wählen – ein Cookie, das den Anmeldecode auf diesem Gerät für 30 Tage erspart. Es gibt keine Analyse-, Werbe- oder Tracking-Cookies. Eine Einwilligung ist daher nicht erforderlich (§ 25 Abs. 2 TDDDG). Dass Sie den Cookie-Hinweis gelesen haben, speichern wir nur lokal in Ihrem Browser (Local Storage), damit er nicht erneut erscheint.</p>
       <h2>5. Registrierung und Vertrag</h2>
       <p>Bei der Registrierung speichern wir Firmenname, Name und E-Mail-Adresse des Ansprechpartners sowie ein verschlüsseltes Passwort. Zum Schutz vor Missbrauch speichern wir die IP-Adresse der Registrierung für eine Stunde. Rechtsgrundlage ist Art. 6 Abs. 1 lit. b DSGVO.</p>
       <h2>6. Zahlungen</h2>

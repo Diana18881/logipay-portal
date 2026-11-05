@@ -58,7 +58,6 @@ export function Landing() {
               </picture>
             </div>
           </div>
-          <a className="lp-photo-credit" href="https://commons.wikimedia.org/wiki/File:Volvo_FH_(2024).jpg" target="_blank" rel="noopener noreferrer">Foto: Lars Ardarve, CC BY-SA 4.0</a>
           <div className="lp-hero-shade" aria-hidden="true" />
           <div className="lp-hero-text">
             <span className="lp-pill lp-rise">Für Transport- und Logistikfirmen</span>

@@ -10,6 +10,12 @@ const slides = [
   { id: "driver", tab: "Fahrer-App", title: "Die App für Fahrer", text: "Abfahrt bestätigen, Belege fotografieren, Chat – in vier Sprachen, auch ohne Netz.", image: "/tour/driver.webp", phone: true },
 ];
 const DURATION = 6000;
+const driverPoints = [
+  ["Abfahrt bestätigen", "Ein Tipp – die Disposition sieht es sofort."],
+  ["Belege fotografieren", "Kamera mit Rahmen, Bild wird automatisch zugeschnitten."],
+  ["Chat mit dem Büro", "Pro Tour, mit Fotos und Sprachnachrichten."],
+  ["Vier Sprachen, auch offline", "Deutsch, Polnisch, Ukrainisch, Russisch."],
+];
 
 export function ProductTour() {
   const [active, setActive] = useState(0);
@@ -32,14 +38,15 @@ export function ProductTour() {
         ))}
       </div>
       <div data-reveal><div className={`tour-stage ${slide.phone ? "phone-mode" : ""}`}>
-        <div className={`tour-browser ${slide.phone ? "is-hidden" : ""}`} aria-hidden={slide.phone ? "true" : "false"}>
-          <div className="tour-bar"><span /><span /><span /><em>logipay · Muster Transporte</em></div>
+        <div className="tour-browser">
+          <div className="tour-bar"><span /><span /><span /><em>{slide.phone ? "LOGIPAY Fahrer-App" : "logipay · Muster Transporte"}</em></div>
           <div className="tour-screens">
             {slides.filter((item) => !item.phone).map((item) => <img key={item.id} src={item.image} alt={item.title} loading="lazy" className={item.id === slide.id ? "active" : ""} />)}
+            <div className={`tour-driver ${slide.phone ? "active" : ""}`}>
+              <div className="tour-phone"><img src="/tour/driver.webp" alt="LOGIPAY Fahrer-App" loading="lazy" /></div>
+              <ul>{driverPoints.map(([title, text]) => <li key={title}><b>{title}</b><span>{text}</span></li>)}</ul>
+            </div>
           </div>
-        </div>
-        <div className={`tour-phone ${slide.phone ? "is-active" : ""}`}>
-          <img src="/tour/driver.webp" alt="LOGIPAY Fahrer-App" loading="lazy" />
         </div>
         <div className="tour-caption" key={slide.id}><b>{slide.title}</b><p>{slide.text}</p></div>
       </div></div>
