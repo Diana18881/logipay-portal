@@ -26,7 +26,6 @@ export function SiteFooter() {
         <Link href="/avv">Auftragsverarbeitung (AVV)</Link>
         <Link href="/app">Fahrer-App installieren</Link>
       </nav>
-      <small className="site-credit">Titelbild: Lars Ardarve, <a href="https://commons.wikimedia.org/wiki/File:Volvo_FH_(2024).jpg" target="_blank" rel="noopener noreferrer">Wikimedia Commons</a>, <a href="https://creativecommons.org/licenses/by-sa/4.0/deed.de" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a></small>
     </footer>
   );
 }
