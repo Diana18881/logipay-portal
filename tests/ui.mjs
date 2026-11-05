@@ -52,7 +52,7 @@ function inspect() {
     for (const raw of range.getClientRects()) {
       // Cut the text box to what its scrolling/clipping parents actually show.
       let r = { left: raw.left, right: raw.right, top: raw.top, bottom: raw.bottom };
-      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+      for (let p = el; p && p !== document.body; p = p.parentElement) {
         const cs = getComputedStyle(p);
         if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
         const c = p.getBoundingClientRect();
